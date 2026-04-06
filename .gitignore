@@ -1,0 +1,11 @@
+# Environment-specific configs (contain real domains, emails, secrets)
+config.dev
+config.test
+config.prod
+
+# Encrypted secrets backup
+secrets.enc
+
+# Temp files
+*.tmp
+/tmp/

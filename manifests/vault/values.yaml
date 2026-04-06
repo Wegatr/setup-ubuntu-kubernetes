@@ -1,0 +1,85 @@
+# Vault Helm Values
+
+# Global Configuration
+global:
+  enabled: true
+  tlsDisable: false
+
+# Server Configuration
+server:
+  # Standalone mode (not HA for single node)
+  ha:
+    enabled: false
+
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+
+      listener "tcp" {
+        tls_disable = 0
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+        tls_cert_file = "/vault/userconfig/vault-tls/tls.crt"
+        tls_key_file  = "/vault/userconfig/vault-tls/tls.key"
+      }
+
+      storage "file" {
+        path = "/vault/data"
+      }
+
+  # Service
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 8200
+    targetPort: 8200
+
+  # Data Storage
+  dataStorage:
+    enabled: true
+    size: __VAULT_STORAGE_SIZE__
+    storageClass: microk8s-hostpath
+    accessMode: ReadWriteOnce
+
+  # Ingress (disabled - using Traefik IngressRoute + ServersTransport instead)
+  ingress:
+    enabled: false
+    ingressClassName: public
+    annotations:
+      cert-manager.io/cluster-issuer: __CLUSTER_ISSUER__
+      traefik.ingress.kubernetes.io/service.serversscheme: https
+    hosts:
+      - host: __VAULT_HOST__
+        paths:
+          - /
+    tls:
+      - secretName: vault-tls
+        hosts:
+          - __VAULT_HOST__
+
+  # Volume for TLS cert
+  volumes:
+    - name: vault-tls
+      secret:
+        secretName: vault-tls
+        defaultMode: 0400
+
+  volumeMounts:
+    - name: vault-tls
+      mountPath: /vault/userconfig/vault-tls
+      readOnly: true
+
+  # Resources
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+# UI Configuration
+ui:
+  enabled: true
+  serviceType: ClusterIP

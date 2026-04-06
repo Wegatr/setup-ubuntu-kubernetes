@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vault-tls
+  namespace: vault
+spec:
+  secretName: vault-tls
+  issuerRef:
+    name: __CLUSTER_ISSUER__
+    kind: ClusterIssuer
+  dnsNames:
+  - __VAULT_HOST__

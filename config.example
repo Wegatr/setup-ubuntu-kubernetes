@@ -1,0 +1,220 @@
+#!/bin/bash
+# config.example
+# Configuration file for MicroK8s Kubernetes setup.
+#
+# HOW TO USE:
+#   1. Copy this file to config.<env>  (e.g. config.dev, config.test, config.prod)
+#   2. Edit the copy and set every value marked REQUIRED below
+#   3. Run:  sudo ./setup-kubernetes.sh --dev   (or --test / --prod)
+#
+# Every variable here can be overridden per environment. If a variable is not
+# set in your config.<env> file, the script will fail — there are no hidden
+# defaults outside of this file.
+
+################################################################################
+# CLUSTER IDENTITY  (REQUIRED — you MUST change these)
+################################################################################
+
+# A short, human-friendly name for this cluster. Used in the dashboard UI.
+CLUSTER_NAME="my-cluster"
+
+# The base DNS domain for all ingress hostnames.
+# Final hostname = <prefix>.<DEPLOY_ENV>.<DOMAIN_SUFFIX>
+# Example: with "example.com" and DEPLOY_ENV="prod" → kube.prod.example.com
+DOMAIN_SUFFIX="example.com"
+
+# E-mail address registered with Let's Encrypt for certificate notifications.
+LETSENCRYPT_EMAIL="user@example.com"
+
+# Environment name — used in hostname generation and credential file names.
+# Typical values: dev, test, prod
+DEPLOY_ENV="prod"
+
+################################################################################
+# MICROK8S CONFIGURATION
+################################################################################
+
+# Snap channel for MicroK8s installation (e.g. "1.28/stable", "latest/stable").
+MICROK8S_CHANNEL="latest/stable"
+
+# The non-root user who will operate kubectl/helm after setup.
+# Defaults to the user who invoked sudo; override if needed.
+MICROK8S_USER="${SUDO_USER:-$(whoami)}"
+
+################################################################################
+# STORAGE CONFIGURATION
+#
+# Controls where Kubernetes PersistentVolume data is physically stored.
+#
+# Option A — Default (single-disk VM, no external mount):
+#   Leave STORAGE_PATH, STORAGE_DEVICE, and STORAGE_DIRECTORY empty.
+#   PV data will live under the default MicroK8s hostpath directory and no
+#   symlink is created.
+#
+# Option B — External disk:
+#   Set all three variables. The script will:
+#     1. Verify STORAGE_DEVICE is mounted at STORAGE_PATH
+#     2. Create STORAGE_DIRECTORY inside the mount
+#     3. Symlink MICROK8S_STORAGE_PATH → STORAGE_DIRECTORY
+#   This keeps PV data on the dedicated disk.
+#
+# Example for Option B:
+#   STORAGE_PATH="/mnt/data"
+#   STORAGE_DEVICE="/dev/sdb1"
+#   STORAGE_DIRECTORY="/mnt/data/kubernetes-storage"
+################################################################################
+
+# Mount point of the external disk (empty = use defaults, no symlink).
+STORAGE_PATH=""
+
+# Block device expected at STORAGE_PATH (used for mount verification only).
+STORAGE_DEVICE=""
+
+# Directory inside the mount where PV data is stored (empty = use defaults).
+STORAGE_DIRECTORY=""
+
+# MicroK8s default hostpath-storage directory. Normally leave this unchanged.
+MICROK8S_STORAGE_PATH="/var/snap/microk8s/common/default-storage"
+
+################################################################################
+# CLI TOOLS
+#
+# argocd, vault, yq, jq, and tailscale are installed to /usr/local/bin.
+# All tools always install the latest available version. No version pinning
+# is needed — run --update-cli-tools at any time to upgrade them.
+################################################################################
+
+################################################################################
+# MICROK8S ADDONS
+#
+# Addons enabled during the --install-microk8s step.
+# Do NOT add dashboard/argocd/vault here — those are deployed via Helm.
+################################################################################
+
+ADDONS=(
+    "dns"              # CoreDNS for in-cluster DNS resolution
+    "hostpath-storage" # Default StorageClass for local PersistentVolumes
+    "helm3"            # Helm package manager (microk8s.helm3)
+    "cert-manager"     # Automatic TLS certificate management
+    "ingress"          # Traefik-based ingress controller
+)
+
+################################################################################
+# CERT-MANAGER CONFIGURATION
+################################################################################
+
+# Name of the ClusterIssuer resource created for Let's Encrypt.
+CLUSTER_ISSUER_NAME="letsencrypt-prod"
+
+# ACME server URL. Use the staging URL for testing to avoid rate limits:
+# https://acme-staging-v02.api.letsencrypt.org/directory
+ACME_SERVER="https://acme-v02.api.letsencrypt.org/directory"
+
+################################################################################
+# DIRECTORIES & LOGGING
+################################################################################
+
+# Directory for setup log files (created automatically when running as root).
+LOG_DIR="/var/log/kubernetes-setup"
+
+# Directory for state files (ClusterIssuer YAML, etc.).
+STATE_DIR="/var/lib/kubernetes-setup"
+
+# Log file paths (derived from LOG_DIR).
+LOG_FILE="${LOG_DIR}/setup.log"
+ERROR_LOG="${LOG_DIR}/error.log"
+
+################################################################################
+# TIMEOUTS (in seconds)
+#
+# How long the script waits for each component to become ready.
+# Increase these on slow networks or underpowered VMs.
+################################################################################
+
+# Time to wait for MicroK8s to report "ready" after installation.
+MICROK8S_READY_TIMEOUT=180
+
+# Time to wait for cert-manager webhook pod to become ready.
+CERT_MANAGER_READY_TIMEOUT=300
+
+# Time to wait for each addon to show as "enabled" in microk8s status.
+ADDON_ENABLE_TIMEOUT=60
+
+################################################################################
+# SHELL RC FILES
+#
+# The script appends kubectl and helm aliases to these files so the non-root
+# user can run `kubectl` and `helm` directly (without microk8s prefix).
+################################################################################
+
+BASHRC="${HOME}/.bashrc"
+ZSHRC="${HOME}/.zshrc"
+
+################################################################################
+# KUBECONFIG
+################################################################################
+
+# Path where the kubeconfig is exported for the non-root user.
+KUBECONFIG_PATH="${HOME}/.kube/config"
+
+################################################################################
+# COLOR OUTPUT
+################################################################################
+
+# Set to "false" to disable colored console output (useful for CI/CD logs).
+ENABLE_COLOR="true"
+
+################################################################################
+# INFRASTRUCTURE APPLICATIONS CONFIGURATION
+#
+# Three optional infrastructure apps can be deployed on top of MicroK8s:
+#   - Kube Dashboard (Headlamp) — cluster UI
+#   - ArgoCD                    — GitOps continuous delivery
+#   - Vault                     — secrets management
+#
+# Each app can be independently enabled/disabled and configured below.
+################################################################################
+
+# App toggle flags — set to "false" to completely exclude an app.
+# When disabled, --deploy-* and --upgrade-* for that app are silently skipped.
+ENABLE_KUBE="true"      # Kubernetes Dashboard (Headlamp)
+ENABLE_ARGOCD="true"    # ArgoCD GitOps controller
+ENABLE_VAULT="true"     # HashiCorp Vault
+
+# Hostname prefixes — combined with DEPLOY_ENV and DOMAIN_SUFFIX.
+# Final hostname = <prefix>.<DEPLOY_ENV>.<DOMAIN_SUFFIX>
+KUBE_HOST_PREFIX="kube"     # → kube.<env>.<domain>
+ARGOCD_HOST_PREFIX="argo"   # → argo.<env>.<domain>
+VAULT_HOST_PREFIX="vault"   # → vault.<env>.<domain>
+
+# Computed hostnames (do not edit — derived from the variables above).
+KUBE_HOST="${KUBE_HOST_PREFIX}.${DEPLOY_ENV}.${DOMAIN_SUFFIX}"
+ARGOCD_HOST="${ARGOCD_HOST_PREFIX}.${DEPLOY_ENV}.${DOMAIN_SUFFIX}"
+VAULT_HOST="${VAULT_HOST_PREFIX}.${DEPLOY_ENV}.${DOMAIN_SUFFIX}"
+
+# Helm repository names and URLs — override only if using a mirror or fork.
+KUBE_REPO_NAME="headlamp"
+KUBE_REPO_URL="https://kubernetes-sigs.github.io/headlamp"
+ARGOCD_REPO_NAME="argo"
+ARGOCD_REPO_URL="https://argoproj.github.io/argo-helm"
+VAULT_REPO_NAME="hashicorp"
+VAULT_REPO_URL="https://helm.releases.hashicorp.com"
+
+# Kubernetes namespaces for each app.
+KUBE_NAMESPACE="kubernetes-dashboard"
+ARGOCD_NAMESPACE="argocd"
+VAULT_NAMESPACE="vault"
+
+# Helm release names — used by `helm list` and upgrade/uninstall commands.
+KUBE_RELEASE="headlamp"
+ARGOCD_RELEASE="argocd"
+VAULT_RELEASE="vault"
+
+# Vault PersistentVolumeClaim size.
+VAULT_STORAGE_SIZE="10Gi"
+
+# Infrastructure operation timeouts (in seconds).
+DEPLOYMENT_READY_TIMEOUT=300    # Wait for Helm deployment pods to be ready
+POD_READY_TIMEOUT=300           # Wait for app pods to reach Running state
+CERTIFICATE_READY_TIMEOUT=300   # Wait for TLS certificate to be issued
+HTTPS_READY_TIMEOUT=60          # Wait for HTTPS endpoint to respond

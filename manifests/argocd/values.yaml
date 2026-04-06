@@ -1,0 +1,54 @@
+# ArgoCD Helm Values
+
+# Global Configuration
+global:
+  domain: __ARGOCD_HOST__
+
+# Server Configuration
+server:
+  service:
+    type: ClusterIP
+
+  ingress:
+    enabled: true
+    ingressClassName: public
+    annotations:
+      cert-manager.io/cluster-issuer: __CLUSTER_ISSUER__
+    hosts:
+      - __ARGOCD_HOST__
+    tls:
+      - secretName: argocd-server-tls
+        hosts:
+          - __ARGOCD_HOST__
+
+  # Disable default TLS since we're using ingress
+  extraArgs:
+    - --insecure
+
+# Controller Configuration
+controller:
+  replicas: 1
+
+# Repo Server Configuration
+repoServer:
+  replicas: 1
+
+# Redis Configuration
+redis:
+  enabled: true
+
+# Configs
+configs:
+  params:
+    server.insecure: true
+  cm:
+    url: https://__ARGOCD_HOST__
+    # Custom health check for Ingress on bare-metal (MicroK8s)
+    # Default check requires status.loadBalancer.ingress which is never
+    # populated without a cloud LoadBalancer. Mark Ingress as Healthy
+    # once it has rules assigned by the controller.
+    resource.customizations.health.networking.k8s.io_Ingress: |
+      hs = {}
+      hs.status = "Healthy"
+      hs.message = ""
+      return hs

@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kubernetes-dashboard
+  namespace: kubernetes-dashboard
+  annotations:
+    cert-manager.io/cluster-issuer: __CLUSTER_ISSUER__
+spec:
+  ingressClassName: public
+  tls:
+  - hosts:
+    - __KUBE_HOST__
+    secretName: dashboard-tls
+  rules:
+  - host: __KUBE_HOST__
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: headlamp
+            port:
+              number: 80

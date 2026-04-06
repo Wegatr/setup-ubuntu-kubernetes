@@ -1,0 +1,39 @@
+# Kubernetes Dashboard (Headlamp) Helm Values
+
+# Service Configuration
+service:
+  type: ClusterIP  # Use ClusterIP, ingress will handle external access
+  externalPort: 443
+
+# Metrics Scraper
+metricsScraper:
+  enabled: true
+
+# RBAC Settings
+rbac:
+  create: true
+  clusterReadOnlyRole: true
+
+# Service Account
+serviceAccount:
+  create: true
+  name: kubernetes-dashboard
+
+# Resources
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Settings
+settings:
+  # Global dashboard settings
+  clusterName: "__CLUSTER_NAME__"
+  itemsPerPage: 10
+  labelsLimit: 3
+  logsAutoRefreshTimeInterval: 5
+  resourceAutoRefreshTimeInterval: 5
+  disableAccessDeniedNotifications: false
