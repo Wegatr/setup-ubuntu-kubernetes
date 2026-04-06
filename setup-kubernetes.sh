@@ -9,6 +9,68 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFESTS_DIR="${SCRIPT_DIR}/manifests"
 
+# Handle --help early (before config loading)
+for arg in "$@"; do
+    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+        # Minimal help — full show_help() needs common functions loaded
+        cat << 'HELPEOF'
+USAGE: sudo ./setup-kubernetes.sh --<env> [OPTIONS]
+
+Unified script for MicroK8s setup, infrastructure deployment, and maintenance.
+
+ENVIRONMENT (required for most operations):
+    --dev                         Use config.dev
+    --test                        Use config.test
+    --prod                        Use config.prod (default if config exists)
+    --config PATH                 Use a custom configuration file
+
+SETUP:
+    --install-microk8s            Install only MicroK8s
+    --configure-storage           Configure only storage
+    --configure-cert-manager      Configure only cert-manager
+    --install-cli-tools           Install only CLI tools
+    --setup-aliases               Setup only kubectl/helm aliases
+    --skip-microk8s / --skip-storage / --skip-cert-manager / --skip-cli-tools / --skip-aliases
+
+INFRASTRUCTURE:
+    --deploy-kube / --deploy-argocd / --deploy-vault / --deploy-all
+    --install-kube / --install-argocd / --install-vault    (aliases for deploy)
+    --uninstall-kube / --uninstall-argocd / --uninstall-vault
+    --upgrade-kube / --upgrade-argocd / --upgrade-vault
+
+MAINTENANCE:
+    --check                       Run full health check on cluster and apps
+    --status                      Show infrastructure applications status
+    --show-config                 Show resolved configuration
+    --show-credentials            Display access credentials
+    --show-urls                   Display access URLs
+    --get-kube-token              Get dashboard access token
+    --verify-tls                  Verify TLS certificates
+    --restart-app APP             Restart app (kube/argocd/vault)
+    --upgrade-app APP             Upgrade app to latest version
+    --update-ingress [APP]        Update ingress config (kube/argocd/vault/all)
+    --update-cli-tools            Update all CLI tools
+    --logs APP                    Show logs for app
+
+GENERAL:
+    --help, -h                    Show this help message
+    --verify                      Verify installation only
+    --force                       Force reinstall/redeploy
+
+EXAMPLES:
+    sudo ./setup-kubernetes.sh --dev                          # Full cluster install
+    sudo ./setup-kubernetes.sh --dev --deploy-all             # Deploy all apps
+    sudo ./setup-kubernetes.sh --dev --check                  # Health check
+    sudo ./setup-kubernetes.sh --dev --show-config            # Show config
+
+CONFIGURATION:
+    Copy config.example to config.<env> and edit it.
+    Available configs: $(ls -1 "${SCRIPT_DIR}"/config.* 2>/dev/null | sed "s|${SCRIPT_DIR}/||" | tr '\n' ' ' || echo "none found")
+HELPEOF
+        exit 0
+    fi
+done
+
 # Determine config file from environment flag
 # Pre-scan args for --dev/--test/--prod/--config before full parsing
 DEPLOY_ENV_ARG=""
@@ -32,12 +94,24 @@ if [[ -n "${CUSTOM_CONFIG}" && "${CUSTOM_CONFIG}" != "next" ]]; then
 elif [[ -n "${DEPLOY_ENV_ARG}" ]]; then
     CONFIG_FILE="${SCRIPT_DIR}/config.${DEPLOY_ENV_ARG}"
 else
-    CONFIG_FILE="${SCRIPT_DIR}/config.prod"
+    # Auto-detect: try config.prod, then first config.* found
+    if [[ -f "${SCRIPT_DIR}/config.prod" ]]; then
+        CONFIG_FILE="${SCRIPT_DIR}/config.prod"
+    else
+        CONFIG_FILE=$(ls -1 "${SCRIPT_DIR}"/config.dev "${SCRIPT_DIR}"/config.test "${SCRIPT_DIR}"/config.prod 2>/dev/null | head -1)
+        if [[ -z "${CONFIG_FILE}" ]]; then
+            echo "ERROR: No configuration file found."
+            echo "       Copy config.example to config.<env> (e.g. config.dev) and customise it."
+            echo "       Available: $(ls -1 "${SCRIPT_DIR}"/config.* 2>/dev/null | sed "s|${SCRIPT_DIR}/||" | tr '\n' ' ' || echo "none")"
+            exit 1
+        fi
+    fi
 fi
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then
     echo "ERROR: Configuration file not found: ${CONFIG_FILE}"
     echo "       Copy config.example to config.<env> and customise it."
+    echo "       Available: $(ls -1 "${SCRIPT_DIR}"/config.* 2>/dev/null | sed "s|${SCRIPT_DIR}/||" | tr '\n' ' ' || echo "none")"
     exit 1
 fi
 source "${CONFIG_FILE}"
