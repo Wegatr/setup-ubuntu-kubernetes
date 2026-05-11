@@ -109,6 +109,14 @@ ADDONS=(
 # Set to "" to use the addon's default (broken on systemd-resolved hosts).
 DNS_UPSTREAM_SERVERS="1.1.1.1,9.9.9.9"
 
+# Force CoreDNS to use TCP when forwarding to the upstream resolvers above.
+# Set to "true" on networks that block outbound UDP/53 but allow TCP/53
+# (some corporate/VLAN egress policies). Symptom without it on such networks:
+# CoreDNS logs i/o timeouts to the upstreams, ClusterIssuer fails ACME
+# registration with "server misbehaving". Default "false" works on most
+# networks where outbound UDP/53 is open.
+DNS_FORCE_TCP="false"
+
 ################################################################################
 # CERT-MANAGER CONFIGURATION
 ################################################################################

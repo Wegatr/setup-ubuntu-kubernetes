@@ -30,11 +30,10 @@ list_available_configs() {
       | sort -u | tr '\n' ' '
 }
 
-# Handle --help early (before config loading)
-for arg in "$@"; do
-    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
-        # Minimal help — full show_help() needs common functions loaded
-        cat <<HELPEOF
+# Handle --help and no-args early (before config loading)
+# Minimal help — full show_help() needs common functions loaded
+print_early_help() {
+    cat <<HELPEOF
 USAGE: sudo ./setup-kubernetes.sh --<env> [OPTIONS]
 
 Unified script for MicroK8s setup, infrastructure deployment, and maintenance.
@@ -88,6 +87,16 @@ CONFIGURATION:
     Copy config.example to configs/config.<env> and edit it.
     Available configs: $(list_available_configs)
 HELPEOF
+}
+
+if [[ $# -eq 0 ]]; then
+    print_early_help
+    exit 0
+fi
+
+for arg in "$@"; do
+    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+        print_early_help
         exit 0
     fi
 done
@@ -772,9 +781,13 @@ add_user_to_group() {
 # (e.g. 1.1.1.1, 9.9.9.9). Without this, CoreDNS inherits the host's
 # /etc/resolv.conf which on systemd-resolved systems is 127.0.0.53 — not
 # reachable from inside pods. Idempotent: only acts if the current Corefile
-# is still using the broken default. Works on any MicroK8s version because
-# it patches the live ConfigMap (avoids `microk8s disable/enable dns`, which
-# is fragile inside scripts on 1.32+).
+# doesn't already match the desired forward config. Works on any MicroK8s
+# version because it patches the live ConfigMap (avoids `microk8s disable/
+# enable dns`, which is fragile inside scripts on 1.32+).
+#
+# Set DNS_FORCE_TCP=true to add a `force_tcp` directive — required on networks
+# that block outbound UDP/53 to public resolvers but allow TCP/53 (some
+# corporate/VLAN egress policies).
 fix_coredns_upstream() {
     if [[ -z "${DNS_UPSTREAM_SERVERS:-}" ]]; then
         return 0
@@ -786,24 +799,74 @@ fix_coredns_upstream() {
         return 0
     }
 
-    if ! echo "${current}" | grep -q 'forward \. /etc/resolv.conf'; then
-        log_ok "CoreDNS upstream already configured (not /etc/resolv.conf)"
-        return 0
+    local upstreams="${DNS_UPSTREAM_SERVERS//,/ }"
+    local force_tcp="${DNS_FORCE_TCP:-false}"
+    local desired_label="forward . ${upstreams}"
+    [[ "${force_tcp}" == "true" ]] && desired_label="${desired_label} (force_tcp)"
+
+    # Already correctly configured?
+    local has_upstreams=0 has_force_tcp=0
+    echo "${current}" | grep -qE "forward \. ${upstreams}( \{|$)" && has_upstreams=1
+    echo "${current}" | grep -q 'force_tcp' && has_force_tcp=1
+    if [[ ${has_upstreams} -eq 1 ]]; then
+        if [[ "${force_tcp}" == "true" && ${has_force_tcp} -eq 1 ]] \
+           || [[ "${force_tcp}" != "true" && ${has_force_tcp} -eq 0 ]]; then
+            log_ok "CoreDNS upstream already configured (${desired_label})"
+            return 0
+        fi
     fi
 
-    local upstreams="${DNS_UPSTREAM_SERVERS//,/ }"
-    log_step "Patching CoreDNS Corefile: forward . ${upstreams}"
+    log_step "Patching CoreDNS Corefile: ${desired_label}"
 
-    microk8s kubectl -n kube-system get cm coredns -o yaml 2>/dev/null \
-        | sed "s|forward \. /etc/resolv.conf|forward . ${upstreams}|" \
-        | microk8s kubectl apply -f - >/dev/null || {
+    # Replace the entire Corefile via patch-file. We hardcode the full Corefile
+    # template (matching MicroK8s 1.32's default) so the patch is reliable
+    # regardless of the current state.
+    local forward_block
+    if [[ "${force_tcp}" == "true" ]]; then
+        forward_block="forward . ${upstreams} {
+            force_tcp
+        }"
+    else
+        forward_block="forward . ${upstreams}"
+    fi
+
+    local patch_file
+    patch_file=$(mktemp "/tmp/coredns-patch-XXXXXX.yaml")
+    cat > "${patch_file}" <<EOF
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+          lameduck 5s
+        }
+        ready
+        log . {
+          class error
+        }
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+          pods insecure
+          fallthrough in-addr.arpa ip6.arpa
+        }
+        prometheus :9153
+        ${forward_block}
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+EOF
+
+    microk8s kubectl -n kube-system patch configmap coredns --patch-file="${patch_file}" >/dev/null || {
+        rm -f "${patch_file}"
         log_error "Failed to patch CoreDNS ConfigMap"
         return 1
     }
+    rm -f "${patch_file}"
 
     microk8s kubectl -n kube-system rollout restart deployment coredns >/dev/null 2>&1 || true
     microk8s kubectl -n kube-system rollout status deployment coredns --timeout=60s >/dev/null 2>&1 || true
-    log_ok "CoreDNS now forwarding to: ${upstreams}"
+    log_ok "CoreDNS now forwarding to: ${desired_label}"
 }
 
 enable_addons() {
@@ -2527,12 +2590,6 @@ print_summary() {
 }
 
 main() {
-    # If no arguments provided, show help and exit
-    if [[ $# -eq 0 ]]; then
-        show_help
-        exit 0
-    fi
-
     log_info "=== MicroK8s Setup Script Started ==="
     log_info "Configuration file: ${CONFIG_FILE}"
 
