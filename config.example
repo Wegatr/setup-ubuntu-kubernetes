@@ -35,7 +35,10 @@ DEPLOY_ENV="prod"
 ################################################################################
 
 # Snap channel for MicroK8s installation (e.g. "1.28/stable", "latest/stable").
-MICROK8S_CHANNEL="latest/stable"
+# Prefer a pinned release over "latest/stable" — the newest MicroK8s on a
+# brand-new Ubuntu kernel can produce iptables-backend split-brain between
+# Calico and kube-proxy and various pod-networking issues.
+MICROK8S_CHANNEL="1.32/stable"
 
 # The non-root user who will operate kubectl/helm after setup.
 # Defaults to the user who invoked sudo; override if needed.
@@ -98,6 +101,13 @@ ADDONS=(
     "cert-manager"     # Automatic TLS certificate management
     "ingress"          # Traefik-based ingress controller
 )
+
+# Upstream DNS resolvers CoreDNS uses for non-cluster lookups.
+# Required on hosts running systemd-resolved (Ubuntu default): the host's
+# /etc/resolv.conf points to 127.0.0.53, which is not reachable from inside pods,
+# so CoreDNS must be told to forward to real resolvers instead.
+# Set to "" to use the addon's default (broken on systemd-resolved hosts).
+DNS_UPSTREAM_SERVERS="1.1.1.1,9.9.9.9"
 
 ################################################################################
 # CERT-MANAGER CONFIGURATION

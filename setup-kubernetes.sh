@@ -8,20 +8,41 @@ set -uo pipefail
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFESTS_DIR="${SCRIPT_DIR}/manifests"
+CONFIGS_DIR="${SCRIPT_DIR}/configs"
+
+# Resolve config file for an env name: prefer configs/config.<env>, fall back to legacy ${SCRIPT_DIR}/config.<env>.
+resolve_config_for_env() {
+    local env="$1"
+    if [[ -f "${CONFIGS_DIR}/config.${env}" ]]; then
+        printf '%s\n' "${CONFIGS_DIR}/config.${env}"
+    elif [[ -f "${SCRIPT_DIR}/config.${env}" ]]; then
+        printf '%s\n' "${SCRIPT_DIR}/config.${env}"
+    fi
+}
+
+# List available config.* files from both locations (excluding config.example).
+list_available_configs() {
+    {
+        ls -1 "${CONFIGS_DIR}"/config.* 2>/dev/null
+        ls -1 "${SCRIPT_DIR}"/config.* 2>/dev/null
+    } | grep -Ev '/config\.example$' \
+      | sed -e "s|${CONFIGS_DIR}/|configs/|" -e "s|${SCRIPT_DIR}/||" \
+      | sort -u | tr '\n' ' '
+}
 
 # Handle --help early (before config loading)
 for arg in "$@"; do
     if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
         # Minimal help — full show_help() needs common functions loaded
-        cat << 'HELPEOF'
+        cat <<HELPEOF
 USAGE: sudo ./setup-kubernetes.sh --<env> [OPTIONS]
 
 Unified script for MicroK8s setup, infrastructure deployment, and maintenance.
 
 ENVIRONMENT (required for most operations):
-    --dev                         Use config.dev
-    --test                        Use config.test
-    --prod                        Use config.prod (default if config exists)
+    --dev                         Use configs/config.dev
+    --test                        Use configs/config.test
+    --prod                        Use configs/config.prod (default if config exists)
     --config PATH                 Use a custom configuration file
 
 SETUP:
@@ -64,8 +85,8 @@ EXAMPLES:
     sudo ./setup-kubernetes.sh --dev --show-config            # Show config
 
 CONFIGURATION:
-    Copy config.example to config.<env> and edit it.
-    Available configs: $(ls -1 "${SCRIPT_DIR}"/config.* 2>/dev/null | sed "s|${SCRIPT_DIR}/||" | tr '\n' ' ' || echo "none found")
+    Copy config.example to configs/config.<env> and edit it.
+    Available configs: $(list_available_configs)
 HELPEOF
         exit 0
     fi
@@ -92,26 +113,32 @@ done
 if [[ -n "${CUSTOM_CONFIG}" && "${CUSTOM_CONFIG}" != "next" ]]; then
     CONFIG_FILE="${CUSTOM_CONFIG}"
 elif [[ -n "${DEPLOY_ENV_ARG}" ]]; then
-    CONFIG_FILE="${SCRIPT_DIR}/config.${DEPLOY_ENV_ARG}"
+    CONFIG_FILE=$(resolve_config_for_env "${DEPLOY_ENV_ARG}")
+    if [[ -z "${CONFIG_FILE}" ]]; then
+        # Point the error at the preferred location for this env.
+        CONFIG_FILE="${CONFIGS_DIR}/config.${DEPLOY_ENV_ARG}"
+    fi
 else
-    # Auto-detect: try config.prod, then first config.* found
-    if [[ -f "${SCRIPT_DIR}/config.prod" ]]; then
-        CONFIG_FILE="${SCRIPT_DIR}/config.prod"
-    else
-        CONFIG_FILE=$(ls -1 "${SCRIPT_DIR}"/config.dev "${SCRIPT_DIR}"/config.test "${SCRIPT_DIR}"/config.prod 2>/dev/null | head -1)
-        if [[ -z "${CONFIG_FILE}" ]]; then
-            echo "ERROR: No configuration file found."
-            echo "       Copy config.example to config.<env> (e.g. config.dev) and customise it."
-            echo "       Available: $(ls -1 "${SCRIPT_DIR}"/config.* 2>/dev/null | sed "s|${SCRIPT_DIR}/||" | tr '\n' ' ' || echo "none")"
-            exit 1
+    # Auto-detect: prefer prod, then dev, then test — searching configs/ first, then legacy locations.
+    for env in prod dev test; do
+        CANDIDATE=$(resolve_config_for_env "$env")
+        if [[ -n "${CANDIDATE}" ]]; then
+            CONFIG_FILE="${CANDIDATE}"
+            break
         fi
+    done
+    if [[ -z "${CONFIG_FILE:-}" ]]; then
+        echo "ERROR: No configuration file found."
+        echo "       Copy config.example to configs/config.<env> (e.g. configs/config.dev) and customise it."
+        echo "       Available: $(list_available_configs)"
+        exit 1
     fi
 fi
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then
     echo "ERROR: Configuration file not found: ${CONFIG_FILE}"
-    echo "       Copy config.example to config.<env> and customise it."
-    echo "       Available: $(ls -1 "${SCRIPT_DIR}"/config.* 2>/dev/null | sed "s|${SCRIPT_DIR}/||" | tr '\n' ' ' || echo "none")"
+    echo "       Copy config.example to configs/config.<env> and customise it."
+    echo "       Available: $(list_available_configs)"
     exit 1
 fi
 source "${CONFIG_FILE}"
@@ -485,7 +512,7 @@ EXAMPLES:
     sudo ./setup-kubernetes.sh --show-config
 
 CONFIGURATION:
-    Edit config.<env> to customize settings.
+    Edit configs/config.<env> to customize settings.
 EOF
 }
 
@@ -585,56 +612,98 @@ show_summary() {
     fi
 }
 
-fix_pod_egress_networking() {
-    log_step "Fixing pod egress networking (Docker nftables vs Calico iptables-legacy conflict)..."
+# Detect the host's default iptables backend: "nft" (Ubuntu 22.04+) or "legacy".
+# Returns "nft" if detection fails — that's the modern default and the safer fallback.
+detect_host_iptables_backend() {
+    local target=""
+    if [[ -L /etc/alternatives/iptables ]]; then
+        target=$(readlink -f /etc/alternatives/iptables 2>/dev/null)
+    fi
+    if [[ -z "${target}" ]]; then
+        target=$(readlink -f "$(command -v iptables 2>/dev/null)" 2>/dev/null)
+    fi
+    case "${target}" in
+        *iptables-legacy*) echo "legacy" ;;
+        *)                 echo "nft" ;;
+    esac
+}
 
-    # Detect node IP from the default-route interface
-    local node_ip
-    node_ip=$(ip -4 route get 8.8.8.8 2>/dev/null | grep -oP 'src \K\S+')
-    if [[ -z "${node_ip}" ]]; then
-        log_warn "Could not detect node IP, skipping pod egress fix"
+# Ensure Calico and kube-proxy use the same iptables backend as the host's default.
+# When they diverge, they paint rules into separate kernel rule sets (one via x_tables,
+# one via nf_tables). Packets traverse BOTH sets and either side's DROP wins — pods
+# look "up" but service routing and egress silently fail. Symptom: ClusterIP timeouts
+# from pods, CoreDNS upstream lookups failing, ACME registration failing.
+# This step is a no-op once the cluster is aligned, so it's safe to call on every run.
+normalize_iptables_backend() {
+    log_step "Normalizing iptables backend (Calico + kube-proxy + host all on one backend)..."
+
+    local host_backend
+    host_backend=$(detect_host_iptables_backend)
+    log_info "Host iptables backend: ${host_backend}"
+
+    local felix_value other_cmd
+    case "${host_backend}" in
+        nft)    felix_value="NFT";    other_cmd="iptables-legacy" ;;
+        legacy) felix_value="Legacy"; other_cmd="iptables-nft" ;;
+        *)
+            log_warn "Could not detect host iptables backend — leaving cluster alone"
+            return 0
+            ;;
+    esac
+
+    # Force Felix to the host backend (idempotent — same value on re-runs).
+    log_info "Patching FelixConfiguration: iptablesBackend=${felix_value}"
+    microk8s kubectl patch felixconfiguration default --type=merge \
+        -p "{\"spec\":{\"iptablesBackend\":\"${felix_value}\"}}" >/dev/null 2>&1 || {
+        log_warn "FelixConfiguration patch failed (Calico CRDs may not be ready yet) — continuing"
+    }
+
+    # Check the OTHER backend for stale Calico/kube-proxy chains.
+    local stale
+    stale=$("${other_cmd}" -nvL 2>/dev/null | grep -cE "^Chain (cali|KUBE)" || echo 0)
+    if [[ "${stale}" -eq 0 ]]; then
+        log_ok "Backends already aligned — no stale chains in ${other_cmd}"
         return 0
     fi
 
-    # Calico pod CIDR (from default MicroK8s Calico IPPool)
-    local pod_cidr="10.1.0.0/16"
+    log_warn "Found ${stale} stale chains in ${other_cmd} — flushing and forcing Calico + kube-proxy to repaint"
 
-    # Check if the SNAT rule already exists
-    if iptables -t nat -C POSTROUTING -s "${pod_cidr}" ! -d "${pod_cidr}" -o eth0 -j SNAT --to-source "${node_ip}" 2>/dev/null; then
-        log_ok "Pod egress SNAT rule already exists"
-    else
-        log_info "Adding SNAT rule for pod egress: ${pod_cidr} -> ${node_ip}"
-        iptables -t nat -I POSTROUTING 1 -s "${pod_cidr}" ! -d "${pod_cidr}" -o eth0 -j SNAT --to-source "${node_ip}" || {
-            log_error "Failed to add SNAT rule"
-            return 1
-        }
-        log_ok "SNAT rule added"
+    # Flush the old backend. Calico and kube-proxy will repaint within seconds —
+    # Calico via the rollout restart below, kube-proxy via its periodic sync after
+    # we restart kubelite.
+    local table
+    for table in filter nat mangle raw; do
+        "${other_cmd}" -t "${table}" -F 2>/dev/null || true
+        "${other_cmd}" -t "${table}" -X 2>/dev/null || true
+    done
+
+    log_info "Restarting calico-node so Felix repaints in ${host_backend}..."
+    microk8s kubectl -n kube-system rollout restart daemonset/calico-node >/dev/null 2>&1 || true
+    microk8s kubectl -n kube-system rollout status daemonset/calico-node --timeout=60s >/dev/null 2>&1 || true
+
+    log_info "Restarting kubelite so kube-proxy repaints in ${host_backend}..."
+    # systemctl restart is safe from inside a sudo'd script (unlike `microk8s start`,
+    # which on 1.32 errors with "cannot invoke snapctl operation commands from outside of a snap").
+    systemctl restart snap.microk8s.daemon-kubelite.service || {
+        log_warn "kubelite restart failed — kube-proxy will repaint on its next periodic sync"
+    }
+
+    log_info "Waiting for MicroK8s to be ready after repaint..."
+    microk8s status --wait-ready --timeout="${MICROK8S_READY_TIMEOUT}" >/dev/null 2>&1 || {
+        log_warn "MicroK8s slow to settle after repaint — continuing"
+    }
+    # Give kube-proxy a chance to repaint after kubelite restart.
+    sleep 5
+
+    # Verify the repaint succeeded.
+    stale=$("${other_cmd}" -nvL 2>/dev/null | grep -cE "^Chain (cali|KUBE)" || echo 0)
+    if [[ "${stale}" -gt 0 ]]; then
+        log_warn "${other_cmd} still has ${stale} cali/KUBE chains after repaint — investigate manually"
+        return 1
     fi
 
-    # Make it persistent via a systemd service
-    local service_file="/etc/systemd/system/microk8s-pod-egress.service"
-    if [[ ! -f "${service_file}" ]]; then
-        log_info "Creating systemd service for persistent pod egress fix..."
-        cat > "${service_file}" << EOF
-[Unit]
-Description=Fix MicroK8s pod egress SNAT (Docker nftables conflict workaround)
-After=snap.microk8s.daemon-kubelite.service
-Requires=snap.microk8s.daemon-kubelite.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/sbin/iptables -t nat -I POSTROUTING 1 -s ${pod_cidr} ! -d ${pod_cidr} -o eth0 -j SNAT --to-source ${node_ip}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        systemctl daemon-reload
-        systemctl enable microk8s-pod-egress.service
-        log_ok "Systemd service created and enabled"
-    else
-        log_ok "Systemd service already exists"
-    fi
+    log_ok "iptables backend normalized: only ${host_backend} carries cali/KUBE chains"
+    return 0
 }
 
 install_microk8s() {
@@ -699,31 +768,78 @@ add_user_to_group() {
     return 0
 }
 
+# Patch CoreDNS's Corefile to forward external lookups to explicit resolvers
+# (e.g. 1.1.1.1, 9.9.9.9). Without this, CoreDNS inherits the host's
+# /etc/resolv.conf which on systemd-resolved systems is 127.0.0.53 — not
+# reachable from inside pods. Idempotent: only acts if the current Corefile
+# is still using the broken default. Works on any MicroK8s version because
+# it patches the live ConfigMap (avoids `microk8s disable/enable dns`, which
+# is fragile inside scripts on 1.32+).
+fix_coredns_upstream() {
+    if [[ -z "${DNS_UPSTREAM_SERVERS:-}" ]]; then
+        return 0
+    fi
+
+    local current
+    current=$(microk8s kubectl -n kube-system get cm coredns -o jsonpath='{.data.Corefile}' 2>/dev/null) || {
+        log_info "CoreDNS ConfigMap not present yet, skipping upstream patch"
+        return 0
+    }
+
+    if ! echo "${current}" | grep -q 'forward \. /etc/resolv.conf'; then
+        log_ok "CoreDNS upstream already configured (not /etc/resolv.conf)"
+        return 0
+    fi
+
+    local upstreams="${DNS_UPSTREAM_SERVERS//,/ }"
+    log_step "Patching CoreDNS Corefile: forward . ${upstreams}"
+
+    microk8s kubectl -n kube-system get cm coredns -o yaml 2>/dev/null \
+        | sed "s|forward \. /etc/resolv.conf|forward . ${upstreams}|" \
+        | microk8s kubectl apply -f - >/dev/null || {
+        log_error "Failed to patch CoreDNS ConfigMap"
+        return 1
+    }
+
+    microk8s kubectl -n kube-system rollout restart deployment coredns >/dev/null 2>&1 || true
+    microk8s kubectl -n kube-system rollout status deployment coredns --timeout=60s >/dev/null 2>&1 || true
+    log_ok "CoreDNS now forwarding to: ${upstreams}"
+}
+
 enable_addons() {
     log_step "Enabling MicroK8s addons..."
 
     local failed_addons=()
 
     for addon in "${ADDONS[@]}"; do
-        # Check if already enabled
+        # For the dns addon, pass explicit upstream resolvers on first-time enable.
+        # If DNS was auto-enabled by `microk8s install`, fix_coredns_upstream below
+        # patches the live ConfigMap instead.
+        local enable_arg="${addon}"
+        if [[ "${addon}" == "dns" && -n "${DNS_UPSTREAM_SERVERS:-}" ]]; then
+            enable_arg="dns:${DNS_UPSTREAM_SERVERS}"
+        fi
+
         if is_addon_enabled "${addon}"; then
             log_ok "Addon '${addon}' already enabled, skipping"
             continue
         fi
 
-        # Enable addon
-        log_info "Enabling addon '${addon}'..."
-        microk8s enable "${addon}" || {
+        log_info "Enabling addon '${enable_arg}'..."
+        microk8s enable "${enable_arg}" || {
             log_error "Failed to enable addon '${addon}'"
             failed_addons+=("${addon}")
             continue
         }
 
-        # Wait for addon to be enabled
         wait_for_addon_enabled "${addon}" || {
             log_warn "Addon '${addon}' enabled but verification timeout"
         }
     done
+
+    # After all addons are up, patch CoreDNS if it's still using the broken default.
+    # Runs whether DNS was auto-enabled at install time or enabled by us above.
+    fix_coredns_upstream || log_warn "CoreDNS upstream fix incomplete"
 
     if [[ ${#failed_addons[@]} -gt 0 ]]; then
         log_error "Failed to enable addons: ${failed_addons[*]}"
@@ -2558,7 +2674,7 @@ main() {
         install_microk8s || die "MicroK8s installation failed"
         add_user_to_group || log_warn "Failed to add user to group"
         enable_addons || die "Addon enablement failed"
-        fix_pod_egress_networking || log_warn "Pod egress fix incomplete"
+        normalize_iptables_backend || log_warn "iptables backend normalization incomplete — pod networking may be flaky"
     fi
 
     # Configure storage

@@ -1,4 +1,5 @@
 # Environment-specific configs (contain real domains, emails, secrets)
+configs/
 config.dev
 config.test
 config.prod
