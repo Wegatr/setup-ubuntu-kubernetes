@@ -795,6 +795,13 @@ enable_addons() {
     # Runs whether DNS was auto-enabled at install time or enabled by us above.
     fix_coredns_upstream || log_warn "CoreDNS upstream fix incomplete"
 
+    # Align Calico's iptables backend with the host's default. Modern Calico
+    # defaults to Auto-detect, but on bleeding-edge kernels (notably 26.04 /
+    # kernel 6.12) the auto-detect can pick Legacy while the host runs nft —
+    # the resulting split-brain shows up as pod-to-internet DNS lookups timing
+    # out from CoreDNS to its upstream resolvers. Safe to call on every run.
+    align_calico_backend || log_warn "Calico backend alignment incomplete"
+
     # Patch the nginx-ingress controller DaemonSet to use hostNetwork.
     # Without this, the hostPort on the controller pod isn't plumbed to the
     # host's :80/:443 (Calico CNI doesn't include portmap by default), so
@@ -808,6 +815,61 @@ enable_addons() {
 
     log_ok "All addons enabled successfully"
     return 0
+}
+
+# Detect the host's default iptables backend (nft or legacy).
+# Returns "nft" if detection fails — modern default and safer fallback.
+detect_host_iptables_backend() {
+    local target=""
+    [[ -L /etc/alternatives/iptables ]] && target=$(readlink -f /etc/alternatives/iptables 2>/dev/null)
+    [[ -z "${target}" ]] && target=$(readlink -f "$(command -v iptables 2>/dev/null)" 2>/dev/null)
+    case "${target}" in
+        *iptables-legacy*) echo "legacy" ;;
+        *)                 echo "nft" ;;
+    esac
+}
+
+# Force Calico's Felix to use a specific iptables backend so it can't disagree
+# with the host. We only patch FelixConfiguration and restart calico-node —
+# we don't touch iptables rules directly. The earlier version of this function
+# flushed the "other" backend's tables, which on a working host wiped the CNI
+# portmap DNAT rules and silently broke hostPort plumbing for the ingress
+# controller. Felix will handle stale-rule cleanup on its own during repaint.
+align_calico_backend() {
+    if ! microk8s kubectl get felixconfiguration default &>/dev/null; then
+        log_info "FelixConfiguration not present (yet) — skipping Calico backend alignment"
+        return 0
+    fi
+
+    local host_backend felix_target
+    host_backend=$(detect_host_iptables_backend)
+    case "${host_backend}" in
+        nft)    felix_target="NFT" ;;
+        legacy) felix_target="Legacy" ;;
+        *)      log_warn "Could not detect host iptables backend — skipping"; return 0 ;;
+    esac
+
+    local current
+    current=$(microk8s kubectl get felixconfiguration default \
+        -o jsonpath='{.spec.iptablesBackend}' 2>/dev/null)
+    # "Auto" or empty means Felix will pick the right backend itself.
+    if [[ "${current}" == "${felix_target}" || "${current}" == "Auto" || -z "${current}" ]]; then
+        log_ok "Calico Felix backend OK (${current:-Auto}, host=${host_backend})"
+        return 0
+    fi
+
+    log_step "Aligning Calico Felix backend: ${current} → ${felix_target} (host=${host_backend})"
+    microk8s kubectl patch felixconfiguration default --type=merge \
+        -p "{\"spec\":{\"iptablesBackend\":\"${felix_target}\"}}" >/dev/null || {
+        log_error "Failed to patch FelixConfiguration"
+        return 1
+    }
+
+    microk8s kubectl -n kube-system rollout restart daemonset/calico-node >/dev/null 2>&1 || true
+    microk8s kubectl -n kube-system rollout status daemonset/calico-node --timeout=120s >/dev/null 2>&1 || {
+        log_warn "calico-node rollout did not complete within 120s — investigate manually"
+    }
+    log_ok "Calico Felix now on ${felix_target}"
 }
 
 # Patch the nginx-ingress controller DaemonSet to use hostNetwork: true and

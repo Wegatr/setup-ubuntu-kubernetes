@@ -242,7 +242,61 @@ runtime by `render_manifest()`:
 
 ## Requirements
 
-- Ubuntu Linux (22.04+ recommended)
+- Ubuntu Linux 22.04 / 24.04 / 26.04 LTS
 - Root/sudo access
 - Internet connectivity (for snap, Helm repos, Let's Encrypt, CLI downloads)
 - DNS records pointing `*.{env}.{domain}` to the server's public IP
+
+## Known issues / OS-specific notes
+
+These are wired into the script and apply automatically — listed here so you
+know what's happening and what config knob controls each one.
+
+### Ubuntu 26.04 (Resolute Raccoon, kernel 7.0) + MicroK8s — iptables backend split-brain
+
+On Ubuntu 26.04 ([kernel 7.0](https://www.knightli.com/en/2026/05/01/linux-kernel-7-0-new-features/),
+released 12 April 2026) with MicroK8s `latest/stable`, Calico's Felix can
+auto-detect the wrong iptables backend (Legacy) while kube-proxy and the host
+both use `iptables-nft`. The two backends paint into separate kernel rule
+sets — packets traverse both, and packet forwarding for **pod-to-internet
+traffic silently fails**. Symptom: CoreDNS times out forwarding to upstream
+resolvers, ClusterIssuer fails ACME registration, all HTTP-01 challenges fail.
+
+Mitigations the script applies on every install:
+
+1. `MICROK8S_CHANNEL="1.32/stable"` (pinned in `config.example`) avoids the
+   bleeding-edge releases where this is most visible.
+2. `align_calico_backend()` patches `FelixConfiguration.spec.iptablesBackend`
+   to match the host's actual backend (NFT on 22.04+) and restarts
+   `calico-node`. Idempotent — re-runs are a no-op once aligned.
+3. `fix_ingress_hostnetwork()` puts the nginx-ingress controller on
+   `hostNetwork: true` so it doesn't depend on the CNI `portmap` plugin
+   (which is what the old, more aggressive iptables-flush fix used to break).
+
+References:
+[canonical/microk8s#2180](https://github.com/canonical/microk8s/issues/2180),
+[canonical/microk8s#4686](https://github.com/canonical/microk8s/issues/4686).
+
+### Networks that block outbound UDP/53
+
+Some VPS / corporate / VLAN egress policies allow TCP/53 but drop UDP/53 to
+public DNS resolvers (1.1.1.1, 8.8.8.8, 9.9.9.9). systemd-resolved on the host
+hides this by silently falling back to TCP; CoreDNS doesn't. Symptom: CoreDNS
+logs `i/o timeout` to its upstream resolvers, ClusterIssuer stuck at
+`ErrRegisterACMEAccount`.
+
+Set `DNS_FORCE_TCP="true"` in your `configs/config.<env>` and the script will
+add a `force_tcp` directive to CoreDNS's `forward` block. Default is `"false"`
+so it doesn't slow down DNS on networks where UDP/53 is open.
+
+### Inbound HTTP-01 challenge
+
+cert-manager validates ownership of `kube/argo/vault.<env>.<domain>` over
+plain HTTP on port 80 from the public internet. Two prerequisites that aren't
+checked automatically:
+
+1. DNS A records for the three hostnames must point at this host's public IP.
+2. The host's port 80 must be reachable from outside (no upstream firewall
+   blocking inbound :80). The script's `fix_ingress_hostnetwork()` ensures
+   the host actually listens on :80 in the first place — but it can't fix a
+   firewall higher up.
