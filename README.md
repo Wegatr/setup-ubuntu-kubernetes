@@ -3,29 +3,34 @@
 Automated, idempotent setup of a **MicroK8s** Kubernetes cluster on Ubuntu with
 optional infrastructure applications (Dashboard, ArgoCD, Vault).
 
+All examples below use `<env>` as a placeholder — replace with one of
+`dev`, `test`, or `prod` to match the config file you're using.
+
 ## Quick start
 
 ```bash
-# 1. Copy the example config and edit it
-cp config.example config.dev
-vim config.dev          # set CLUSTER_NAME, DOMAIN_SUFFIX, LETSENCRYPT_EMAIL, ...
+# 1. Copy the example config and edit it (substitute <env>)
+cp config.example configs/config.<env>
+vim configs/config.<env>   # set CLUSTER_NAME, DOMAIN_SUFFIX, LETSENCRYPT_EMAIL, ...
 
 # 2. Install MicroK8s + addons + CLI tools
-sudo ./setup-kubernetes.sh --dev
+sudo ./setup-kubernetes.sh --<env>
 
 # 3. Deploy infrastructure apps
-sudo ./setup-kubernetes.sh --dev --deploy-all
+sudo ./setup-kubernetes.sh --<env> --deploy-all
 
 # 4. Check everything is running
-sudo ./setup-kubernetes.sh --dev --status
+sudo ./setup-kubernetes.sh --<env> --status
 ```
 
 ## Repository structure
 
 ```
 config.example           Documented config template (checked in)
-config.dev / .test / .prod   Environment configs (gitignored)
+configs/config.<env>     Per-env configs (gitignored)
 setup-kubernetes.sh      Main script — install, deploy, maintain
+reset-cluster.sh         Robust cluster wipe (preserves /mnt/data, doesn't
+                         touch this repo folder)
 common-kubernetes.sh     Shared function library
 manage-secrets.sh        Backup/restore credentials (GPG encrypted)
 manage-secrets.config    Lists which secret files to backup
@@ -105,75 +110,115 @@ commands for a disabled app are silently skipped.
 
 ```bash
 # Full install (MicroK8s + addons + storage + cert-manager + CLI tools + aliases)
-sudo ./setup-kubernetes.sh --dev
+sudo ./setup-kubernetes.sh --<env>
 
 # Install only specific components
-sudo ./setup-kubernetes.sh --dev --install-microk8s
-sudo ./setup-kubernetes.sh --dev --configure-storage
-sudo ./setup-kubernetes.sh --dev --configure-cert-manager
-sudo ./setup-kubernetes.sh --dev --install-cli-tools
-sudo ./setup-kubernetes.sh --dev --setup-aliases
+sudo ./setup-kubernetes.sh --<env> --install-microk8s
+sudo ./setup-kubernetes.sh --<env> --configure-storage
+sudo ./setup-kubernetes.sh --<env> --configure-cert-manager
+sudo ./setup-kubernetes.sh --<env> --install-cli-tools
+sudo ./setup-kubernetes.sh --<env> --setup-aliases
 
 # Skip specific components
-sudo ./setup-kubernetes.sh --dev --skip-storage --skip-aliases
+sudo ./setup-kubernetes.sh --<env> --skip-storage --skip-aliases
 ```
 
 ### Phase 2 — Infrastructure deployment
 
 ```bash
 # Deploy all enabled apps
-sudo ./setup-kubernetes.sh --dev --deploy-all
+sudo ./setup-kubernetes.sh --<env> --deploy-all
 
 # Deploy individually
-sudo ./setup-kubernetes.sh --dev --deploy-kube
-sudo ./setup-kubernetes.sh --dev --deploy-argocd
-sudo ./setup-kubernetes.sh --dev --deploy-vault
+sudo ./setup-kubernetes.sh --<env> --deploy-kube
+sudo ./setup-kubernetes.sh --<env> --deploy-argocd
+sudo ./setup-kubernetes.sh --<env> --deploy-vault
 
 # Upgrade to latest chart version
-sudo ./setup-kubernetes.sh --dev --upgrade-kube
-sudo ./setup-kubernetes.sh --dev --upgrade-argocd
-sudo ./setup-kubernetes.sh --dev --upgrade-vault
+sudo ./setup-kubernetes.sh --<env> --upgrade-kube
+sudo ./setup-kubernetes.sh --<env> --upgrade-argocd
+sudo ./setup-kubernetes.sh --<env> --upgrade-vault
 
 # Uninstall (Helm uninstall + cleanup resources)
-sudo ./setup-kubernetes.sh --dev --uninstall-kube
-sudo ./setup-kubernetes.sh --dev --uninstall-argocd
-sudo ./setup-kubernetes.sh --dev --uninstall-vault
+sudo ./setup-kubernetes.sh --<env> --uninstall-kube
+sudo ./setup-kubernetes.sh --<env> --uninstall-argocd
+sudo ./setup-kubernetes.sh --<env> --uninstall-vault
 ```
 
 ### Maintenance
 
 ```bash
 # Show pods, ingresses, certificates for all apps
-sudo ./setup-kubernetes.sh --dev --status
+sudo ./setup-kubernetes.sh --<env> --status
 
 # Show resolved config (hostnames, enabled apps)
-./setup-kubernetes.sh --dev --show-config
+./setup-kubernetes.sh --<env> --show-config
 
 # Show access URLs
-sudo ./setup-kubernetes.sh --dev --show-urls
+sudo ./setup-kubernetes.sh --<env> --show-urls
 
 # Show saved credentials
-sudo ./setup-kubernetes.sh --dev --show-credentials
+sudo ./setup-kubernetes.sh --<env> --show-credentials
 
 # Get dashboard access token
-sudo ./setup-kubernetes.sh --dev --get-kube-token
+sudo ./setup-kubernetes.sh --<env> --get-kube-token
 
 # Verify TLS certificates
-sudo ./setup-kubernetes.sh --dev --verify-tls
+sudo ./setup-kubernetes.sh --<env> --verify-tls
 
 # Restart an app
-sudo ./setup-kubernetes.sh --dev --restart-app kube
-sudo ./setup-kubernetes.sh --dev --restart-app argocd
-sudo ./setup-kubernetes.sh --dev --restart-app vault
+sudo ./setup-kubernetes.sh --<env> --restart-app kube
+sudo ./setup-kubernetes.sh --<env> --restart-app argocd
+sudo ./setup-kubernetes.sh --<env> --restart-app vault
 
 # Update ingress hostnames (after changing config)
-sudo ./setup-kubernetes.sh --dev --update-ingress all
+sudo ./setup-kubernetes.sh --<env> --update-ingress all
 
 # Show logs
-sudo ./setup-kubernetes.sh --dev --logs vault
+sudo ./setup-kubernetes.sh --<env> --logs vault
 
 # Update all CLI tools to latest versions
-sudo ./setup-kubernetes.sh --dev --update-cli-tools
+sudo ./setup-kubernetes.sh --<env> --update-cli-tools
+```
+
+### Reset (wipe and start fresh)
+
+If a previous install left things in a broken state, you're switching MicroK8s
+channels, or you just want a confident clean slate:
+
+```bash
+sudo ./reset-cluster.sh --<env>          # required — reads STORAGE_PATH and
+                                         # STORAGE_DIRECTORY from configs/config.<env>
+sudo ./reset-cluster.sh --<env> --yes    # skip the confirmation prompt
+```
+
+The env flag is **required** — the reset reads `STORAGE_PATH` and
+`STORAGE_DIRECTORY` from your config so it knows which mount to preserve
+(`/mnt/data` is just one possible value — your config might use `/data`,
+`/srv/k8s`, or any other path) and which subdirectory to wipe. Hard-coding
+`/mnt/data` would be wrong on hosts that mount their data disk elsewhere.
+
+What the reset does:
+
+- Removes the MicroK8s snap (force-kills if stuck), wipes `/var/snap/microk8s/`,
+  kills lingering kubelite/containerd/calico processes.
+- Cleans stale `cali-*`, `KUBE-*`, `CNI-*` chains from both iptables-nft and
+  iptables-legacy, plus any native nft tables (`kube-proxy`, `calico`, etc.).
+- Removes `/etc/cni/net.d/`, `/opt/cni/bin/`, Calico vxlan + cali veth
+  interfaces, and any pod-CIDR blackhole routes.
+- Wipes the PV data directory at `STORAGE_DIRECTORY` —
+  **but never unmounts `STORAGE_PATH` or touches the disk underneath**.
+- Removes user-level state: `~/secrets/`, `~/.kube/`, `~/.cache/helm`,
+  `~/.config/helm`, and the `kubectl`/`helm` aliases from `~/.bashrc`.
+- Removes script system state: `/var/lib/kubernetes-setup/`, `/var/log/kubernetes-setup/`.
+- **Does not touch any file inside this repo folder.** Configs, manifests,
+  and scripts stay intact so you can immediately re-run `setup-kubernetes.sh`.
+
+After reset, reinstall:
+
+```bash
+sudo ./setup-kubernetes.sh --<env>
+sudo ./setup-kubernetes.sh --<env> --deploy-all
 ```
 
 ### Force mode
@@ -182,7 +227,7 @@ Add `--force` to any command to skip "already exists" checks and
 reinstall/redeploy from scratch:
 
 ```bash
-sudo ./setup-kubernetes.sh --dev --deploy-kube --force
+sudo ./setup-kubernetes.sh --<env> --deploy-kube --force
 ```
 
 ## Credentials
