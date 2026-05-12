@@ -637,7 +637,48 @@ install_microk8s() {
     }
 
     log_ok "MicroK8s installed successfully (version: $(get_microk8s_version))"
+
+    # Configure kube-proxy to use native nftables mode BEFORE any addon is
+    # enabled. MicroK8s 1.35+ defaults kube-proxy to ipvs/iptables-legacy,
+    # which then conflicts with Calico Felix (NFT) — host-to-pod and
+    # pod-to-pod traffic gets dropped because rules end up in two different
+    # backends. Setting this immediately after install means kube-proxy
+    # paints to native nf_tables on its first run; no legacy/IPVS rules
+    # ever get written.
+    configure_kube_proxy_nftables || log_warn "kube-proxy nftables configuration incomplete"
+
     return 0
+}
+
+# Pin kube-proxy to native nftables mode by appending --proxy-mode=nftables
+# to /var/snap/microk8s/current/args/kube-proxy and restarting kubelite.
+# Idempotent: skips both the append and the restart if already configured.
+configure_kube_proxy_nftables() {
+    local args_file="/var/snap/microk8s/current/args/kube-proxy"
+
+    if [[ ! -f "${args_file}" ]]; then
+        log_warn "kube-proxy args file not present at ${args_file} — skipping"
+        return 0
+    fi
+
+    if grep -q -- '--proxy-mode=' "${args_file}"; then
+        log_ok "kube-proxy proxy-mode already set: $(grep -- '--proxy-mode=' "${args_file}")"
+        return 0
+    fi
+
+    log_step "Setting kube-proxy --proxy-mode=nftables..."
+    echo '--proxy-mode=nftables' >> "${args_file}" || {
+        log_error "Failed to write to ${args_file}"
+        return 1
+    }
+
+    log_info "Restarting kubelite to pick up the new kube-proxy args..."
+    systemctl restart snap.microk8s.daemon-kubelite.service || {
+        log_warn "kubelite restart failed — kube-proxy will pick up the new mode on the next snap restart"
+    }
+
+    wait_for_microk8s_ready 120 || log_warn "MicroK8s slow to settle after kubelite restart"
+    log_ok "kube-proxy now using native nftables proxier"
 }
 
 add_user_to_group() {
