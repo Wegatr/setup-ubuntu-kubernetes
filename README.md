@@ -6,43 +6,58 @@ optional infrastructure applications (Dashboard, ArgoCD, Vault).
 All examples below use `<env>` as a placeholder — replace with one of
 `dev`, `test`, or `prod` to match the config file you're using.
 
+## Repository layout
+
+```
+.
+├── README.md             You are here.
+├── CLAUDE.md             Notes for Claude Code sessions in this repo.
+└── setup-kubernetes/     All scripts, manifests, and per-env configs.
+    ├── setup-kubernetes.sh       Main script — install, deploy, maintain.
+    ├── reset-cluster.sh          Robust cluster wipe (preserves data mount).
+    ├── common-kubernetes.sh      Shared function library.
+    ├── manage-secrets.sh         Backup/restore credentials (GPG encrypted).
+    ├── manage-secrets.config     Files included in the secrets backup.
+    ├── config.example            Documented config template (checked in).
+    ├── configs/                  Per-env configs `config.<env>` (gitignored).
+    └── manifests/
+        ├── kube/                 Headlamp (Dashboard) Helm values + Ingress.
+        ├── argocd/               ArgoCD Helm values (Ingress in values.yaml).
+        └── vault/                Vault Helm values + Traefik IngressRoute,
+                                  ServersTransport, cert-manager Certificate.
+```
+
+All scripts live inside `setup-kubernetes/` and compute their own `SCRIPT_DIR`,
+so you run them from inside that directory. The repo root stays clean.
+
 ## Quick start
 
 ```bash
+cd setup-kubernetes/
+
 # 1. Copy the example config and edit it (substitute <env>)
 cp config.example configs/config.<env>
 vim configs/config.<env>   # set CLUSTER_NAME, DOMAIN_SUFFIX, LETSENCRYPT_EMAIL, ...
 
-# 2. Install MicroK8s + addons + CLI tools
+# 2. (Pre-work outside the script) Add DNS A records for the three hostnames
+#    `kube.<env>.<DOMAIN_SUFFIX>`, `argo.<env>.<DOMAIN_SUFFIX>`,
+#    `vault.<env>.<DOMAIN_SUFFIX>`  →  this host's public IPv4.
+#    Wildcard `*.<env>.<DOMAIN_SUFFIX>` also works. The script will fail-fast
+#    at the start of `--deploy-all` if any of these don't resolve.
+
+# 3. Install MicroK8s + addons + CLI tools
 sudo ./setup-kubernetes.sh --<env>
 
-# 3. Deploy infrastructure apps
+# 4. Deploy infrastructure apps (idempotent)
 sudo ./setup-kubernetes.sh --<env> --deploy-all
 
-# 4. Check everything is running
-sudo ./setup-kubernetes.sh --<env> --status
-```
-
-## Repository structure
-
-```
-config.example           Documented config template (checked in)
-configs/config.<env>     Per-env configs (gitignored)
-setup-kubernetes.sh      Main script — install, deploy, maintain
-reset-cluster.sh         Robust cluster wipe (preserves /mnt/data, doesn't
-                         touch this repo folder)
-common-kubernetes.sh     Shared function library
-manage-secrets.sh        Backup/restore credentials (GPG encrypted)
-manage-secrets.config    Lists which secret files to backup
-manifests/
-  kube/                  Headlamp (Dashboard) Helm values + Ingress
-  argocd/                ArgoCD Helm values (Ingress configured in values.yaml)
-  vault/                 Vault Helm values, Traefik IngressRoute, ServersTransport, cert
+# 5. Check everything is running (expect 32/32 OK)
+sudo ./setup-kubernetes.sh --<env> --check
 ```
 
 ## Configuration
 
-All settings live in a single config file per environment (`config.<env>`).
+All settings live in a single config file per environment (`configs/config.<env>`).
 Copy `config.example` to get started — every variable is documented with
 comments explaining what it does and when to change it.
 
@@ -50,9 +65,9 @@ The script loads the right config automatically based on the environment flag:
 
 | Flag | Config file loaded |
 |---|---|
-| `--dev` | `config.dev` |
-| `--test` | `config.test` |
-| `--prod` (default) | `config.prod` |
+| `--dev` | `configs/config.dev` |
+| `--test` | `configs/config.test` |
+| `--prod` (default) | `configs/config.prod` |
 | `--config PATH` | Custom path |
 
 ### Required settings
@@ -87,9 +102,6 @@ STORAGE_DEVICE="/dev/sdb1"
 STORAGE_DIRECTORY="/mnt/data/kubernetes-storage"
 ```
 
-This is useful when you want PV data on a larger or faster disk, or on a disk
-that is backed up separately.
-
 ### Infrastructure apps
 
 Three apps can be deployed on top of MicroK8s. Each is optional and controlled
@@ -105,6 +117,8 @@ Set `ENABLE_*="false"` to skip an app entirely. Deploy, upgrade, and uninstall
 commands for a disabled app are silently skipped.
 
 ## Usage
+
+All commands assume `cd setup-kubernetes/` first.
 
 ### Phase 1 — Cluster installation
 
@@ -144,6 +158,11 @@ sudo ./setup-kubernetes.sh --<env> --uninstall-kube
 sudo ./setup-kubernetes.sh --<env> --uninstall-argocd
 sudo ./setup-kubernetes.sh --<env> --uninstall-vault
 ```
+
+Before any `--deploy-*` runs, the script does a DNS pre-flight: it resolves
+each enabled host (`kube.<env>.<domain>`, etc.). If any fail, it aborts with
+the host's detected public IPv4 and an explicit "add an A record …" message,
+instead of letting cert-manager hang on HTTP-01 challenges for 25+ minutes.
 
 ### Maintenance
 
@@ -239,9 +258,15 @@ After deploying infrastructure apps, credentials are automatically saved to
 |---|---|
 | `kube-<env>.txt` | Dashboard URL + permanent bearer token |
 | `argocd-<env>.txt` | ArgoCD URL + admin username + initial password |
-| `vault-<env>.txt` | Vault URL + initialization instructions |
+| `vault-<env>.txt` | Vault URL + 5 unseal keys + root token |
 
 Files are created with `chmod 600` (owner-only access).
+
+> Vault's unseal keys and root token are **irrecoverable**. If you lose
+> `vault-<env>.txt` and Vault is sealed, the data is gone. Back this file
+> up offline (or via `manage-secrets.sh --backup`) before doing anything
+> else after `--deploy-all`. The deploy script will not overwrite an
+> existing `vault-<env>.txt` on re-runs.
 
 ### Backup and restore
 
@@ -273,8 +298,8 @@ The file patterns to backup are defined in `manage-secrets.config`.
 
 ## Manifest templates
 
-Manifests under `manifests/` use placeholder tokens that are replaced at
-runtime by `render_manifest()`:
+Manifests under `setup-kubernetes/manifests/` use placeholder tokens that are
+replaced at runtime by `render_manifest()`:
 
 | Placeholder | Replaced with |
 |---|---|
@@ -290,7 +315,10 @@ runtime by `render_manifest()`:
 - Ubuntu Linux 22.04 / 24.04 / 26.04 LTS
 - Root/sudo access
 - Internet connectivity (for snap, Helm repos, Let's Encrypt, CLI downloads)
-- DNS records pointing `*.{env}.{domain}` to the server's public IP
+- DNS A records pointing `kube/argo/vault.{env}.{domain}` to the host's public
+  IPv4 — the deploy step fails fast if these are missing.
+- Inbound port 80 from the public internet reachable on the host (for HTTP-01
+  challenges).
 
 ## Known issues / OS-specific notes
 
@@ -354,11 +382,37 @@ so it doesn't slow down DNS on networks where UDP/53 is open.
 ### Inbound HTTP-01 challenge
 
 cert-manager validates ownership of `kube/argo/vault.<env>.<domain>` over
-plain HTTP on port 80 from the public internet. Two prerequisites that
-aren't checked automatically:
+plain HTTP on port 80 from the public internet. Two prerequisites that the
+script enforces or checks:
 
-1. DNS A records for the three hostnames must point at this host's public IP.
-2. The host's port 80 must be reachable from the internet (no upstream
-   firewall blocking inbound :80). With MicroK8s 1.36's Traefik addon the
-   controller binds :80/:443 on the node by default — verify with
-   `sudo ss -tln | grep -E ':(80|443) '`.
+1. **DNS A records** for the three hostnames must point at this host's public IP.
+   The script's `check_ingress_dns_resolves` pre-flight aborts the deploy if
+   any of them don't resolve, printing the detected public IPv4 so you can
+   add the missing record. (cert-manager itself would otherwise hang on the
+   HTTP-01 self-check for ~25 minutes and save failure placeholders into
+   `~/secrets/*-<env>.txt` — most importantly losing the Vault unseal keys.)
+2. **Inbound port 80** must be reachable from the internet. With MicroK8s 1.35's
+   Traefik addon the controller binds :80/:443 on the node by default — verify
+   with `sudo ss -tln | grep -E ':(80|443) '`. The script does not auto-check
+   this; you'll see HTTP-01 challenges stuck `Waiting for HTTP-01 challenge
+   propagation` if port 80 isn't reachable.
+
+### Vault init recovery
+
+If Vault's TLS Secret isn't ready when `deploy_vault` runs (e.g. cert-manager
+still issuing the cert), `vault-0` stays in `ContainerCreating` and the
+initial `vault operator init` `kubectl exec` returns nothing. Previously
+this dropped a "Status: Initialization failed" placeholder into
+`~/secrets/vault-<env>.txt` and re-runs of `--deploy-all` did not retry
+(because the Helm release already existed).
+
+`deploy_vault` now:
+
+- skips only the Helm install when the release exists, then still runs the
+  init+unseal step on every invocation, and
+- pre-checks that `vault-0` is exec-able before attempting init, so the
+  "Initialization failed" placeholder is only written when we genuinely
+  reached `vault operator init` and it failed.
+
+If init was already done and `vault-<env>.txt` exists, subsequent runs log
+`Preserving existing credentials file` and never overwrite the keys.
