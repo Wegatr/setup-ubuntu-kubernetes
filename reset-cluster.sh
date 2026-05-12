@@ -142,35 +142,46 @@ fi
 
 # ---- helpers --------------------------------------------------------------
 # Remove all cali-*, KUBE-*, CNI-* chains from the given iptables binary.
-# Iterates up to 8 passes: each pass first deletes rules that jump into our
-# chains, then flushes and deletes empty chains. Multiple passes are needed
-# because `iptables -S` returns chains in creation order, which doesn't
-# match the dependency order — a child chain may still have refs from a
-# parent chain that hasn't been flushed yet, causing "Too many links" on
-# first attempt. By the time later passes run, parents have been flushed
-# and the child can be removed.
+#
+# Iterates up to 8 passes. Each pass:
+#   A) deletes rules in the standard chains (INPUT/FORWARD/OUTPUT/PRE-
+#      ROUTING/POSTROUTING) that target cali-/KUBE-/CNI- chains. We delete
+#      by line number rather than by rule body — `iptables -S` quotes
+#      comments with embedded special chars (e.g. `--comment "cali:abc"`),
+#      and feeding that back via bash word-splitting passes the literal
+#      quotes to iptables, which can't match the actual rule.
+#   B) flushes + deletes prefixed chains themselves.
+#
+# Multiple passes catch chains that referenced each other and couldn't
+# be deleted until their parent chain was flushed.
 remove_iptables_chains() {
     local cmd="$1"
     command -v "${cmd}" &>/dev/null || return 0
-    local table chain rule pass before after total_after
+    local table chain line pass after total_after std_chains
 
     for pass in 1 2 3 4 5 6 7 8; do
         total_after=0
         for table in filter nat mangle raw; do
-            before=$("${cmd}" -t "${table}" -S 2>/dev/null \
-                     | grep -cE '^-N (cali-|KUBE-|CNI-)' || true)
-            [[ ${before} -eq 0 ]] && continue
+            # Standard chains differ per table.
+            case "${table}" in
+                filter) std_chains="INPUT FORWARD OUTPUT" ;;
+                nat)    std_chains="PREROUTING INPUT OUTPUT POSTROUTING" ;;
+                mangle) std_chains="PREROUTING INPUT FORWARD OUTPUT POSTROUTING" ;;
+                raw)    std_chains="PREROUTING OUTPUT" ;;
+                *)      continue ;;
+            esac
 
-            # Step A: delete rules that jump INTO our chains.
-            "${cmd}" -t "${table}" -S 2>/dev/null \
-              | grep -E '^-A .* -j (cali-|KUBE-|CNI-)' \
-              | sed 's/^-A/-D/' \
-              | while IFS= read -r rule; do
-                    # shellcheck disable=SC2086
-                    "${cmd}" -t "${table}" ${rule} 2>/dev/null || true
+            # Step A: delete rules in standard chains that target our prefixes
+            for chain in ${std_chains}; do
+                while : ; do
+                    line=$("${cmd}" -t "${table}" -nL "${chain}" --line-numbers 2>/dev/null \
+                           | awk '$0 ~ /(cali-|KUBE-|CNI-)/ && NR>2 {print $1; exit}')
+                    [[ -z "${line}" ]] && break
+                    "${cmd}" -t "${table}" -D "${chain}" "${line}" 2>/dev/null || break
                 done
+            done
 
-            # Step B: flush rules inside each prefixed chain, then delete it.
+            # Step B: flush + delete prefixed chains
             for chain in $("${cmd}" -t "${table}" -S 2>/dev/null \
                            | grep -E '^-N (cali-|KUBE-|CNI-)' \
                            | cut -d' ' -f2); do
@@ -185,8 +196,6 @@ remove_iptables_chains() {
         [[ ${total_after} -eq 0 ]] && return 0
     done
 
-    # If we get here, some chains stubbornly remain. The verification step
-    # will warn about them.
     return 0
 }
 
