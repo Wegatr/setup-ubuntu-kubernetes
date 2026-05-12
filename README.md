@@ -254,8 +254,11 @@ know what's happening and what config knob controls each one.
 
 ### Traefik (not nginx-ingress)
 
-The script targets `MICROK8S_CHANNEL="1.36/stable"` (Kubernetes v1.36 "Haru",
-April 2026). Starting in MicroK8s 1.35 the bundled `ingress` addon was
+The script targets `MICROK8S_CHANNEL="1.35/stable"` (Kubernetes v1.35
+"Timbernetes", December 2025) — the highest numeric stable channel currently
+published in the snap store. 1.36/stable does not exist yet; only edge/
+candidate channels carry 1.36 as of May 2026. Starting in MicroK8s 1.35 the
+bundled `ingress` addon was
 [switched from nginx-ingress to Traefik](https://github.com/canonical/microk8s/issues/5293)
 because [Kubernetes SIG Network retired the nginx-ingress project on
 24 March 2026](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/).
