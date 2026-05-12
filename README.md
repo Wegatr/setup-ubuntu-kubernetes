@@ -30,9 +30,9 @@ common-kubernetes.sh     Shared function library
 manage-secrets.sh        Backup/restore credentials (GPG encrypted)
 manage-secrets.config    Lists which secret files to backup
 manifests/
-  kube/                  Headlamp (Dashboard) Helm values + ingress
-  argocd/                ArgoCD Helm values
-  vault/                 Vault Helm values, ingress, cert
+  kube/                  Headlamp (Dashboard) Helm values + Ingress
+  argocd/                ArgoCD Helm values (Ingress configured in values.yaml)
+  vault/                 Vault Helm values, Traefik IngressRoute, ServersTransport, cert
 ```
 
 ## Configuration
@@ -252,26 +252,40 @@ runtime by `render_manifest()`:
 These are wired into the script and apply automatically — listed here so you
 know what's happening and what config knob controls each one.
 
-### Ubuntu 26.04 (Resolute Raccoon, kernel 7.0) + MicroK8s — iptables backend split-brain
+### Traefik (not nginx-ingress)
 
-On Ubuntu 26.04 ([kernel 7.0](https://www.knightli.com/en/2026/05/01/linux-kernel-7-0-new-features/),
-released 12 April 2026) with MicroK8s `latest/stable`, Calico's Felix can
-auto-detect the wrong iptables backend (Legacy) while kube-proxy and the host
-both use `iptables-nft`. The two backends paint into separate kernel rule
-sets — packets traverse both, and packet forwarding for **pod-to-internet
-traffic silently fails**. Symptom: CoreDNS times out forwarding to upstream
-resolvers, ClusterIssuer fails ACME registration, all HTTP-01 challenges fail.
+The script targets `MICROK8S_CHANNEL="1.36/stable"` (Kubernetes v1.36 "Haru",
+April 2026). Starting in MicroK8s 1.35 the bundled `ingress` addon was
+[switched from nginx-ingress to Traefik](https://github.com/canonical/microk8s/issues/5293)
+because [Kubernetes SIG Network retired the nginx-ingress project on
+24 March 2026](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/).
 
-Mitigations the script applies on every install:
+Practical consequence: Vault's manifests use Traefik CRDs (`IngressRoute` +
+`ServersTransport`) rather than a plain Ingress with `nginx.ingress.*`
+annotations. Dashboard and ArgoCD use vendor-neutral Ingress resources and
+work on Traefik unchanged. Don't pin `MICROK8S_CHANNEL` to anything older
+than `1.35/stable` without also reverting the Vault manifests to the
+nginx-ingress form (see git history for commit 604f3bd if you need the old
+files back).
 
-1. `MICROK8S_CHANNEL="1.32/stable"` (pinned in `config.example`) avoids the
-   bleeding-edge releases where this is most visible.
-2. `align_calico_backend()` patches `FelixConfiguration.spec.iptablesBackend`
-   to match the host's actual backend (NFT on 22.04+) and restarts
-   `calico-node`. Idempotent — re-runs are a no-op once aligned.
-3. `fix_ingress_hostnetwork()` puts the nginx-ingress controller on
-   `hostNetwork: true` so it doesn't depend on the CNI `portmap` plugin
-   (which is what the old, more aggressive iptables-flush fix used to break).
+### Calico iptables backend split-brain (esp. Ubuntu 26.04, kernel 7.0)
+
+On hosts with a "modern" iptables-nft default (Ubuntu 22.04+, but most
+visible on Ubuntu 26.04 with kernel 7.0), Calico's Felix can auto-detect the
+wrong iptables backend (Legacy) while kube-proxy and the host both use
+`iptables-nft`. The two backends paint into separate kernel rule sets —
+packets traverse both, and packet forwarding for **pod-to-internet traffic
+silently fails**. Symptom: CoreDNS times out forwarding to its upstream
+resolvers, ClusterIssuer fails ACME registration, every HTTP-01 challenge
+gets connection-refused.
+
+`align_calico_backend()` runs on every install: it patches
+`FelixConfiguration.spec.iptablesBackend` to match the host's actual
+backend (NFT on modern Ubuntu) and rollout-restarts `calico-node` so Felix
+repaints. Idempotent — re-runs are a no-op once aligned. The function
+deliberately does **not** flush any iptables rules; an earlier version did,
+which broke the CNI `portmap` plugin's `CNI-HOSTPORT-*` chains and silently
+killed `hostPort` plumbing.
 
 References:
 [canonical/microk8s#2180](https://github.com/canonical/microk8s/issues/2180),
@@ -292,11 +306,11 @@ so it doesn't slow down DNS on networks where UDP/53 is open.
 ### Inbound HTTP-01 challenge
 
 cert-manager validates ownership of `kube/argo/vault.<env>.<domain>` over
-plain HTTP on port 80 from the public internet. Two prerequisites that aren't
-checked automatically:
+plain HTTP on port 80 from the public internet. Two prerequisites that
+aren't checked automatically:
 
 1. DNS A records for the three hostnames must point at this host's public IP.
-2. The host's port 80 must be reachable from outside (no upstream firewall
-   blocking inbound :80). The script's `fix_ingress_hostnetwork()` ensures
-   the host actually listens on :80 in the first place — but it can't fix a
-   firewall higher up.
+2. The host's port 80 must be reachable from the internet (no upstream
+   firewall blocking inbound :80). With MicroK8s 1.36's Traefik addon the
+   controller binds :80/:443 on the node by default — verify with
+   `sudo ss -tln | grep -E ':(80|443) '`.

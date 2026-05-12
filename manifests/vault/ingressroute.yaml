@@ -1,0 +1,17 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: vault
+  namespace: vault
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`__VAULT_HOST__`)
+      kind: Rule
+      services:
+        - name: vault
+          port: 8200
+          serversTransport: vault-transport
+  tls:
+    secretName: vault-tls

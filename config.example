@@ -34,11 +34,12 @@ DEPLOY_ENV="prod"
 # MICROK8S CONFIGURATION
 ################################################################################
 
-# Snap channel for MicroK8s installation (e.g. "1.28/stable", "latest/stable").
-# Prefer a pinned release over "latest/stable" — the newest MicroK8s on a
-# brand-new Ubuntu kernel can produce iptables-backend split-brain between
-# Calico and kube-proxy and various pod-networking issues.
-MICROK8S_CHANNEL="1.32/stable"
+# Snap channel for MicroK8s installation. Pinned to 1.36/stable for Kubernetes
+# v1.36 ("Haru"). Note: starting MicroK8s 1.35 the bundled `ingress` addon is
+# Traefik (nginx-ingress was retired upstream March 2026), so the Vault
+# manifests use Traefik CRDs (IngressRoute + ServersTransport). Don't pin
+# older than 1.35/stable without also reverting the Vault manifests.
+MICROK8S_CHANNEL="1.36/stable"
 
 # The non-root user who will operate kubectl/helm after setup.
 # Defaults to the user who invoked sudo; override if needed.

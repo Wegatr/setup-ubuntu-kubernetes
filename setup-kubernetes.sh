@@ -797,16 +797,10 @@ enable_addons() {
 
     # Align Calico's iptables backend with the host's default. Modern Calico
     # defaults to Auto-detect, but on bleeding-edge kernels (notably 26.04 /
-    # kernel 6.12) the auto-detect can pick Legacy while the host runs nft —
+    # kernel 7.0) the auto-detect can pick Legacy while the host runs nft —
     # the resulting split-brain shows up as pod-to-internet DNS lookups timing
     # out from CoreDNS to its upstream resolvers. Safe to call on every run.
     align_calico_backend || log_warn "Calico backend alignment incomplete"
-
-    # Patch the nginx-ingress controller DaemonSet to use hostNetwork.
-    # Without this, the hostPort on the controller pod isn't plumbed to the
-    # host's :80/:443 (Calico CNI doesn't include portmap by default), so
-    # inbound HTTP is unreachable and Let's Encrypt HTTP-01 challenges fail.
-    fix_ingress_hostnetwork || log_warn "Could not configure ingress controller hostNetwork"
 
     if [[ ${#failed_addons[@]} -gt 0 ]]; then
         log_error "Failed to enable addons: ${failed_addons[*]}"
@@ -870,40 +864,6 @@ align_calico_backend() {
         log_warn "calico-node rollout did not complete within 120s — investigate manually"
     }
     log_ok "Calico Felix now on ${felix_target}"
-}
-
-# Patch the nginx-ingress controller DaemonSet to use hostNetwork: true and
-# ClusterFirstWithHostNet so it binds port 80/443 on the host directly.
-# Idempotent: skips if already set. Required on MicroK8s because Calico's CNI
-# doesn't include the portmap plugin, so the controller's hostPort declarations
-# never reach the host's network stack.
-fix_ingress_hostnetwork() {
-    if ! microk8s kubectl -n ingress get ds nginx-ingress-microk8s-controller &>/dev/null; then
-        log_info "nginx-ingress controller DaemonSet not present (yet) — skipping hostNetwork patch"
-        return 0
-    fi
-
-    local current
-    current=$(microk8s kubectl -n ingress get ds nginx-ingress-microk8s-controller \
-        -o jsonpath='{.spec.template.spec.hostNetwork}' 2>/dev/null)
-    if [[ "${current}" == "true" ]]; then
-        log_ok "Ingress controller already on hostNetwork"
-        return 0
-    fi
-
-    log_step "Patching ingress controller to use hostNetwork (binds host :80 and :443)..."
-    microk8s kubectl -n ingress patch daemonset nginx-ingress-microk8s-controller \
-        --type=strategic \
-        --patch='{"spec":{"template":{"spec":{"hostNetwork":true,"dnsPolicy":"ClusterFirstWithHostNet"}}}}' >/dev/null || {
-        log_error "Failed to patch ingress controller DaemonSet"
-        return 1
-    }
-
-    microk8s kubectl -n ingress rollout status ds/nginx-ingress-microk8s-controller --timeout=120s >/dev/null 2>&1 || {
-        log_warn "Ingress controller rollout did not complete within 120s — investigate manually"
-    }
-
-    log_ok "Ingress controller now on hostNetwork"
 }
 
 configure_hostpath_storage() {
@@ -1939,6 +1899,14 @@ deploy_vault() {
     }
     rm -f "${values_file}"
 
+    # Apply ServersTransport (Traefik CRD — skips backend TLS verification so
+    # Traefik can talk to Vault's HTTPS listener that has a different cert).
+    local transport_file="${MANIFESTS_DIR}/vault/serverstransport.yaml"
+    log_info "Applying Vault ServersTransport..."
+    kubectl apply -f "${transport_file}" --request-timeout=30s || {
+        log_warn "Failed to apply Vault ServersTransport"
+    }
+
     # Apply certificate (rendered with current environment hostnames)
     local cert_file
     cert_file=$(render_manifest "${MANIFESTS_DIR}/vault/certificate.yaml")
@@ -1948,17 +1916,16 @@ deploy_vault() {
     }
     rm -f "${cert_file}"
 
-    # Apply Ingress (rendered with current environment hostnames).
-    # Uses nginx-ingress annotations to talk to Vault's HTTPS listener.
-    local ingress_file
-    ingress_file=$(render_manifest "${MANIFESTS_DIR}/vault/ingress.yaml")
-    log_info "Applying Vault ingress..."
-    kubectl apply -f "${ingress_file}" --request-timeout=30s || {
-        rm -f "${ingress_file}"
-        log_error "Failed to apply Vault ingress"
+    # Apply IngressRoute (Traefik CRD, rendered with current env hostnames)
+    local ingressroute_file
+    ingressroute_file=$(render_manifest "${MANIFESTS_DIR}/vault/ingressroute.yaml")
+    log_info "Applying Vault IngressRoute..."
+    kubectl apply -f "${ingressroute_file}" --request-timeout=30s || {
+        rm -f "${ingressroute_file}"
+        log_error "Failed to apply Vault IngressRoute"
         return 1
     }
-    rm -f "${ingress_file}"
+    rm -f "${ingressroute_file}"
 
     # Wait for deployment
     wait_for_pods_ready "${VAULT_NAMESPACE}" "app.kubernetes.io/name=vault" || {
@@ -2287,27 +2254,18 @@ update_ingress() {
 
     _update_vault_ingress() {
         log_step "Updating Vault ingress..."
-        local rendered_values rendered_cert rendered_ingress
-        rendered_values=$(render_manifest "${MANIFESTS_DIR}/vault/values.yaml")
-        upgrade_helm_release "${VAULT_RELEASE}" \
-            "${VAULT_REPO_NAME}/vault" \
-            "${VAULT_NAMESPACE}" \
-            "${rendered_values}" || {
-            rm -f "${rendered_values}"
-            log_error "Failed to update Vault Helm release"
-            return 1
-        }
-        rm -f "${rendered_values}"
+        # ServersTransport (host-independent) — re-apply in case it was lost.
+        kubectl apply -f "${MANIFESTS_DIR}/vault/serverstransport.yaml" --request-timeout=30s \
+            || log_warn "Failed to apply Vault ServersTransport"
+        local rendered_cert rendered_route
         rendered_cert=$(render_manifest "${MANIFESTS_DIR}/vault/certificate.yaml")
-        kubectl apply -f "${rendered_cert}" --request-timeout=30s || {
-            log_warn "Failed to apply Vault certificate"
-        }
+        kubectl apply -f "${rendered_cert}" --request-timeout=30s \
+            || log_warn "Failed to apply Vault certificate"
         rm -f "${rendered_cert}"
-        rendered_ingress=$(render_manifest "${MANIFESTS_DIR}/vault/ingress.yaml")
-        kubectl apply -f "${rendered_ingress}" --request-timeout=30s || {
-            log_warn "Failed to apply Vault ingress"
-        }
-        rm -f "${rendered_ingress}"
+        rendered_route=$(render_manifest "${MANIFESTS_DIR}/vault/ingressroute.yaml")
+        kubectl apply -f "${rendered_route}" --request-timeout=30s \
+            || log_warn "Failed to apply Vault IngressRoute"
+        rm -f "${rendered_route}"
         log_ok "Vault ingress updated (https://${VAULT_HOST})"
     }
 
