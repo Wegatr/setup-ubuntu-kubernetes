@@ -141,28 +141,53 @@ if [[ "${SKIP_CONFIRM}" != "true" ]]; then
 fi
 
 # ---- helpers --------------------------------------------------------------
+# Remove all cali-*, KUBE-*, CNI-* chains from the given iptables binary.
+# Iterates up to 8 passes: each pass first deletes rules that jump into our
+# chains, then flushes and deletes empty chains. Multiple passes are needed
+# because `iptables -S` returns chains in creation order, which doesn't
+# match the dependency order — a child chain may still have refs from a
+# parent chain that hasn't been flushed yet, causing "Too many links" on
+# first attempt. By the time later passes run, parents have been flushed
+# and the child can be removed.
 remove_iptables_chains() {
     local cmd="$1"
     command -v "${cmd}" &>/dev/null || return 0
-    local table chain rule
-    for table in filter nat mangle raw; do
-        # Remove rules that reference cali-/KUBE-/CNI- chains so we can later
-        # delete those chains without "Too many links" errors.
-        "${cmd}" -t "${table}" -S 2>/dev/null \
-          | grep -E '^-A .* -j (cali-|KUBE-|CNI-)' \
-          | sed 's/^-A/-D/' \
-          | while IFS= read -r rule; do
-                # shellcheck disable=SC2086
-                "${cmd}" -t "${table}" ${rule} 2>/dev/null || true
+    local table chain rule pass before after total_after
+
+    for pass in 1 2 3 4 5 6 7 8; do
+        total_after=0
+        for table in filter nat mangle raw; do
+            before=$("${cmd}" -t "${table}" -S 2>/dev/null \
+                     | grep -cE '^-N (cali-|KUBE-|CNI-)' || true)
+            [[ ${before} -eq 0 ]] && continue
+
+            # Step A: delete rules that jump INTO our chains.
+            "${cmd}" -t "${table}" -S 2>/dev/null \
+              | grep -E '^-A .* -j (cali-|KUBE-|CNI-)' \
+              | sed 's/^-A/-D/' \
+              | while IFS= read -r rule; do
+                    # shellcheck disable=SC2086
+                    "${cmd}" -t "${table}" ${rule} 2>/dev/null || true
+                done
+
+            # Step B: flush rules inside each prefixed chain, then delete it.
+            for chain in $("${cmd}" -t "${table}" -S 2>/dev/null \
+                           | grep -E '^-N (cali-|KUBE-|CNI-)' \
+                           | cut -d' ' -f2); do
+                "${cmd}" -t "${table}" -F "${chain}" 2>/dev/null || true
+                "${cmd}" -t "${table}" -X "${chain}" 2>/dev/null || true
             done
-        # Now flush and delete the chains themselves.
-        for chain in $("${cmd}" -t "${table}" -S 2>/dev/null \
-                       | grep -E '^-N (cali-|KUBE-|CNI-)' \
-                       | cut -d' ' -f2); do
-            "${cmd}" -t "${table}" -F "${chain}" 2>/dev/null || true
-            "${cmd}" -t "${table}" -X "${chain}" 2>/dev/null || true
+
+            after=$("${cmd}" -t "${table}" -S 2>/dev/null \
+                    | grep -cE '^-N (cali-|KUBE-|CNI-)' || true)
+            total_after=$((total_after + after))
         done
+        [[ ${total_after} -eq 0 ]] && return 0
     done
+
+    # If we get here, some chains stubbornly remain. The verification step
+    # will warn about them.
+    return 0
 }
 
 # ---- step 1: stop microk8s systemd services -------------------------------
