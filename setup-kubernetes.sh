@@ -319,18 +319,6 @@ parse_arguments() {
             --upgrade-kube) UPGRADE_APP="kube"; shift ;;
             --upgrade-argocd) UPGRADE_APP="argocd"; shift ;;
             --upgrade-vault) UPGRADE_APP="vault"; shift ;;
-            --cleanup-kube)
-                CLEANUP_KUBE=true
-                shift
-                ;;
-            --cleanup-argocd)
-                CLEANUP_ARGOCD=true
-                shift
-                ;;
-            --cleanup-vault)
-                CLEANUP_VAULT=true
-                shift
-                ;;
             --status)
                 SHOW_INFRA_STATUS=true
                 shift
@@ -451,12 +439,9 @@ INFRASTRUCTURE DEPLOYMENT OPTIONS:
     --install-kube                Alias for --deploy-kube
     --install-argocd              Alias for --deploy-argocd
     --install-vault               Alias for --deploy-vault
-    --uninstall-kube              Remove kube dashboard resources
-    --uninstall-argocd            Remove ArgoCD resources
-    --uninstall-vault             Remove Vault resources
-    --cleanup-kube                Remove old kube dashboard resources
-    --cleanup-argocd              Remove old ArgoCD resources
-    --cleanup-vault               Remove old Vault resources
+    --uninstall-kube              Helm uninstall Kubernetes Dashboard
+    --uninstall-argocd            Helm uninstall ArgoCD (also removes ArgoCD CRDs)
+    --uninstall-vault             Helm uninstall Vault (also removes Vault PVCs)
     --upgrade-kube                Upgrade Kubernetes Dashboard to latest version
     --upgrade-argocd              Upgrade ArgoCD to latest version
     --upgrade-vault               Upgrade Vault to latest version
@@ -619,100 +604,6 @@ show_summary() {
         log_warn "Installation cancelled by user"
         exit 0
     fi
-}
-
-# Detect the host's default iptables backend: "nft" (Ubuntu 22.04+) or "legacy".
-# Returns "nft" if detection fails — that's the modern default and the safer fallback.
-detect_host_iptables_backend() {
-    local target=""
-    if [[ -L /etc/alternatives/iptables ]]; then
-        target=$(readlink -f /etc/alternatives/iptables 2>/dev/null)
-    fi
-    if [[ -z "${target}" ]]; then
-        target=$(readlink -f "$(command -v iptables 2>/dev/null)" 2>/dev/null)
-    fi
-    case "${target}" in
-        *iptables-legacy*) echo "legacy" ;;
-        *)                 echo "nft" ;;
-    esac
-}
-
-# Ensure Calico and kube-proxy use the same iptables backend as the host's default.
-# When they diverge, they paint rules into separate kernel rule sets (one via x_tables,
-# one via nf_tables). Packets traverse BOTH sets and either side's DROP wins — pods
-# look "up" but service routing and egress silently fail. Symptom: ClusterIP timeouts
-# from pods, CoreDNS upstream lookups failing, ACME registration failing.
-# This step is a no-op once the cluster is aligned, so it's safe to call on every run.
-normalize_iptables_backend() {
-    log_step "Normalizing iptables backend (Calico + kube-proxy + host all on one backend)..."
-
-    local host_backend
-    host_backend=$(detect_host_iptables_backend)
-    log_info "Host iptables backend: ${host_backend}"
-
-    local felix_value other_cmd
-    case "${host_backend}" in
-        nft)    felix_value="NFT";    other_cmd="iptables-legacy" ;;
-        legacy) felix_value="Legacy"; other_cmd="iptables-nft" ;;
-        *)
-            log_warn "Could not detect host iptables backend — leaving cluster alone"
-            return 0
-            ;;
-    esac
-
-    # Force Felix to the host backend (idempotent — same value on re-runs).
-    log_info "Patching FelixConfiguration: iptablesBackend=${felix_value}"
-    microk8s kubectl patch felixconfiguration default --type=merge \
-        -p "{\"spec\":{\"iptablesBackend\":\"${felix_value}\"}}" >/dev/null 2>&1 || {
-        log_warn "FelixConfiguration patch failed (Calico CRDs may not be ready yet) — continuing"
-    }
-
-    # Check the OTHER backend for stale Calico/kube-proxy chains.
-    local stale
-    stale=$("${other_cmd}" -nvL 2>/dev/null | grep -cE "^Chain (cali|KUBE)" || echo 0)
-    if [[ "${stale}" -eq 0 ]]; then
-        log_ok "Backends already aligned — no stale chains in ${other_cmd}"
-        return 0
-    fi
-
-    log_warn "Found ${stale} stale chains in ${other_cmd} — flushing and forcing Calico + kube-proxy to repaint"
-
-    # Flush the old backend. Calico and kube-proxy will repaint within seconds —
-    # Calico via the rollout restart below, kube-proxy via its periodic sync after
-    # we restart kubelite.
-    local table
-    for table in filter nat mangle raw; do
-        "${other_cmd}" -t "${table}" -F 2>/dev/null || true
-        "${other_cmd}" -t "${table}" -X 2>/dev/null || true
-    done
-
-    log_info "Restarting calico-node so Felix repaints in ${host_backend}..."
-    microk8s kubectl -n kube-system rollout restart daemonset/calico-node >/dev/null 2>&1 || true
-    microk8s kubectl -n kube-system rollout status daemonset/calico-node --timeout=60s >/dev/null 2>&1 || true
-
-    log_info "Restarting kubelite so kube-proxy repaints in ${host_backend}..."
-    # systemctl restart is safe from inside a sudo'd script (unlike `microk8s start`,
-    # which on 1.32 errors with "cannot invoke snapctl operation commands from outside of a snap").
-    systemctl restart snap.microk8s.daemon-kubelite.service || {
-        log_warn "kubelite restart failed — kube-proxy will repaint on its next periodic sync"
-    }
-
-    log_info "Waiting for MicroK8s to be ready after repaint..."
-    microk8s status --wait-ready --timeout="${MICROK8S_READY_TIMEOUT}" >/dev/null 2>&1 || {
-        log_warn "MicroK8s slow to settle after repaint — continuing"
-    }
-    # Give kube-proxy a chance to repaint after kubelite restart.
-    sleep 5
-
-    # Verify the repaint succeeded.
-    stale=$("${other_cmd}" -nvL 2>/dev/null | grep -cE "^Chain (cali|KUBE)" || echo 0)
-    if [[ "${stale}" -gt 0 ]]; then
-        log_warn "${other_cmd} still has ${stale} cali/KUBE chains after repaint — investigate manually"
-        return 1
-    fi
-
-    log_ok "iptables backend normalized: only ${host_backend} carries cali/KUBE chains"
-    return 0
 }
 
 install_microk8s() {
@@ -904,6 +795,12 @@ enable_addons() {
     # Runs whether DNS was auto-enabled at install time or enabled by us above.
     fix_coredns_upstream || log_warn "CoreDNS upstream fix incomplete"
 
+    # Patch the nginx-ingress controller DaemonSet to use hostNetwork.
+    # Without this, the hostPort on the controller pod isn't plumbed to the
+    # host's :80/:443 (Calico CNI doesn't include portmap by default), so
+    # inbound HTTP is unreachable and Let's Encrypt HTTP-01 challenges fail.
+    fix_ingress_hostnetwork || log_warn "Could not configure ingress controller hostNetwork"
+
     if [[ ${#failed_addons[@]} -gt 0 ]]; then
         log_error "Failed to enable addons: ${failed_addons[*]}"
         return 1
@@ -911,6 +808,40 @@ enable_addons() {
 
     log_ok "All addons enabled successfully"
     return 0
+}
+
+# Patch the nginx-ingress controller DaemonSet to use hostNetwork: true and
+# ClusterFirstWithHostNet so it binds port 80/443 on the host directly.
+# Idempotent: skips if already set. Required on MicroK8s because Calico's CNI
+# doesn't include the portmap plugin, so the controller's hostPort declarations
+# never reach the host's network stack.
+fix_ingress_hostnetwork() {
+    if ! microk8s kubectl -n ingress get ds nginx-ingress-microk8s-controller &>/dev/null; then
+        log_info "nginx-ingress controller DaemonSet not present (yet) — skipping hostNetwork patch"
+        return 0
+    fi
+
+    local current
+    current=$(microk8s kubectl -n ingress get ds nginx-ingress-microk8s-controller \
+        -o jsonpath='{.spec.template.spec.hostNetwork}' 2>/dev/null)
+    if [[ "${current}" == "true" ]]; then
+        log_ok "Ingress controller already on hostNetwork"
+        return 0
+    fi
+
+    log_step "Patching ingress controller to use hostNetwork (binds host :80 and :443)..."
+    microk8s kubectl -n ingress patch daemonset nginx-ingress-microk8s-controller \
+        --type=strategic \
+        --patch='{"spec":{"template":{"spec":{"hostNetwork":true,"dnsPolicy":"ClusterFirstWithHostNet"}}}}' >/dev/null || {
+        log_error "Failed to patch ingress controller DaemonSet"
+        return 1
+    }
+
+    microk8s kubectl -n ingress rollout status ds/nginx-ingress-microk8s-controller --timeout=120s >/dev/null 2>&1 || {
+        log_warn "Ingress controller rollout did not complete within 120s — investigate manually"
+    }
+
+    log_ok "Ingress controller now on hostNetwork"
 }
 
 configure_hostpath_storage() {
@@ -1939,13 +1870,6 @@ deploy_vault() {
     }
     rm -f "${values_file}"
 
-    # Apply ServersTransport for Traefik (skip TLS verification for backend)
-    local transport_file="${MANIFESTS_DIR}/vault/serverstransport.yaml"
-    log_info "Applying Vault ServersTransport..."
-    kubectl apply -f "${transport_file}" --request-timeout=30s || {
-        log_warn "Failed to apply Vault ServersTransport"
-    }
-
     # Apply certificate (rendered with current environment hostnames)
     local cert_file
     cert_file=$(render_manifest "${MANIFESTS_DIR}/vault/certificate.yaml")
@@ -1955,16 +1879,17 @@ deploy_vault() {
     }
     rm -f "${cert_file}"
 
-    # Apply IngressRoute (Traefik CRD, rendered with current environment hostnames)
-    local ingressroute_file
-    ingressroute_file=$(render_manifest "${MANIFESTS_DIR}/vault/ingressroute.yaml")
-    log_info "Applying Vault IngressRoute..."
-    kubectl apply -f "${ingressroute_file}" --request-timeout=30s || {
-        rm -f "${ingressroute_file}"
-        log_error "Failed to apply Vault IngressRoute"
+    # Apply Ingress (rendered with current environment hostnames).
+    # Uses nginx-ingress annotations to talk to Vault's HTTPS listener.
+    local ingress_file
+    ingress_file=$(render_manifest "${MANIFESTS_DIR}/vault/ingress.yaml")
+    log_info "Applying Vault ingress..."
+    kubectl apply -f "${ingress_file}" --request-timeout=30s || {
+        rm -f "${ingress_file}"
+        log_error "Failed to apply Vault ingress"
         return 1
     }
-    rm -f "${ingressroute_file}"
+    rm -f "${ingress_file}"
 
     # Wait for deployment
     wait_for_pods_ready "${VAULT_NAMESPACE}" "app.kubernetes.io/name=vault" || {
@@ -2054,102 +1979,54 @@ deploy_vault() {
     return 0
 }
 
-cleanup_old_kube() {
-    log_step "Cleaning up old Kubernetes Dashboard resources..."
+uninstall_kube() {
+    if ! is_helm_release_deployed "${KUBE_RELEASE}" "${KUBE_NAMESPACE}"; then
+        log_warn "Kube Dashboard not deployed, nothing to uninstall"
+        return 0
+    fi
 
-    log_info "Deleting old dashboard resources in namespace '${KUBE_NAMESPACE}'..."
-
-    # Delete all resources that were created by the old dashboard manifests
-    kubectl delete deployment,service,secret,configmap,role,rolebinding,serviceaccount \
-        -n "${KUBE_NAMESPACE}" \
-        --all \
-        --ignore-not-found=true \
-        --request-timeout=30s || {
-        log_warn "Some resources could not be deleted"
-    }
-
-    # Also remove clusterrole and clusterrolebinding (not namespaced)
-    kubectl delete clusterrole,clusterrolebinding \
-        -l app.kubernetes.io/name=kubernetes-dashboard \
-        --ignore-not-found=true \
-        --request-timeout=30s || {
-        log_warn "Some cluster resources could not be deleted"
-    }
-
-    log_info "Waiting for resources to be fully deleted..."
-    sleep 5
-
-    log_ok "Old dashboard resources cleaned up!"
-    return 0
+    log_step "Uninstalling Kubernetes Dashboard..."
+    helm uninstall "${KUBE_RELEASE}" -n "${KUBE_NAMESPACE}" || log_warn "Helm uninstall failed"
+    kubectl delete ingress -n "${KUBE_NAMESPACE}" kubernetes-dashboard --ignore-not-found
+    kubectl delete clusterrolebinding dashboard-admin --ignore-not-found
+    kubectl delete sa -n "${KUBE_NAMESPACE}" dashboard-admin --ignore-not-found
+    kubectl delete secret -n "${KUBE_NAMESPACE}" dashboard-admin-token --ignore-not-found
+    log_ok "Kubernetes Dashboard uninstalled"
 }
 
-cleanup_old_argocd() {
-    log_step "Cleaning up old ArgoCD resources..."
+uninstall_argocd() {
+    if ! is_helm_release_deployed "${ARGOCD_RELEASE}" "${ARGOCD_NAMESPACE}"; then
+        log_warn "ArgoCD not deployed, nothing to uninstall"
+        return 0
+    fi
 
-    log_info "Deleting old ArgoCD resources in namespace '${ARGOCD_NAMESPACE}'..."
+    log_step "Uninstalling ArgoCD..."
+    helm uninstall "${ARGOCD_RELEASE}" -n "${ARGOCD_NAMESPACE}" || log_warn "Helm uninstall failed"
 
-    # Delete ArgoCD resources
-    kubectl delete deployment,service,secret,configmap,role,rolebinding,serviceaccount,statefulset \
-        -n "${ARGOCD_NAMESPACE}" \
-        --all \
-        --ignore-not-found=true \
-        --request-timeout=30s || {
-        log_warn "Some resources could not be deleted"
-    }
-
-    # Remove ArgoCD cluster resources
-    kubectl delete clusterrole,clusterrolebinding \
-        -l app.kubernetes.io/part-of=argocd \
-        --ignore-not-found=true \
-        --request-timeout=30s || {
-        log_warn "Some cluster resources could not be deleted"
-    }
-
-    # Remove ArgoCD CRDs
+    # ArgoCD's Helm chart does not remove its CRDs on uninstall (intentional —
+    # protects user Applications). Remove them explicitly so a future deploy
+    # gets the current versions.
     kubectl delete crd \
         applications.argoproj.io \
         applicationsets.argoproj.io \
         appprojects.argoproj.io \
-        --ignore-not-found=true \
-        --request-timeout=30s || {
-        log_warn "Some CRDs could not be deleted"
-    }
-
-    log_info "Waiting for resources to be fully deleted..."
-    sleep 5
-
-    log_ok "Old ArgoCD resources cleaned up!"
-    return 0
+        --ignore-not-found
+    log_ok "ArgoCD uninstalled"
 }
 
-cleanup_old_vault() {
-    log_step "Cleaning up old Vault resources..."
+uninstall_vault() {
+    if ! is_helm_release_deployed "${VAULT_RELEASE}" "${VAULT_NAMESPACE}"; then
+        log_warn "Vault not deployed, nothing to uninstall"
+        return 0
+    fi
 
-    log_info "Deleting old Vault resources in namespace '${VAULT_NAMESPACE}'..."
-
-    # Delete Vault resources
-    kubectl delete deployment,service,secret,configmap,role,rolebinding,serviceaccount,statefulset,persistentvolumeclaim \
-        -n "${VAULT_NAMESPACE}" \
-        --all \
-        --ignore-not-found=true \
-        --request-timeout=30s || {
-        log_warn "Some resources could not be deleted"
-    }
-
-    # Remove Vault cluster resources
-    kubectl delete clusterrole,clusterrolebinding \
-        -l app.kubernetes.io/name=vault \
-        --ignore-not-found=true \
-        --request-timeout=30s || {
-        log_warn "Some cluster resources could not be deleted"
-    }
-
-    log_info "Waiting for resources to be fully deleted..."
-    sleep 5
-
-    log_ok "Old Vault resources cleaned up!"
-    log_warn "Note: PersistentVolumes may still exist and need manual cleanup if needed"
-    return 0
+    log_step "Uninstalling Vault..."
+    helm uninstall "${VAULT_RELEASE}" -n "${VAULT_NAMESPACE}" || log_warn "Helm uninstall failed"
+    kubectl delete ingress -n "${VAULT_NAMESPACE}" vault --ignore-not-found
+    kubectl delete certificate -n "${VAULT_NAMESPACE}" vault-tls --ignore-not-found
+    kubectl delete pvc -n "${VAULT_NAMESPACE}" --all --ignore-not-found
+    log_ok "Vault uninstalled"
+    log_warn "Released PersistentVolume(s) may still exist on the host — remove manually if reclaim policy is Retain"
 }
 
 #######################################
@@ -2341,7 +2218,7 @@ update_ingress() {
 
     _update_vault_ingress() {
         log_step "Updating Vault ingress..."
-        local rendered_values rendered_cert rendered_ingress rendered_route
+        local rendered_values rendered_cert rendered_ingress
         rendered_values=$(render_manifest "${MANIFESTS_DIR}/vault/values.yaml")
         upgrade_helm_release "${VAULT_RELEASE}" \
             "${VAULT_REPO_NAME}/vault" \
@@ -2362,11 +2239,6 @@ update_ingress() {
             log_warn "Failed to apply Vault ingress"
         }
         rm -f "${rendered_ingress}"
-        rendered_route=$(render_manifest "${MANIFESTS_DIR}/vault/ingressroute.yaml")
-        kubectl apply -f "${rendered_route}" --request-timeout=30s || {
-            log_warn "Failed to apply Vault IngressRoute"
-        }
-        rm -f "${rendered_route}"
         log_ok "Vault ingress updated (https://${VAULT_HOST})"
     }
 
@@ -2674,22 +2546,22 @@ main() {
         exit $?
     fi
 
-    # Handle cleanup operations (require root)
+    # Handle uninstall operations (require root)
     if [[ "${CLEANUP_KUBE}" == "true" ]]; then
         check_root || die "Root privileges required"
-        cleanup_old_kube
+        uninstall_kube
         exit $?
     fi
 
     if [[ "${CLEANUP_ARGOCD}" == "true" ]]; then
         check_root || die "Root privileges required"
-        cleanup_old_argocd
+        uninstall_argocd
         exit $?
     fi
 
     if [[ "${CLEANUP_VAULT}" == "true" ]]; then
         check_root || die "Root privileges required"
-        cleanup_old_vault
+        uninstall_vault
         exit $?
     fi
 
@@ -2731,7 +2603,6 @@ main() {
         install_microk8s || die "MicroK8s installation failed"
         add_user_to_group || log_warn "Failed to add user to group"
         enable_addons || die "Addon enablement failed"
-        normalize_iptables_backend || log_warn "iptables backend normalization incomplete — pod networking may be flaky"
     fi
 
     # Configure storage

@@ -5,9 +5,11 @@ metadata:
   namespace: vault
   annotations:
     cert-manager.io/cluster-issuer: __CLUSTER_ISSUER__
-    traefik.ingress.kubernetes.io/router.tls: "true"
-    traefik.ingress.kubernetes.io/service.serversscheme: "https"
-    traefik.ingress.kubernetes.io/service.serverstransport: vault-transport
+    # Vault's listener is TLS-enabled (tls_disable = 0), so the backend speaks
+    # HTTPS. The pod cert is self-signed-by-Let's-Encrypt for the public host,
+    # not for the in-cluster Service name, so skip backend SSL verification.
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/proxy-ssl-verify: "off"
 spec:
   ingressClassName: public
   tls:

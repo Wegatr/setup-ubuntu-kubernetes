@@ -42,21 +42,11 @@ server:
     storageClass: microk8s-hostpath
     accessMode: ReadWriteOnce
 
-  # Ingress (disabled - using Traefik IngressRoute + ServersTransport instead)
+  # Ingress (disabled here — applied as a standalone manifest from
+  # manifests/vault/ingress.yaml so we can pass nginx-specific annotations
+  # to talk to Vault's HTTPS listener).
   ingress:
     enabled: false
-    ingressClassName: public
-    annotations:
-      cert-manager.io/cluster-issuer: __CLUSTER_ISSUER__
-      traefik.ingress.kubernetes.io/service.serversscheme: https
-    hosts:
-      - host: __VAULT_HOST__
-        paths:
-          - /
-    tls:
-      - secretName: vault-tls
-        hosts:
-          - __VAULT_HOST__
 
   # Volume for TLS cert
   volumes:

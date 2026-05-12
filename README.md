@@ -32,7 +32,7 @@ manage-secrets.config    Lists which secret files to backup
 manifests/
   kube/                  Headlamp (Dashboard) Helm values + ingress
   argocd/                ArgoCD Helm values
-  vault/                 Vault Helm values, ingress, cert, ingressroute
+  vault/                 Vault Helm values, ingress, cert
 ```
 
 ## Configuration

@@ -382,15 +382,8 @@ get_cli_tool_version() {
     esac
 }
 
-# Initialization
-init_logging() {
-    # Create log directories if they don't exist
-    mkdir -p "${STATE_DIR}"
-}
-
 ################################################################################
 # INFRASTRUCTURE FUNCTIONS
-# (Merged from common-infrastructure.sh)
 ################################################################################
 
 # kubectl and helm wrapper functions that work with sudo
@@ -828,14 +821,10 @@ get_argocd_admin_password() {
     fi
 }
 
-# Initialization
+# Create the state directory (used for the ClusterIssuer YAML, etc.).
+# Only meaningful when running as root, since STATE_DIR is under /var/lib.
 init_logging() {
-    # Create log directories if they don't exist (only if running as root)
     if [[ $EUID -eq 0 ]]; then
-        mkdir -p "${LOG_DIR}" "${STATE_DIR}"
-        touch "${LOG_FILE}" "${ERROR_LOG}"
-    elif [[ ! -d "${LOG_DIR}" ]]; then
-        # If not root and log dir doesn't exist, use temp dir
-        export LOG_DIR="/tmp/infrastructure-setup-$(whoami)"
+        mkdir -p "${STATE_DIR}"
     fi
 }

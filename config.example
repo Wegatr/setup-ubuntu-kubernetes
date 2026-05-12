@@ -129,18 +129,11 @@ CLUSTER_ISSUER_NAME="letsencrypt-prod"
 ACME_SERVER="https://acme-v02.api.letsencrypt.org/directory"
 
 ################################################################################
-# DIRECTORIES & LOGGING
+# STATE DIRECTORY
 ################################################################################
 
-# Directory for setup log files (created automatically when running as root).
-LOG_DIR="/var/log/kubernetes-setup"
-
-# Directory for state files (ClusterIssuer YAML, etc.).
+# Directory for state files (rendered ClusterIssuer YAML lives here).
 STATE_DIR="/var/lib/kubernetes-setup"
-
-# Log file paths (derived from LOG_DIR).
-LOG_FILE="${LOG_DIR}/setup.log"
-ERROR_LOG="${LOG_DIR}/error.log"
 
 ################################################################################
 # TIMEOUTS (in seconds)
@@ -157,23 +150,6 @@ CERT_MANAGER_READY_TIMEOUT=300
 
 # Time to wait for each addon to show as "enabled" in microk8s status.
 ADDON_ENABLE_TIMEOUT=60
-
-################################################################################
-# SHELL RC FILES
-#
-# The script appends kubectl and helm aliases to these files so the non-root
-# user can run `kubectl` and `helm` directly (without microk8s prefix).
-################################################################################
-
-BASHRC="${HOME}/.bashrc"
-ZSHRC="${HOME}/.zshrc"
-
-################################################################################
-# KUBECONFIG
-################################################################################
-
-# Path where the kubeconfig is exported for the non-root user.
-KUBECONFIG_PATH="${HOME}/.kube/config"
 
 ################################################################################
 # COLOR OUTPUT
