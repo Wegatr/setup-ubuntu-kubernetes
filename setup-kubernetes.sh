@@ -1568,21 +1568,28 @@ CREDENTIALS_DIR="/home/${MICROK8S_USER}/secrets"
 
 # Save credentials to a per-app file: ~/secrets/<app>-<env>.txt
 # Usage: save_credential "app-name" "key=value" ...
+# Bug-fixed: chowns the directory too — without this, the script-as-root
+# leaves /home/<user>/secrets/ owned by root, and any later non-root write
+# (e.g. running deploy_vault outside sudo) silently fails the redirect.
 save_credential() {
     local app="$1"
     shift
     local cred_file="${CREDENTIALS_DIR}/${app}-${DEPLOY_ENV}.txt"
 
     mkdir -p "${CREDENTIALS_DIR}"
+    chown "${MICROK8S_USER}:${MICROK8S_USER}" "${CREDENTIALS_DIR}"
+    chmod 700 "${CREDENTIALS_DIR}"
 
-    # Overwrite with current credentials
     {
         echo "${app} (${DEPLOY_ENV})"
         echo "Date: $(date '+%Y-%m-%d %H:%M:%S')"
         for entry in "$@"; do
             echo "${entry}"
         done
-    } > "${cred_file}"
+    } > "${cred_file}" || {
+        log_error "Failed to write credentials to ${cred_file}"
+        return 1
+    }
 
     chown "${MICROK8S_USER}:${MICROK8S_USER}" "${cred_file}"
     chmod 600 "${cred_file}"
