@@ -545,6 +545,58 @@ validate_config() {
     fi
 }
 
+# Pre-flight DNS check before deploying any infrastructure app. cert-manager's
+# HTTP-01 challenge runs a self-check that resolves the ingress hostname via
+# CoreDNS → public upstream resolvers; if the name doesn't resolve, the
+# Challenge stays "pending" forever and the per-app deploy_* functions
+# eventually time out and save a failure placeholder to ~/secrets/<app>-<env>.txt
+# (most importantly: vault never gets initialized, so the unseal keys are lost).
+#
+# Fail fast here with the host's detected public IPv4 so the user can fix DNS
+# before anything else runs.
+check_ingress_dns_resolves() {
+    local public_ipv4
+    public_ipv4=$(curl -4 -s --max-time 5 https://api.ipify.org 2>/dev/null || true)
+
+    local unresolved=()
+    if [[ "${ENABLE_KUBE}" == "true" ]] && ! getent hosts "${KUBE_HOST}" &>/dev/null; then
+        unresolved+=("${KUBE_HOST}")
+    fi
+    if [[ "${ENABLE_ARGOCD}" == "true" ]] && ! getent hosts "${ARGOCD_HOST}" &>/dev/null; then
+        unresolved+=("${ARGOCD_HOST}")
+    fi
+    if [[ "${ENABLE_VAULT}" == "true" ]] && ! getent hosts "${VAULT_HOST}" &>/dev/null; then
+        unresolved+=("${VAULT_HOST}")
+    fi
+
+    if [[ ${#unresolved[@]} -eq 0 ]]; then
+        log_ok "Ingress hostnames resolve in public DNS"
+        return 0
+    fi
+
+    log_error "Ingress hostnames are NOT resolvable in public DNS:"
+    for h in "${unresolved[@]}"; do
+        log_error "  - ${h}"
+    done
+    log_error ""
+    log_error "cert-manager's HTTP-01 challenge will hang indefinitely without these records."
+    log_error "Aborting before deploy_vault saves an 'Initialization failed' placeholder over"
+    log_error "the unseal keys that would otherwise be irrecoverable."
+    log_error ""
+    log_error "Fix: at your DNS provider, add an A record for each name (or a wildcard"
+    log_error "*.${DEPLOY_ENV}.${DOMAIN_SUFFIX}) pointing to this host's public IPv4:"
+    if [[ -n "${public_ipv4}" ]]; then
+        log_error "  Public IPv4 (detected): ${public_ipv4}"
+    else
+        log_error "  (could not auto-detect public IPv4 — check from elsewhere with: curl ifconfig.me)"
+    fi
+    log_error ""
+    log_error "After adding the record, wait ~1-5 min for propagation, then re-run."
+    log_error "If the records exist but your LAN's DNS hasn't picked them up yet, verify with:"
+    log_error "  dig +short A ${unresolved[0]} @1.1.1.1"
+    return 1
+}
+
 show_summary() {
     log_step "=== Installation Summary ==="
     log_info "The following components will be installed/configured:"
@@ -1917,28 +1969,37 @@ deploy_vault() {
     # Create namespace
     create_namespace_if_not_exists "${VAULT_NAMESPACE}" || return 1
 
-    # Check if already deployed
+    # Check if already deployed. We deliberately do NOT return early here
+    # (unlike deploy_kube / deploy_argocd) because the init+unseal step that
+    # runs further down is the only place where the root token and unseal
+    # keys ever exist — if init was blocked on a previous run (e.g. TLS Secret
+    # missing → vault-0 stuck in ContainerCreating → kubectl exec failed),
+    # the Helm release exists but Vault is uninitialized. We need to fall
+    # through to the init check so a re-run of --deploy-all unblocks it.
+    local skip_helm_install=false
     if is_helm_release_deployed "${VAULT_RELEASE}" "${VAULT_NAMESPACE}"; then
         if [[ "${FORCE_DEPLOY}" == "true" ]]; then
             log_warn "Vault already deployed, forcing upgrade..."
         else
-            log_ok "Vault already deployed, skipping"
-            return 0
+            log_ok "Vault Helm release already deployed — skipping install, will verify init status"
+            skip_helm_install=true
         fi
     fi
 
-    # Deploy with Helm (rendered with current environment hostnames)
-    local values_file
-    values_file=$(render_manifest "${MANIFESTS_DIR}/vault/values.yaml")
-    install_helm_chart "${VAULT_RELEASE}" \
-        "${VAULT_REPO_NAME}/vault" \
-        "${VAULT_NAMESPACE}" \
-        "${values_file}" || {
+    if [[ "${skip_helm_install}" != "true" ]]; then
+        # Deploy with Helm (rendered with current environment hostnames)
+        local values_file
+        values_file=$(render_manifest "${MANIFESTS_DIR}/vault/values.yaml")
+        install_helm_chart "${VAULT_RELEASE}" \
+            "${VAULT_REPO_NAME}/vault" \
+            "${VAULT_NAMESPACE}" \
+            "${values_file}" || {
+            rm -f "${values_file}"
+            log_error "Failed to deploy Vault"
+            return 1
+        }
         rm -f "${values_file}"
-        log_error "Failed to deploy Vault"
-        return 1
-    }
-    rm -f "${values_file}"
+    fi
 
     # Apply ServersTransport (Traefik CRD — skips backend TLS verification so
     # Traefik can talk to Vault's HTTPS listener that has a different cert).
@@ -1978,16 +2039,39 @@ deploy_vault() {
         log_warn "Certificate not ready yet (may take a few minutes)"
     }
 
-    # Initialize Vault (only if not already initialized)
+    # Initialize Vault (only if not already initialized).
     log_info "Checking Vault initialization status..."
+
+    # Make sure vault-0 is actually exec-able before trying to talk to it.
+    # Without this guard, a stuck pod (e.g. waiting for vault-tls Secret) would
+    # let `kubectl exec` fail silently, the init JSON would come back empty,
+    # and we'd save an "Initialization failed" placeholder to the credentials
+    # file — losing the keys forever on the next successful init attempt that
+    # would otherwise overwrite the placeholder.
+    if ! kubectl exec -n "${VAULT_NAMESPACE}" vault-0 -- /bin/true &>/dev/null; then
+        log_warn "vault-0 is not exec-able yet (pod likely waiting for vault-tls Secret)."
+        log_warn "Skipping init. Once the certificate is issued and vault-0 is Running,"
+        log_warn "re-run: sudo ./setup-kubernetes.sh --${DEPLOY_ENV} --deploy-vault"
+        log_warn "Diagnose with: kubectl describe pod -n ${VAULT_NAMESPACE} vault-0"
+        return 0
+    fi
+
     local vault_status
     vault_status=$(kubectl exec -n "${VAULT_NAMESPACE}" vault-0 -- vault status -tls-skip-verify -format=json 2>/dev/null || true)
 
     if [[ -n "${vault_status}" ]] && echo "${vault_status}" | jq -e '.initialized == true' &>/dev/null; then
         log_ok "Vault is already initialized"
-        save_credential "vault" \
-            "URL: https://${VAULT_HOST}" \
-            "Status: Already initialized (unseal keys were shown at first init)"
+        # Don't clobber an existing credentials file: if init succeeded on a
+        # previous run, the unseal keys are in there and a "Status: Already
+        # initialized" placeholder would erase them.
+        local existing_cred="${CREDENTIALS_DIR}/vault-${DEPLOY_ENV}.txt"
+        if [[ ! -f "${existing_cred}" ]]; then
+            save_credential "vault" \
+                "URL: https://${VAULT_HOST}" \
+                "Status: Already initialized (unseal keys were shown at first init)"
+        else
+            log_info "Preserving existing credentials file: ${existing_cred}"
+        fi
     else
         log_info "Initializing Vault..."
         local init_output
@@ -2658,6 +2742,10 @@ main() {
             if [[ "${CONFIGURE_STORAGE}" == "true" && -n "${STORAGE_PATH}" ]]; then
                 check_storage_mount || die "Storage not properly mounted"
             fi
+        fi
+
+        if [[ "${deploying_infra}" == "true" ]]; then
+            check_ingress_dns_resolves || die "Public DNS for ingress hostnames is missing — fix that before deploying."
         fi
     fi
 
