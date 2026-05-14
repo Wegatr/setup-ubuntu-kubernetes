@@ -429,6 +429,140 @@ of truth for platform constants, no copy-paste.
   `argocd/<env>/apps/applicationset.yaml`'s element list.
 - **Tune an existing app** — edit its `apps/<name>/values-{common,env}.yaml`.
 
+## Resource footprint
+
+Each env (DEV / TEST / PROD) runs on its **own** cluster — never co-located.
+The tables below come from the per-env `apps/<name>/values-{common,env}.yaml`
+files. Apps not listed in a table either own no pods (e.g. coredns —
+ConfigMap-only) or use the upstream Helm chart's own defaults without
+override (Tekton operator pods, some kube-prometheus-stack sub-components,
+loki / tempo / alloy — see the chart upstream values for exact numbers).
+
+CPU values are Kubernetes Quantity strings (`1` = 1 vCPU, `500m` = 0.5 vCPU,
+etc.); memory uses binary IEC suffixes. "req → lim" is request → limit.
+
+### DEV
+
+| App | Pod | Replicas | CPU req → lim | Memory req → lim | PVC |
+|---|---|---|---|---|---|
+| external-secrets | controller | 1 | `50m → 250m` | `96Mi → 384Mi` | — |
+| mongodb | mongodb (replicaset) | **3** | `500m → 2` | `1Gi → 4Gi` | `20 Gi × 3` |
+| mongodb | mongodb-exporter | 1 | `50m → 200m` | `64Mi → 256Mi` | — |
+| postgresql | postgresql primary | 1 | `250m → 1` | `512Mi → 2Gi` | `20 Gi` |
+| postgresql | postgres-exporter (sidecar) | – | `50m → 200m` | `64Mi → 256Mi` | – |
+| redis | redis master | 1 | `500m → 2` | `2Gi → 6Gi` | `10 Gi` |
+| redis | redis-exporter | 1 | `50m → 200m` | `64Mi → 256Mi` | — |
+| postfix | mail | 1 | `50m → 250m` | `64Mi → 256Mi` | `1 Gi` |
+| seq | seq | 1 | `250m → 1` | `1Gi → 4Gi` | `50 Gi` |
+| dbgate | app | 1 | `100m → 500m` | `256Mi → 1Gi` | `1 Gi` |
+| observability | prometheus | 1 | `200m → 1` | `1Gi → 4Gi` | `30 Gi` |
+| observability | alertmanager | 1 | chart default | chart default | `2 Gi` |
+| observability | grafana | 1 | chart default | chart default | `5 Gi` |
+| observability | loki (single-binary) | 1 | chart default | chart default | `50 Gi` |
+| observability | tempo | 1 | chart default | chart default | `20 Gi` |
+| observability | alloy | DaemonSet | chart default | chart default | — |
+| image-builder | el-image-builder (EventListener) | 1 | `50m → 200m` | `64Mi → 256Mi` | — |
+| image-builder | trivy-db-cache-warmer (pause) | 1 | `1m → 10m` | `8Mi → 16Mi` | `5 Gi` |
+
+DEV-only on-demand Tekton steps (created per PipelineRun, gone when build finishes):
+
+| Task step | CPU req → lim | Memory req → lim |
+|---|---|---|
+| git-clone | `100m → 500m` | `128Mi → 512Mi` |
+| generate-image-tag | `10m → 100m` | `16Mi → 64Mi` |
+| credential-scan (gitleaks) | `100m → 500m` | `128Mi → 512Mi` |
+| buildah-build-push | `500m → 2` | `1Gi → 4Gi` |
+| trivy-scan | `200m → 1` | `512Mi → 2Gi` |
+| logging-summary | `10m → 100m` | `32Mi → 128Mi` |
+
+DEV totals (always-running, request-side only — limits are typically 4× higher):
+
+| | Sum |
+|---|---|
+| CPU requests | ~ `3.0 vCPU` (excl. Tekton + observability chart defaults) |
+| Memory requests | ~ `8.4 GiB` (excl. Tekton + observability chart defaults) |
+| PVC provisioned | ~ `254 GiB` (60 mongo + 20 pg + 10 redis + 1 postfix + 50 seq + 1 dbgate + 30 prom + 2 alertmanager + 5 grafana + 50 loki + 20 tempo + 5 trivy) |
+
+### TEST
+
+Identical to DEV **with two exceptions**:
+
+- `image-builder` is **not deployed** (Phase A: DEV-only). No EventListener,
+  no warmer, no Tekton tasks, no `5 Gi` trivy-db-cache PVC.
+- Everything else carries the same resource pins as DEV.
+
+| App | Pod | Replicas | CPU req → lim | Memory req → lim | PVC |
+|---|---|---|---|---|---|
+| external-secrets | controller | 1 | `50m → 250m` | `96Mi → 384Mi` | — |
+| mongodb | mongodb (replicaset) | **3** | `500m → 2` | `1Gi → 4Gi` | `20 Gi × 3` |
+| mongodb | mongodb-exporter | 1 | `50m → 200m` | `64Mi → 256Mi` | — |
+| postgresql | postgresql primary | 1 | `250m → 1` | `512Mi → 2Gi` | `20 Gi` |
+| postgresql | postgres-exporter (sidecar) | – | `50m → 200m` | `64Mi → 256Mi` | – |
+| redis | redis master | 1 | `500m → 2` | `2Gi → 6Gi` | `10 Gi` |
+| redis | redis-exporter | 1 | `50m → 200m` | `64Mi → 256Mi` | — |
+| postfix | mail | 1 | `50m → 250m` | `64Mi → 256Mi` | `1 Gi` |
+| seq | seq | 1 | `250m → 1` | `1Gi → 4Gi` | `50 Gi` |
+| dbgate | app | 1 | `100m → 500m` | `256Mi → 1Gi` | `1 Gi` |
+| observability | prometheus | 1 | `200m → 1` | `1Gi → 4Gi` | `30 Gi` |
+| observability | alertmanager | 1 | chart default | chart default | `2 Gi` |
+| observability | grafana | 1 | chart default | chart default | `5 Gi` |
+| observability | loki (single-binary) | 1 | chart default | chart default | `50 Gi` |
+| observability | tempo | 1 | chart default | chart default | `20 Gi` |
+| observability | alloy | DaemonSet | chart default | chart default | — |
+
+TEST totals: ~ `2.9 vCPU` requests, ~ `8.4 GiB` memory requests, **~ `249 GiB` PVC**.
+
+### PROD
+
+Identical to TEST **with one exception**:
+
+- `postgresql` primary gets bumped resources + a larger PVC (real workload sizing).
+
+| App | Pod | Replicas | CPU req → lim | Memory req → lim | PVC |
+|---|---|---|---|---|---|
+| external-secrets | controller | 1 | `50m → 250m` | `96Mi → 384Mi` | — |
+| mongodb | mongodb (replicaset) | **3** | `500m → 2` | `1Gi → 4Gi` | `20 Gi × 3` |
+| mongodb | mongodb-exporter | 1 | `50m → 200m` | `64Mi → 256Mi` | — |
+| **postgresql** | **postgresql primary** | **1** | **`500m → 2`** | **`1Gi → 4Gi`** | **`50 Gi`** |
+| postgresql | postgres-exporter (sidecar) | – | `50m → 200m` | `64Mi → 256Mi` | – |
+| redis | redis master | 1 | `500m → 2` | `2Gi → 6Gi` | `10 Gi` |
+| redis | redis-exporter | 1 | `50m → 200m` | `64Mi → 256Mi` | — |
+| postfix | mail | 1 | `50m → 250m` | `64Mi → 256Mi` | `1 Gi` |
+| seq | seq | 1 | `250m → 1` | `1Gi → 4Gi` | `50 Gi` |
+| dbgate | app | 1 | `100m → 500m` | `256Mi → 1Gi` | `1 Gi` |
+| observability | prometheus | 1 | `200m → 1` | `1Gi → 4Gi` | `30 Gi` |
+| observability | alertmanager | 1 | chart default | chart default | `2 Gi` |
+| observability | grafana | 1 | chart default | chart default | `5 Gi` |
+| observability | loki (single-binary) | 1 | chart default | chart default | `50 Gi` |
+| observability | tempo | 1 | chart default | chart default | `20 Gi` |
+| observability | alloy | DaemonSet | chart default | chart default | — |
+
+PROD totals: ~ `3.2 vCPU` requests, ~ `8.9 GiB` memory requests, **~ `279 GiB` PVC**
+(postgresql `20 Gi → 50 Gi` is the only delta from TEST).
+
+### Adjusting per-env resources
+
+`platform/values-<env>.yaml` only carries cross-cutting globals (domain,
+vault URL, env name). Resource pins live in each `apps/<name>/values-{common,
+env}.yaml`. To bump e.g. mongodb on PROD:
+
+```yaml
+# apps/mongodb/values-prod.yaml
+mongodb:
+  resources:
+    requests:
+      cpu: 1
+      memory: 2Gi
+    limits:
+      cpu: 4
+      memory: 8Gi
+  persistence:
+    size: 100Gi
+```
+
+Commit, push, ArgoCD picks it up on the next reconcile. Note: shrinking
+a PVC is not supported by hostpath-storage — only grow.
+
 ## Credentials
 
 After deploying infrastructure apps, credentials are automatically saved to
