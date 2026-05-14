@@ -54,6 +54,9 @@ INFRASTRUCTURE:
     --install-kube / --install-argocd / --install-vault    (aliases for deploy)
     --uninstall-kube / --uninstall-argocd / --uninstall-vault
     --upgrade-kube / --upgrade-argocd / --upgrade-vault
+    --seed-vault                  Write secrets from configs/secrets.<env>
+                                  into Vault (KV-v2). Re-runnable: each call
+                                  replaces the latest version of each entry.
 
 MAINTENANCE:
     --check                       Run full health check on cluster and apps
@@ -81,7 +84,7 @@ EXAMPLES:
     sudo ./setup-kubernetes.sh --dev --show-config            # Show config
 
 CONFIGURATION:
-    Copy config.example to configs/config.<env> and edit it.
+    Copy configs/config.example to configs/config.<env> and edit it.
     Available configs: $(list_available_configs)
 HELPEOF
 }
@@ -124,7 +127,7 @@ load_config() {
         done
         if [[ -z "${CONFIG_FILE:-}" ]]; then
             echo "ERROR: No configuration file found."
-            echo "       Copy config.example to configs/config.<env> (e.g. configs/config.dev) and customise it."
+            echo "       Copy configs/config.example to configs/config.<env> (e.g. configs/config.dev) and customise it."
             echo "       Available: $(list_available_configs)"
             exit 1
         fi
@@ -132,7 +135,7 @@ load_config() {
 
     if [[ ! -f "${CONFIG_FILE}" ]]; then
         echo "ERROR: Configuration file not found: ${CONFIG_FILE}"
-        echo "       Copy config.example to configs/config.<env> and customise it."
+        echo "       Copy configs/config.example to configs/config.<env> and customise it."
         echo "       Available: $(list_available_configs)"
         exit 1
     fi
@@ -157,6 +160,7 @@ init_flag_defaults() {
     DEPLOY_KUBE=false
     DEPLOY_ARGOCD=false
     DEPLOY_VAULT=false
+    SEED_VAULT=false
     FORCE_DEPLOY=false
 
     # Cleanup flags
@@ -280,6 +284,15 @@ parse_arguments() {
                 ;;
             --deploy-all)
                 DEPLOY_KUBE=true; DEPLOY_ARGOCD=true; DEPLOY_VAULT=true
+                INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
+                shift
+                ;;
+            --seed-vault)
+                # Standalone-friendly: don't disable other flags so it composes
+                # with --deploy-vault for a one-shot bring-up. Pre-flight DNS
+                # check is skipped because this step doesn't touch the public
+                # ingress — it talks to vault-0 via kubectl exec only.
+                SEED_VAULT=true
                 INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
                 shift
                 ;;
@@ -427,6 +440,13 @@ INFRASTRUCTURE DEPLOYMENT OPTIONS:
     --upgrade-kube                Upgrade Kubernetes Dashboard to latest version
     --upgrade-argocd              Upgrade ArgoCD to latest version
     --upgrade-vault               Upgrade Vault to latest version
+    --seed-vault                  Configure Vault prereqs (kv-v2, kubernetes
+                                  auth, external-secrets policy + role) and
+                                  write configs/secrets.<env> into Vault.
+                                  Idempotent — safe to re-run; each call
+                                  supersedes the previous KV-v2 version.
+                                  Composes with --deploy-vault for a one-shot
+                                  bring-up:  --dev --deploy-vault --seed-vault
 
 MAINTENANCE OPTIONS:
     --status                      Show infrastructure applications status

@@ -27,8 +27,12 @@ All examples below use `<env>` as a placeholder — replace with one of
 │   ├── common-kubernetes.sh      Shared function library.
 │   ├── manage-secrets.sh         Backup/restore credentials (GPG encrypted).
 │   ├── manage-secrets.config     Files included in the secrets backup.
-│   ├── config.example            Documented config template (checked in).
-│   ├── configs/                  Per-env configs `config.<env>` (gitignored).
+│   ├── configs/                  Templates (checked in) + per-env files (gitignored):
+│   │   ├── config.example        Documented config template.
+│   │   ├── secrets.example       Vault-seed template (input to --seed-vault).
+│   │   ├── config.<env>          Real per-env config (gitignored).
+│   │   ├── secrets.<env>         Real Vault seed values (gitignored, mode 600).
+│   │   └── secrets.<env>.pub.txt Companion public keys / DNS records (gitignored).
 │   └── manifests/
 │       ├── kube/                 Headlamp (Dashboard) Helm values + Ingress.
 │       ├── argocd/               ArgoCD Helm values (Ingress in values.yaml).
@@ -70,7 +74,7 @@ tree.
 cd setup-kubernetes/
 
 # 1. Copy the example config and edit it (substitute <env>)
-cp config.example configs/config.<env>
+cp configs/config.example configs/config.<env>
 vim configs/config.<env>   # set CLUSTER_NAME, DOMAIN_SUFFIX, LETSENCRYPT_EMAIL, ...
 
 # 2. (Pre-work outside the script) Add DNS A records for the three hostnames
@@ -136,7 +140,7 @@ token; use those to populate the KV store and configure the auth role.
 ## Configuration
 
 All settings live in a single config file per environment (`configs/config.<env>`).
-Copy `config.example` to get started — every variable is documented with
+Copy `configs/config.example` to get started — every variable is documented with
 comments explaining what it does and when to change it.
 
 The script loads the right config automatically based on the environment flag:

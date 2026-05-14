@@ -1,8 +1,20 @@
-# Environment-specific configs (contain real domains, emails, secrets)
-configs/
+# setup-kubernetes/configs/ — keep the *.example templates checked in,
+# ignore every real per-env file (config.<env>, secrets.<env>,
+# secrets.<env>.pub.txt, etc.).
+setup-kubernetes/configs/*
+!setup-kubernetes/configs/*.example
+
+# Belt-and-suspenders: never commit per-env config / secret files even if
+# they accidentally show up outside the configs/ directory.
 config.dev
 config.test
 config.prod
+secrets.dev
+secrets.test
+secrets.prod
+secrets.dev.pub.txt
+secrets.test.pub.txt
+secrets.prod.pub.txt
 
 # Encrypted secrets backup
 secrets.enc

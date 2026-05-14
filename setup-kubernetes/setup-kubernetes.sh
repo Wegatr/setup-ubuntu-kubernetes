@@ -32,7 +32,7 @@ source "${SCRIPT_DIR}/common-kubernetes.sh"
 # print_early_help, load_config, init_flag_defaults, parse_arguments, etc.
 # that main() calls below).
 for _lib in cli preflight install-microk8s install-storage-tls install-tools \
-            verify deploy-kube deploy-argocd deploy-vault \
+            verify deploy-kube deploy-argocd deploy-vault seed-vault \
             lifecycle maintenance; do
     if [[ ! -f "${LIB_DIR}/${_lib}.sh" ]]; then
         echo "ERROR: Missing library: ${LIB_DIR}/${_lib}.sh"
@@ -253,6 +253,13 @@ main() {
 
     if [[ "${DEPLOY_VAULT}" == "true" ]]; then
         deploy_vault || log_warn "Vault deployment had issues"
+    fi
+
+    # Seed Vault. Runs AFTER deploy_vault when both flags are set so an
+    # initial cluster bring-up can do --deploy-vault --seed-vault in one shot.
+    # Also runnable standalone against an already-deployed Vault.
+    if [[ "${SEED_VAULT}" == "true" ]]; then
+        seed_vault || log_warn "Vault seeding had issues"
     fi
 
     # Print summary
