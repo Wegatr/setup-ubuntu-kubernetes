@@ -108,7 +108,7 @@ spec:
         echo "Pushed: $IMAGE_REF @ $DIGEST"
         printf "%s" "$DIGEST" > $(results.image-digest.path)
         printf "%s" "$IMAGE_REF" > $(results.image-reference.path)
-      resources:
+      computeResources:
         requests:
           cpu: 500m
           memory: 1Gi

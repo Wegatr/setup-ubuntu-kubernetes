@@ -85,7 +85,7 @@ spec:
         echo "Cloned $(params.url)@$(params.revision) -> $RESOLVED_SHA"
         printf "%s" "$RESOLVED_SHA" > $(results.commit.path)
         printf "%s" "$(params.url)" > $(results.url.path)
-      resources:
+      computeResources:
         requests:
           cpu: 100m
           memory: 128Mi

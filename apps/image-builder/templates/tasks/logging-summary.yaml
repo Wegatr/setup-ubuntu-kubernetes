@@ -62,7 +62,7 @@ spec:
               built_at:       $build_ts
             }
           }' | tee /workspace/source/.build-summary.json
-      resources:
+      computeResources:
         requests:
           cpu: 10m
           memory: 32Mi

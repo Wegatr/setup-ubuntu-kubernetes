@@ -39,7 +39,7 @@ spec:
         printf "%s" "$TAG" > $(results.image-tag.path)
         # ISO-8601 form for the OCI label.
         printf "%s" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > $(results.build-timestamp.path)
-      resources:
+      computeResources:
         requests:
           cpu: 10m
           memory: 16Mi

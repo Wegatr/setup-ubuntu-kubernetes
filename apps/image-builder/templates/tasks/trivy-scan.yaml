@@ -68,7 +68,7 @@ spec:
           $TRIVYIGNORE_FLAG \
           --format table \
           "$TARGET"
-      resources:
+      computeResources:
         requests:
           cpu: 200m
           memory: 512Mi
