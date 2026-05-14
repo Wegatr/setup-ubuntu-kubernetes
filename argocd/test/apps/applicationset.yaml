@@ -94,8 +94,8 @@ spec:
       sources:
         # `&repo` / `&branch` anchors are reused by the second source below —
         # the repo URL literal appears once per ApplicationSet.
-        - repoURL: &repo "https://github.com/<github-account>/<github-repo>.git"
-          targetRevision: &branch master
+        - repoURL: &repo "https://github.com/kartalbas/setup-ubuntu-kubernetes.git"
+          targetRevision: &branch main
           ref: values
         - repoURL: *repo
           targetRevision: *branch

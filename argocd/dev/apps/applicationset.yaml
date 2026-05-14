@@ -122,8 +122,8 @@ spec:
         # source's helm.valueFiles list below. The `&repo` / `&branch` YAML
         # anchors let the chart source below reuse the same literal — one
         # source of truth per env, no duplication.
-        - repoURL: &repo "https://github.com/<github-account>/<github-repo>.git"
-          targetRevision: &branch master
+        - repoURL: &repo "https://github.com/kartalbas/setup-ubuntu-kubernetes.git"
+          targetRevision: &branch main
           ref: values
         # Chart source — references the anchors above.
         - repoURL: *repo
