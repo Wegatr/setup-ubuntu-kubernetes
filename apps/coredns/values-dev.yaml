@@ -1,2 +1,9 @@
-# DEV-specific coredns overrides — none today. Rewrites are declared in
-# values-common.yaml; vault.<env>.<domain> is composed from platform globals.
+# DEV-specific coredns overrides. Rewrites that apply to every env are in
+# values-common.yaml (vault); rewrites here apply ONLY to the DEV cluster.
+extraRewrites:
+  # Zot OCI registry runs on DEV only (apps/registry/). Point in-cluster
+  # lookups at the ClusterIP service so image-builder + workload pulls don't
+  # exit + re-enter the cluster via the public IPv4 (which requires NAT
+  # hairpinning support on the host's router).
+  - from: 'zot.dev.{{ .Values.global.domain }}'
+    to: registry-dev-app.registry.svc.cluster.local

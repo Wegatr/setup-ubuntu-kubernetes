@@ -5,3 +5,12 @@
 rewrites:
   - from: 'vault.{{ .Values.global.env }}.{{ .Values.global.domain }}'
     to: vault.vault.svc.cluster.local
+
+# Per-env additional rewrites — set in values-{dev,test,prod}.yaml when the
+# mapping makes sense only on one cluster. Default empty so test/prod don't
+# silently inherit a DEV-only mapping. Currently used on DEV for
+# zot.dev.<domain> → registry-dev-app.registry.svc.cluster.local, which lets
+# in-cluster pods (image-builder buildah, trivy, future workload pulls) hit
+# Zot directly via ClusterIP instead of bouncing through the host's public
+# IPv4 — sidesteps routers without NAT-hairpinning + saves the TLS roundtrip.
+extraRewrites: []

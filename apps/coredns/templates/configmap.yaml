@@ -31,8 +31,17 @@ data:
         can reference .Values.global.env and .Values.global.domain — composing
         per-env public hostnames from a single source of truth in
         platform/values-{common,env}.yaml.
+
+        Two sources are emitted in order:
+          1. .Values.rewrites      — every-env rewrites (values-common.yaml)
+          2. .Values.extraRewrites — per-env rewrites (values-{dev,test,prod}.yaml)
+        Order matters only if the same `from` appears twice — CoreDNS uses
+        the first match.
         */}}
         {{- range .Values.rewrites }}
+        rewrite name {{ tpl .from $ }} {{ .to }}
+        {{- end }}
+        {{- range .Values.extraRewrites }}
         rewrite name {{ tpl .from $ }} {{ .to }}
         {{- end }}
         kubernetes cluster.local in-addr.arpa ip6.arpa {
