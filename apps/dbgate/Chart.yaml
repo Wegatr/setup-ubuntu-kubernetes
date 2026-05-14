@@ -3,7 +3,7 @@ name: dbgate
 version: 1.0.0
 description: DBGate — unified web UI for MongoDB and Redis (replaces mongoexpress/redisinsight)
 type: application
-appVersion: "7.1.9"
+appVersion: "7.1.11"
 dependencies:
   - name: deployment
     version: 1.0.0

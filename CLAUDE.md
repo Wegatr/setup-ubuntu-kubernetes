@@ -85,6 +85,33 @@ host. Existing 26.04 workarounds in the script
 `fix_coredns_upstream`) are written to be idempotent and no-op on 24.04 too —
 follow that pattern.
 
+## Current pinned versions (snapshot 2026-05-14)
+
+Single source of truth for "what's deployed right now." Bump candidates
+come from comparing this against GitHub releases periodically. Charts that
+are installed at `latest` (no pin) are also listed so it's clear they
+auto-update on each install.
+
+| Component | Pin | Where | Notes |
+|---|---|---|---|
+| MicroK8s | `1.35/stable` | `setup-kubernetes/configs/config.example` MICROK8S_CHANNEL | 1.36 is edge-only as of May 2026. |
+| Zot | `v2.1.16` | `apps/registry/Chart.yaml` appVersion + `values-common.yaml` `app.image.tag` | Two places — must match. |
+| Joxit UI | `2.6.0` | `apps/registry/values-common.yaml` `ui.image.tag` | docker-registry-ui SPA. |
+| Bitnami mongodb (chart / DB) | `19.0.3` / `8.3.2` | `apps/mongodb/Chart.yaml` deps[mongodb].version | OCI registry only since Aug 2025. |
+| Bitnami postgresql (chart / DB) | `18.6.6` / `18.4.0` | `apps/postgresql/Chart.yaml` deps[postgresql].version | 17.x is gone from bitnamicharts + bitnamilegacy. |
+| Bitnami redis (chart / DB) | `25.5.3` / `8.6.3` | `apps/redis/Chart.yaml` deps[redis].version | |
+| DBGate | `7.1.11` | `apps/dbgate/Chart.yaml` appVersion + `values-common.yaml` `app.image.tag` | Two places — must match. |
+| External-Secrets chart + operator | `2.4.1` / `v2.4.1` | `apps/external-secrets/Chart.yaml` deps[external-secrets].version | Operator + chart numbers track 1:1 from v2.x onward. |
+| Tekton Pipelines | `v1.12.0` | `apps/tekton/values-common.yaml` `release.pipelinesVersion` (informational) + vendored YAML in `templates/release-pipelines.yaml` | Refresh procedure in `apps/tekton/README.md`. |
+| Tekton Triggers | `v0.35.0` | same place | |
+| Tekton Interceptors | `v0.35.0` | same place | |
+| Buildah (build image) | `quay.io/buildah/stable:v1.43.1` | `apps/image-builder/templates/tasks/buildah-build-push.yaml` step image | |
+| Trivy (scan image) | `aquasec/trivy:0.70.0` | `apps/image-builder/templates/tasks/trivy-scan.yaml` step image | |
+| Prometheus-community mongodb-exporter chart | `3.7.0` | `apps/mongodb/Chart.yaml` | |
+| Prometheus-community redis-exporter chart | `6.5.0` | `apps/redis/Chart.yaml` | |
+| Headlamp / ArgoCD / Vault Helm charts | (no pin — `helm install` latest at deploy time) | `setup-kubernetes/lib/deploy-{kube,argocd,vault}.sh` | Re-running `--deploy-<app>` after a chart release picks up the new version. |
+| cert-manager / Traefik | MicroK8s addon defaults | snap addon | Tied to MicroK8s channel. |
+
 ## Hardcoded constraints — DO NOT change without asking
 
 ### Installer side (`setup-kubernetes/`)
@@ -126,12 +153,13 @@ follow that pattern.
 - **`apps/tekton/`**: vendored upstream YAMLs at `templates/release-{pipelines,
   triggers,interceptors}.yaml`. Versions pinned in `values-common.yaml`
   (informational only — actual versions = whatever's in the templates).
-  Currently Pipelines `v1.6.0` (gcr.io anon-pull broke at v0.62.0, ghcr.io
-  works from v0.65.0+), Triggers + Interceptors `v0.34.0`. Bumping is a
-  manual `curl` refresh of the three files (see `apps/tekton/README.md`)
-  plus a `preserveUnknownFields: false` sed-strip on the result (legacy
-  v1beta1 CRD field, stripped by K8s 1.22+ on write → permanent ArgoCD
-  drift if left in).
+  Currently Pipelines `v1.12.0`, Triggers + Interceptors `v0.35.0` (all
+  ghcr.io; gcr.io anon-pull retired pre-v0.65, irrelevant on current
+  releases). Bumping is a manual `curl` refresh of the three files from
+  the tektoncd/{pipeline,triggers} GitHub releases (see
+  `apps/tekton/README.md`) plus a `preserveUnknownFields: false` sed-strip
+  on the result (legacy v1beta1 CRD field, stripped by K8s 1.22+ on write
+  → permanent ArgoCD drift if left in).
 - **Tekton Task step resources**: in v1, `steps[].resources` was renamed
   to `steps[].computeResources`. K8s silently drops the old name. Write
   `computeResources:` in `apps/image-builder/templates/tasks/*.yaml` —
@@ -409,11 +437,13 @@ successful syncs. Patterns to follow proactively:
   already string-typed.
 - **`ExternalSecret.spec.data[].remoteRef`**: emit every defaulted field
   explicitly (`conversionStrategy: Default`, `decodingStrategy: None`,
-  `metadataPolicy: None`, **`nullBytePolicy: Ignore`**). ESO v2's CRD has
-  `nullBytePolicy` with default `Ignore`; without explicit emit, live has
-  it but desired doesn't → drift. (We removed it once when ESO v0.20.4's
-  CRD didn't have the field — that direction is now wrong. Always emit
-  for ESO v1.x+.)
+  `metadataPolicy: None`, **`nullBytePolicy: Ignore`**). Current ESO chart
+  (`oci://ghcr.io/external-secrets/charts/external-secrets:2.4.1`,
+  operator v2.4.1) has `nullBytePolicy` with default `Ignore`; without
+  explicit emit, live has it but desired doesn't → drift. (We removed it
+  once when ESO's legacy v0.20.x CRD didn't have the field — that
+  direction is now wrong. Always emit on every current and future
+  release; the field is part of the stable spec.)
 - **Tekton Task step**: use `computeResources:` not `resources:`. K8s
   silently strips the old name in v1, your limits get lost.
 - **CRDs over the annotation limit**: kube-prometheus-stack PrometheusRule

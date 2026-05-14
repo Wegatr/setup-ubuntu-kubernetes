@@ -1,13 +1,14 @@
 # Tekton operator install — NOT version-pinned at the Helm-chart level because
-# Tekton releases are best consumed as raw YAML manifests from
-# storage.googleapis.com/tekton-releases. See README.md.
+# Tekton releases are best consumed as raw YAML manifests from the
+# tektoncd/{pipeline,triggers} GitHub releases. See README.md for the curl-
+# refresh procedure.
 #
 # The chart itself emits the ServiceMonitor + alert rules; the actual operator
 # manifests are vendored in templates/release-*.yaml (refresh by re-downloading).
 release:
-  pipelinesVersion: "v1.6.0"     # gcr.io anon-pull broke; v0.65+ uses ghcr.io
-  triggersVersion: "v0.34.0"      # informational
-  interceptorsVersion: "v0.34.0"  # informational
+  pipelinesVersion: "v1.12.0"     # ghcr.io anon-pull (gcr.io retired pre-v0.65)
+  triggersVersion: "v0.35.0"      # informational
+  interceptorsVersion: "v0.35.0"  # informational
 
 # Default-deny feature flags / config-defaults for Tekton Pipelines.
 # - disable affinity assistant: not needed on single-node MicroK8s where every

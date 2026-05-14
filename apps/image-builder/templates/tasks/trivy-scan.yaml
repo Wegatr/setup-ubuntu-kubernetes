@@ -39,7 +39,7 @@ spec:
       default: {{ tpl .Values.pipeline.registry . | quote }}
   steps:
     - name: scan
-      image: aquasec/trivy:0.59.1
+      image: aquasec/trivy:0.70.0
       env:
         - name: TRIVY_CACHE_DIR
           value: /trivy-cache

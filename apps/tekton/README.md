@@ -11,22 +11,34 @@ release YAML directly into `templates/release-*.yaml`.
    commit the results):
 
    ```bash
-   PIPELINES_VERSION=v0.62.0
-   TRIGGERS_VERSION=v0.30.0
-   INTERCEPTORS_VERSION=v0.30.0
+   PIPELINES_VERSION=v1.12.0
+   TRIGGERS_VERSION=v0.35.0
+   INTERCEPTORS_VERSION=v0.35.0
 
    curl -fsSL -o apps/tekton/templates/release-pipelines.yaml \
-     "https://storage.googleapis.com/tekton-releases/pipeline/previous/${PIPELINES_VERSION}/release.yaml"
+     "https://github.com/tektoncd/pipeline/releases/download/${PIPELINES_VERSION}/release.yaml"
 
    curl -fsSL -o apps/tekton/templates/release-triggers.yaml \
-     "https://storage.googleapis.com/tekton-releases/triggers/previous/${TRIGGERS_VERSION}/release.yaml"
+     "https://github.com/tektoncd/triggers/releases/download/${TRIGGERS_VERSION}/release.yaml"
 
    curl -fsSL -o apps/tekton/templates/release-interceptors.yaml \
-     "https://storage.googleapis.com/tekton-releases/triggers/previous/${INTERCEPTORS_VERSION}/interceptors.yaml"
+     "https://github.com/tektoncd/triggers/releases/download/${INTERCEPTORS_VERSION}/interceptors.yaml"
+
+   # K8s 1.22+ silently strips `preserveUnknownFields: false` on apply —
+   # leaving it in the vendored YAML causes permanent ArgoCD drift. Strip it.
+   sed -i '/preserveUnknownFields: false/d' \
+     apps/tekton/templates/release-pipelines.yaml \
+     apps/tekton/templates/release-triggers.yaml \
+     apps/tekton/templates/release-interceptors.yaml
    ```
 
    Bump the three versions in `values-common.yaml` `release:` block so the
-   chart description stays in sync. Re-run the curl block to refresh.
+   chart description stays in sync. Re-run the curl + sed block to refresh.
+
+   **Note:** Tekton release artifacts moved from `storage.googleapis.com/
+   tekton-releases/` to `github.com/tektoncd/*/releases/download/` somewhere
+   between v0.30 and v1.10. Both URLs returned 200 for years; the GCS one
+   now 404s for newer versions.
 
 2. **Helm-template** the chart to verify the vendored YAML renders cleanly:
 

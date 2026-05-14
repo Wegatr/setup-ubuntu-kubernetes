@@ -69,7 +69,7 @@ spec:
       description: Fully-qualified image reference (registry/name:tag).
   steps:
     - name: build-and-push
-      image: quay.io/buildah/stable:v1.39
+      image: quay.io/buildah/stable:v1.43.1
       env:
         - name: STORAGE_DRIVER
           value: vfs
