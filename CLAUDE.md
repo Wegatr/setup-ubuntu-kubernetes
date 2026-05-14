@@ -172,6 +172,48 @@ follow that pattern.
   or the cluster default — which on MicroK8s is `microk8s-hostpath` anyway,
   so the fallback always lands on the right thing. Don't add explicit
   `storageClass: microk8s-hostpath` back into subchart values blocks.
+- **`apps/registry/` runs on DEV only**: single platform-wide Zot OCI
+  registry at `zot.dev.<DOMAIN_SUFFIX>`. The ApplicationSet entry exists
+  ONLY in `argocd/dev/apps/applicationset.yaml` (sync wave 7) — test/prod
+  do not generate this Application. Image storage on the platform default
+  StorageClass (50Gi PVC). htpasswd auth (two users — `push-user` for
+  image-builder, `pull-user` for consumers) is materialized from Vault by
+  ESO. The chart is a chart-of-charts: deployment + ingress + pvc +
+  configmap + external-secret + secret-store + monitoring deps; no custom
+  templates. Image pin is `ghcr.io/project-zot/zot-linux-amd64:v2.1.16`
+  matching `Chart.yaml`'s `appVersion`. Don't switch to the upstream
+  `project-zot/helm-charts/zot` chart — our wrapper is consistent with the
+  rest of the platform's library-chart pattern.
+- **MicroK8s built-in `registry` addon is disabled**: the snap's HTTP-only
+  `:32000` registry is superseded by the GitOps-managed Zot above. The
+  cleanup happens via `DISABLED_ADDONS=("registry")` in
+  `setup-kubernetes/configs/config.<env>` consumed by
+  `disable_addons()` in `lib/install-microk8s.sh`. Idempotent + no-op when
+  the array is empty (existing test/prod hosts that never ran with the
+  addon enabled). Add new names here if other snap defaults need cleanup.
+- **image-builder push topology**: `pipeline.registry` is rendered from
+  `.Values.global.domain` via Helm `tpl` at every chart-render —
+  `apps/image-builder/values-common.yaml` has the literal
+  `'zot.dev.{{ .Values.global.domain }}'`. The buildah-build-push and
+  trivy-scan tasks both `tpl`-render this on the Pipeline param default,
+  and `envFrom: secretRef` load `REGISTRY_USERNAME` / `REGISTRY_PASSWORD`
+  from the `image-builder-registry-push` Secret materialized by ESO from
+  Vault path `<env>/app/registry` (properties `push-user` + `push-password`).
+  Buildah does `buildah login` before bud/push; Trivy re-exports those
+  vars as `TRIVY_USERNAME` / `TRIVY_PASSWORD` (its built-in env names).
+  Don't put `--tls-verify=false` or `--insecure` back — Zot has a real LE
+  cert.
+- **Pull-from-Zot is on-demand per consumer namespace**: existing apps
+  (mongodb / postgresql / redis / postfix / seq / dbgate / observability)
+  pull from public registries (docker.io / bitnamicharts / etc.) and do
+  NOT carry an `acr-secret` chart dep. When a new workload pulls a
+  `zot.dev.<DOMAIN_SUFFIX>/...` image, add `charts/acr-secret/` (aliased
+  `acr-secret`) to its `Chart.yaml`, set `vaultPath: <env>/app/registry`
+  + `property: pull-dockerconfigjson` in values, and reference the
+  resulting Secret in the workload's `imagePullSecrets:`. The Vault entry
+  is already populated on every cluster by the unified secrets-seed file;
+  re-running `--seed-vault` after a namespace name change picks up the
+  new bound_service_account_namespaces entry.
 
 ## Pre-flight requirements the script cannot fix
 

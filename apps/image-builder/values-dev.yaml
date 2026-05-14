@@ -6,3 +6,10 @@ externalsecret-git-ssh:
 externalsecret-webhooks:
   externalSecret:
     vaultPath: dev/app/image-builder
+
+# Zot push credentials live in the registry app's Vault entry, not in
+# image-builder's. ESO authenticates from the image-builder namespace
+# (per its own SecretStore) and reads the registry path directly.
+externalsecret-registry-push:
+  externalSecret:
+    vaultPath: dev/app/registry

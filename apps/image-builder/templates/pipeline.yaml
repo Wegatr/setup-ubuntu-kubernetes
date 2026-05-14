@@ -49,9 +49,9 @@ spec:
       type: string
       default: "0.0.0"
     - name: registry
-      description: Registry hostname:port.
+      description: Registry hostname.
       type: string
-      default: {{ .Values.pipeline.registry | quote }}
+      default: {{ tpl .Values.pipeline.registry . | quote }}
     - name: containerfile
       description: Path to the Containerfile inside the source repo.
       type: string

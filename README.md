@@ -350,7 +350,7 @@ global:
   domain: <your-domain>           # used in every Ingress host, Vault URL, smtp_from
   timezone: Europe/Amsterdam      # consumed by mongodb / postgresql via Bitnami tpl
   storageClass: microk8s-hostpath # PVC default for every app
-  clusterIssuer: letsencrypt-ci   # cert-manager issuer for every Ingress
+  clusterIssuer: letsencrypt-prod # cert-manager issuer for every Ingress (matches CLUSTER_ISSUER_NAME in setup-kubernetes/configs/config.<env>)
   secretStoreName: vault-backend  # ESO SecretStore name used by every ExternalSecret
   alertRecipients:                # Alertmanager default fallback receiver
     - <operator-email>
@@ -379,7 +379,7 @@ Eleven library charts that other apps pull in as Helm dependencies:
 | `rbac` | ServiceAccount + Role + RoleBinding scaffold |
 | `configmap` | Generic ConfigMap |
 | `cronjob` | CronJob scaffold |
-| `acr-secret` | dockerconfigjson Secret for Azure Container Registry |
+| `acr-secret` | `kubernetes.io/dockerconfigjson` Secret from a Vault key — used for imagePullSecrets against any private registry (Azure ACR, GHCR, our own Zot at `zot.dev.<DOMAIN_SUFFIX>`). |
 | `external-secret` | ESO ExternalSecret defaulting to `global.secretStoreName` |
 | `secret-store` | Per-namespace Vault SecretStore + ServiceAccount, reads `global.vaultUrl` |
 | `monitoring` | ServiceMonitor / PodMonitor / PrometheusRule / AlertmanagerConfig from values maps; Alloy DaemonSet config + cluster-level rules |
@@ -388,14 +388,16 @@ Eleven library charts that other apps pull in as Helm dependencies:
 
 | App | Sync wave | Purpose |
 |---|---|---|
+| `external-secrets` | 1 | ESO controller + the 2 vendored CRDs (ExternalSecret + SecretStore) we use |
 | `tekton` | 3 | Tekton Pipelines + Triggers operator install (vendored upstream YAML — see `apps/tekton/README.md`) |
 | `coredns` | 5 | DNS rewrites for cluster-internal Vault access (host-DNS → ClusterIP) |
+| `registry` | 7 | **DEV-only.** Zot OCI registry at `zot.dev.<DOMAIN_SUFFIX>` — single platform-wide private image registry; TEST + PROD pull from this over the public internet. |
 | `mongodb` | 10 | Bitnami mongodb (3-node ReplicaSet) + prometheus-mongodb-exporter |
 | `postgresql` | 10 | Bitnami postgresql (standalone) + built-in metrics exporter |
 | `postfix` | 20 | Send-only SMTP relay (bokysan chart) with DKIM/SPF/DMARC |
 | `redis` | 20 | Bitnami redis (standalone, AOF on, no auth) + redis exporter |
 | `seq` | 20 | Datalust Seq structured-log UI |
-| `image-builder` | 25 | Tekton-based image build pipeline with multi-provider webhooks. See [`apps/image-builder/README.md`](apps/image-builder/README.md) |
+| `image-builder` | 25 | **DEV-only.** Tekton-based image build pipeline with multi-provider webhooks. Pushes to `apps/registry/`. See [`apps/image-builder/README.md`](apps/image-builder/README.md) |
 | `dbgate` | 30 | Unified DB UI for Mongo + Redis + Postgres |
 | `observability` | 30 | kube-prometheus-stack + Loki + Tempo + Alloy + Alertmanager |
 
@@ -428,6 +430,94 @@ of truth for platform constants, no copy-paste.
   pattern, then append one entry to each
   `argocd/<env>/apps/applicationset.yaml`'s element list.
 - **Tune an existing app** — edit its `apps/<name>/values-{common,env}.yaml`.
+
+## Cross-cluster image distribution
+
+DEV, TEST, and PROD each run on their own cluster — different physical hosts,
+different networks, in different countries. To distribute custom-built images
+(produced by `apps/image-builder/` on DEV) to TEST and PROD without an
+external image registry, the platform runs a single shared **Zot OCI
+registry** at `apps/registry/`.
+
+```
+                ┌──────────────── DEV cluster ────────────────┐
+                │                                              │
+                │   image-builder (Tekton)                     │
+                │        │ buildah push                        │
+                │        ▼                                     │
+                │   Zot pod  ──►  PVC  /var/lib/registry       │
+                │   │                                          │
+                │   └─ Ingress: https://zot.dev.<DOMAIN>/      │  ← LE cert
+                │                                              │
+                └────────────────────│─────────────────────────┘
+                                     │ public HTTPS, htpasswd auth
+                            ┌────────┴────────┐
+                            ▼                 ▼
+                      TEST cluster        PROD cluster
+                       (pull only)         (pull only)
+                  imagePullSecret      imagePullSecret
+                  from Vault →         from Vault →
+                  charts/acr-secret    charts/acr-secret
+```
+
+Key properties:
+
+- **One pod, one PVC**: Zot runs in the `registry` namespace on DEV only.
+  TEST + PROD do not deploy `apps/registry/` (their ApplicationSets omit it).
+- **Two service accounts**: `push-user` (write — used by image-builder) and
+  `pull-user` (read-only — used by every consuming namespace, including
+  TEST and PROD). Both passwords + the bcrypt htpasswd blob are seeded into
+  Vault via `secrets.<env>` schema rows `app|registry|*`.
+- **Public TLS**: cert-manager issues a Let's Encrypt cert at
+  `zot.dev.<DOMAIN_SUFFIX>` so TEST and PROD pull over HTTPS — no VPN, no
+  cluster-to-cluster trust, no certificate-of-authority distribution.
+- **No-auth MicroK8s built-in registry is disabled**: `DISABLED_ADDONS`
+  in `setup-kubernetes/configs/config.<env>` runs `microk8s disable registry`
+  on every install so the snap's insecure `:32000` registry doesn't coexist
+  with Zot.
+
+### Consuming Zot from a new workload
+
+The image-builder's `buildah-build-push` task already logs in with the
+push-user credentials. For a consumer workload to **pull** from
+`zot.dev.<DOMAIN_SUFFIX>/<repo>:<tag>`, add three pieces:
+
+1. **Vault auth from the consumer's namespace** — drop `charts/secret-store/`
+   as a chart dependency (a SecretStore + ServiceAccount in that namespace).
+   The seeder already maps `registry` to a category-`app` Vault entry, so
+   re-running `--seed-vault` is only needed if the consuming namespace name
+   is new.
+2. **imagePullSecret** — drop `charts/acr-secret/` as a chart dependency,
+   point it at vault path `<env>/app/registry`, property
+   `pull-dockerconfigjson`. ESO materializes a
+   `kubernetes.io/dockerconfigjson` Secret in the consumer's namespace.
+3. **Reference it on the pod** — add `imagePullSecrets:` (singular Secret
+   name) to the workload's Deployment / StatefulSet spec, or use it via
+   the `imagePullSecrets:` value in the shared `charts/deployment/` lib chart.
+
+### Phase A scope
+
+- Zot deployed on **DEV only**; same dockerconfigjson seeded into all three
+  Vaults (so TEST/PROD can pull when their consumer workloads add the
+  acr-secret dep).
+- Existing data-store apps (mongodb / postgresql / redis / postfix / seq /
+  dbgate / observability) pull from **public** registries (docker.io,
+  bitnamicharts, datalust, grafana) — none of them carry the acr-secret dep
+  yet. Pull-from-Zot is on-demand, per consumer.
+
+### Operational paths
+
+- **Inspect the catalog** —
+  `curl -u pull-user:<password> https://zot.dev.<DOMAIN_SUFFIX>/v2/_catalog`
+- **Garbage-collect** — Zot runs GC automatically (`storage.gc: true` in
+  `apps/registry/values-common.yaml` → `configmap.configmap.data."config.json"`).
+- **Grow the PVC** — bump `pvc.pvc.storageSize` in `values-common.yaml`,
+  commit, push, ArgoCD reconciles. Hostpath-storage only grows, never shrinks.
+- **Rotate passwords** — regenerate locally (`openssl rand …` + `htpasswd
+  -nbB …`), update `configs/secrets.dev`, re-run `--seed-vault`. ESO has
+  `refreshInterval: "0"`, so workloads keep the cached pull-secret until
+  their ExternalSecret is force-synced (annotate with `force-sync=`).
+  Image-builder picks up the new push-user creds on its next pod restart.
 
 ## Resource footprint
 

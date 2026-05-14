@@ -34,9 +34,9 @@ spec:
       type: string
       default: HIGH,CRITICAL
     - name: registry
-      description: Registry hostname:port (passed for --tls-verify and insecure flag).
+      description: Registry hostname.
       type: string
-      default: {{ .Values.pipeline.registry | quote }}
+      default: {{ tpl .Values.pipeline.registry . | quote }}
   steps:
     - name: scan
       image: aquasec/trivy:0.59.1
@@ -45,10 +45,24 @@ spec:
           value: /trivy-cache
         - name: TRIVY_NO_PROGRESS
           value: "true"
+      envFrom:
+        # REGISTRY_USERNAME + REGISTRY_PASSWORD from the same Secret used by
+        # buildah-build-push (image-builder-registry-push, materialized by
+        # apps/image-builder/Chart.yaml dep externalsecret-registry-push from
+        # Vault path <env>/app/registry). Re-exported as TRIVY_USERNAME +
+        # TRIVY_PASSWORD inside the script so Trivy auto-detects them when
+        # pulling the just-pushed image by reference.
+        - secretRef:
+            name: image-builder-registry-push
       workingDir: /workspace/source
       script: |
         #!/usr/bin/env sh
         set -eu
+
+        # Trivy reads TRIVY_USERNAME/PASSWORD when pulling from a private
+        # registry. Remap from the canonical REGISTRY_* secret keys.
+        export TRIVY_USERNAME="${REGISTRY_USERNAME}"
+        export TRIVY_PASSWORD="${REGISTRY_PASSWORD}"
 
         TARGET="$(params.image-reference)@$(params.image-digest)"
 
@@ -61,7 +75,6 @@ spec:
         echo "Scanning $TARGET (severity=$(params.severity))"
         # shellcheck disable=SC2086
         trivy image \
-          --insecure \
           --severity "$(params.severity)" \
           --exit-code 1 \
           --ignore-unfixed \

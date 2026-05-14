@@ -1,0 +1,11 @@
+# PROD-specific Zot registry config.
+#
+# Phase A: registry is NOT included in argocd/prod/apps/applicationset.yaml,
+# so this chart is never deployed in PROD — workloads here pull from
+# zot.dev.<DOMAIN_SUFFIX> over the public internet using the same
+# pull-dockerconfigjson seeded into PROD's Vault. The file exists for
+# symmetry; if you later flip Zot on in PROD (multi-registry topology),
+# point the Vault path here.
+externalsecret-htpasswd:
+  externalSecret:
+    vaultPath: prod/app/registry

@@ -59,6 +59,20 @@ spec:
             createNamespace: "false"
             specialOptions: ""
 
+          # Wave 7 — Zot OCI registry. DEV-ONLY entry — this is the single
+          # cluster-wide private image registry. TEST and PROD do NOT
+          # generate this Application (their applicationset.yaml has no
+          # registry entry) and pull from https://zot.dev.<DOMAIN_SUFFIX>/
+          # over the public internet via the same pull-dockerconfigjson
+          # seeded into their own Vaults. Must be Ready before any wave-10+
+          # workload that pulls a private image.
+          - name: registry
+            syncWave: "7"
+            namespace: registry
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
           # Wave 10 — Core data stores. Independent peers.
           - name: mongodb
             syncWave: "10"

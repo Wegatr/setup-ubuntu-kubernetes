@@ -10,3 +10,7 @@ externalsecret-git-ssh:
 externalsecret-webhooks:
   externalSecret:
     vaultPath: test/app/image-builder
+
+externalsecret-registry-push:
+  externalSecret:
+    vaultPath: test/app/registry

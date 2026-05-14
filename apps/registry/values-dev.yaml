@@ -1,0 +1,5 @@
+# DEV-specific Zot registry config. This is where Zot actually runs — TEST
+# and PROD do not generate this Application via their ApplicationSets.
+externalsecret-htpasswd:
+  externalSecret:
+    vaultPath: dev/app/registry

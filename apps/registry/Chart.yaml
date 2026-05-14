@@ -1,0 +1,54 @@
+apiVersion: v2
+name: registry
+version: 1.0.0
+description: Zot OCI registry — single cluster-wide private registry running on DEV, consumed by image-builder (push) and by every cluster (pull from public FQDN zot.dev.<DOMAIN_SUFFIX>). htpasswd-auth via ESO-materialized Secret, persistent image storage on platform StorageClass.
+type: application
+appVersion: "v2.1.16"
+
+dependencies:
+  # Zot pod — Deployment + ClusterIP Service via shared library chart.
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: app
+
+  # Image storage — Bound by the Zot pod at /var/lib/registry. The DB lives
+  # here too (filesystem-backed). On MicroK8s hostpath this is just a dir
+  # under /var/snap/microk8s/common/default-storage.
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+
+  # Public Ingress at zot.dev.<DOMAIN_SUFFIX>. cert-manager issues a LE cert
+  # via the platform-global ClusterIssuer; no Traefik basic-auth middleware
+  # because Zot enforces htpasswd auth itself on /v2/.
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+
+  # ConfigMap with Zot's config.json (HTTP server + auth + accessControl +
+  # metrics extension). Mounted at /etc/zot/config.json by the Deployment.
+  - name: configmap
+    version: 1.0.0
+    repository: file://../../charts/configmap
+
+  # ExternalSecret pulling the bcrypt htpasswd blob from Vault into the
+  # `zot-htpasswd` Secret. The Deployment mounts that Secret at /secret/htpasswd.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-htpasswd
+
+  # Per-namespace ESO SecretStore (vault-backend) — required so the
+  # externalsecret-htpasswd above can authenticate to Vault from THIS namespace.
+  # Adds `registry` to Vault's external-secrets role bound_service_account_namespaces
+  # — managed automatically by --seed-vault from VAULT_SCHEMA category=app/name=registry.
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # ServiceMonitor + PrometheusRules for the registry. Zot exposes Prometheus
+  # metrics on /metrics by default (configured in configFiles.config.json below).
+  - name: monitoring
+    version: 2.0.0
+    repository: file://../../charts/monitoring

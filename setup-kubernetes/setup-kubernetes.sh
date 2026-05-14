@@ -209,6 +209,10 @@ main() {
         install_microk8s || die "MicroK8s installation failed"
         add_user_to_group || log_warn "Failed to add user to group"
         enable_addons || die "Addon enablement failed"
+        # Disable any addons the per-env config listed in DISABLED_ADDONS
+        # (e.g. the built-in `registry` addon — superseded by GitOps-managed
+        # Zot in apps/registry/). Idempotent + no-op when the array is empty.
+        disable_addons || log_warn "Some DISABLED_ADDONS entries failed to disable"
     fi
 
     # Configure storage

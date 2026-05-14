@@ -2,11 +2,14 @@
 # values-{dev,test,prod}.yaml.
 
 pipeline:
-  # MicroK8s built-in registry — accessible from inside the cluster at the
-  # service hostname below. Add `microk8s enable registry` on the cluster
-  # before first sync. Buildah pushes here via HTTP (--tls-verify=false in
-  # the buildah-build-push Task — MicroK8s registry doesn't terminate TLS).
-  registry: registry.container-registry.svc.cluster.local:5000
+  # Zot OCI registry at apps/registry/. Composed at chart-render time from
+  # the platform domain global so a single source of truth covers every env.
+  # Phase A: only DEV builds (registry runs on DEV), but the literal still
+  # works on TEST/PROD because they pull from the same DEV-hosted FQDN. The
+  # buildah-build-push Task `tpl`s this value at render and runs
+  # `buildah login` against it using REGISTRY_USERNAME / REGISTRY_PASSWORD
+  # envFromSecret from the externalsecret-registry-push ExternalSecret.
+  registry: 'zot.dev.{{ .Values.global.domain }}'
   serviceAccountName: pipeline-sa
 
 # Workspace sizing. The `source` workspace holds the cloned source for the
@@ -85,6 +88,22 @@ externalsecret-webhooks:
         property: bitbucket-webhook-secret
       - secretKey: azuredevops
         property: azuredevops-webhook-secret
+
+# ExternalSecret #3 — Zot push-user credentials. The buildah-build-push Task
+# step's envFrom loads these two keys as REGISTRY_USERNAME + REGISTRY_PASSWORD
+# (matching the Secret's secretKey names) and runs `buildah login` before
+# bud / push. vaultPath supplied by values-{dev,test,prod}.yaml.
+externalsecret-registry-push:
+  externalSecret:
+    enabled: true
+    name: image-builder-registry-push
+    namespace: image-builder
+    targetSecretName: image-builder-registry-push
+    data:
+      - secretKey: REGISTRY_USERNAME
+        property: push-user
+      - secretKey: REGISTRY_PASSWORD
+        property: push-password
 
 # Monitoring chart — Pipeline alerting. The Tekton operator's own
 # ServiceMonitor lives in apps/tekton/.

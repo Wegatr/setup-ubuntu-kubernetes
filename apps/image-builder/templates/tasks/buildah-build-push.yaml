@@ -1,7 +1,9 @@
 {{- /*
 buildah-build-push — builds an OCI image from a Containerfile in the source
-workspace, applies the four standard org.opencontainers.image.* labels, and
-pushes to the configured registry.
+workspace, applies the four standard org.opencontainers.image.* labels, logs
+into the Zot registry with push-user credentials envFromSecret'd from
+image-builder-registry-push, and pushes the image. Buildah is invoked with
+TLS verification enabled (Zot has a real LE cert via Ingress).
 
 MicroK8s specifics:
   - STORAGE_DRIVER=vfs. The default overlay driver requires fuse + a kernel
@@ -12,8 +14,6 @@ MicroK8s specifics:
   - privileged: true. Buildah needs CAP_SYS_ADMIN for the underlying chroot
     operations. PodSecurityStandards on MicroK8s default-allow this; if you
     enable PSA, mark the image-builder namespace `privileged`.
-  - --tls-verify=false on push. The MicroK8s registry is HTTP-only on the
-    in-cluster service hostname.
 
 The image-digest result is consumed by trivy-scan (scans by digest, not tag,
 to avoid TOCTOU between push and scan).
@@ -39,9 +39,9 @@ spec:
       description: Tag to push (from generate-image-tag).
       type: string
     - name: registry
-      description: Registry hostname:port.
+      description: Registry hostname.
       type: string
-      default: {{ .Values.pipeline.registry | quote }}
+      default: {{ tpl .Values.pipeline.registry . | quote }}
     - name: containerfile
       description: Path to the Containerfile inside the source workspace.
       type: string
@@ -75,6 +75,12 @@ spec:
           value: vfs
         - name: BUILDAH_FORMAT
           value: oci
+      envFrom:
+        # REGISTRY_USERNAME + REGISTRY_PASSWORD pulled by ESO from Vault
+        # (secret/<env>/app/registry, properties push-user + push-password).
+        # See apps/image-builder/Chart.yaml dep externalsecret-registry-push.
+        - secretRef:
+            name: image-builder-registry-push
       securityContext:
         privileged: true
         runAsUser: 0
@@ -86,9 +92,16 @@ spec:
         IMAGE_REF="$(params.registry)/$(params.image-name):$(params.image-tag)"
         echo "Building $IMAGE_REF from $(params.containerfile)"
 
+        # Log into Zot. Credentials are envFrom-injected above (never appear
+        # in argv or in the rendered Pipeline params).
+        echo "Logging into $(params.registry) as ${REGISTRY_USERNAME}"
+        buildah --storage-driver=vfs login \
+          --username "${REGISTRY_USERNAME}" \
+          --password-stdin \
+          "$(params.registry)" <<< "${REGISTRY_PASSWORD}"
+
         buildah --storage-driver=vfs bud \
           --format=oci \
-          --tls-verify=false \
           --label "org.opencontainers.image.source=$(params.git-url)" \
           --label "org.opencontainers.image.revision=$(params.git-revision)" \
           --label "org.opencontainers.image.created=$(params.build-timestamp)" \
@@ -99,7 +112,6 @@ spec:
 
         echo "Pushing $IMAGE_REF"
         buildah --storage-driver=vfs push \
-          --tls-verify=false \
           --digestfile /tmp/digest \
           "$IMAGE_REF" \
           "docker://$IMAGE_REF"
@@ -108,6 +120,9 @@ spec:
         echo "Pushed: $IMAGE_REF @ $DIGEST"
         printf "%s" "$DIGEST" > $(results.image-digest.path)
         printf "%s" "$IMAGE_REF" > $(results.image-reference.path)
+
+        # Drop the cached credentials from the build worker filesystem.
+        buildah --storage-driver=vfs logout "$(params.registry)" || true
       computeResources:
         requests:
           cpu: 500m

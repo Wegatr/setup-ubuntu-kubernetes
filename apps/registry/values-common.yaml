@@ -1,0 +1,247 @@
+# Zot OCI registry — shared values across DEV / TEST / PROD.
+#
+# Phase A: deployed only on DEV (argocd/dev/apps/applicationset.yaml has the
+# registry entry; test/prod do NOT). The intent is one cluster-wide registry,
+# DEV-hosted, addressed by every cluster as https://zot.dev.<DOMAIN_SUFFIX>/.
+#
+# Push:  image-builder/buildah-build-push logs in with push-user from Vault.
+# Pull:  any workload that consumes a zot.dev.<DOMAIN_SUFFIX>/* image gets an
+#        imagePullSecret materialized by charts/acr-secret/ from Vault key
+#        secret/<env>/app/registry/pull-dockerconfigjson — see README.md.
+
+# ----- Zot pod (Deployment + Service via charts/deployment/) ----------------
+app:
+  image:
+    # Single-binary OCI registry. Tag MUST match Chart.yaml appVersion above.
+    repository: ghcr.io/project-zot/zot-linux-amd64
+    tag: "v2.1.16"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # Zot listens on 5000 by default; matched in configFiles.config.json below.
+  containerPort: 5000
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 5000
+
+  # Zot reads its config from /etc/zot/config.json. The command line is just
+  # `zot serve <config-path>`; the default ENTRYPOINT in the image runs zot.
+  args:
+    - "serve"
+    - "/etc/zot/config.json"
+
+  volumeMounts:
+    # htpasswd Secret (materialized by externalsecret-htpasswd) — Zot's
+    # http.auth.htpasswd.path reads this file.
+    - name: htpasswd
+      mountPath: /secret
+      readOnly: true
+    # Inline ConfigMap → /etc/zot/config.json
+    - name: config
+      mountPath: /etc/zot
+      readOnly: true
+    # Persistent image + DB store.
+    - name: data
+      mountPath: /var/lib/registry
+
+  volumes:
+    - name: htpasswd
+      secret:
+        secretName: zot-htpasswd
+    - name: config
+      configMap:
+        name: zot-config
+    - name: data
+      persistentVolumeClaim:
+        claimName: zot-data
+
+  # Plain TCP probe — Zot's /v2/ requires auth when configured, so a TCP
+  # connect is the simplest indicator that the process is listening.
+  livenessProbe:
+    tcpSocket:
+      port: 5000
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    tcpSocket:
+      port: 5000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      # Pushes / GC bursts can be CPU-heavy on large layers; one full core
+      # is a reasonable ceiling for a low-traffic dev registry.
+      cpu: "1"
+      memory: "1Gi"
+
+# ----- Image + DB storage ---------------------------------------------------
+pvc:
+  pvc:
+    enabled: true
+    name: zot-data
+    accessModes:
+      - ReadWriteOnce
+    # storageClassName intentionally omitted — falls back to
+    # .Values.global.storageClass (microk8s-hostpath on the platform default).
+    storageSize: "50Gi"
+
+# ----- Public Ingress (zot.dev.<DOMAIN_SUFFIX>) -----------------------------
+# `host` + service name + TLS secret name use Helm tpl to pull
+# .Values.global.env and .Values.global.domain at render time. Forced to DEV
+# only at deploy time via the ApplicationSet (test/prod don't generate this
+# Application). The hostname literal still includes `.dev.` because TEST/PROD
+# clusters point their pull-dockerconfigjson at this same DEV hostname.
+ingress:
+  ingress:
+    enabled: true
+    className: public
+    annotations:
+      # OCI clients (docker push, buildah push, skopeo) send chunked uploads
+      # with arbitrarily-large bodies (multi-MB to multi-GB layers). Traefik
+      # default has no body-size limit, so no extra middleware needed here.
+      # If a future hardening adds RequestBodySize middleware, attach it via
+      # this annotations block.
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    host: 'zot.dev.{{ .Values.global.domain }}'
+    paths:
+      - path: /
+        pathType: Prefix
+        # Service name = <release>-app (deployment library chart naming).
+        # Release name = registry-<env>, so on DEV: registry-dev-app.
+        serviceName: 'registry-{{ .Values.global.env }}-app'
+        servicePort: 5000
+    tls:
+      enabled: true
+      secretName: 'registry-{{ .Values.global.env }}-tls'
+
+# ----- Zot config.json (mounted into the pod) -------------------------------
+# Access-control policy:
+#   - push-user has read+write on ALL repositories.
+#   - pull-user has read-only on ALL repositories.
+#   - Anonymous access disabled (defaultPolicy: []).
+# Prometheus metrics extension enabled on /metrics (scraped by the
+# ServiceMonitor below). Default storage: filesystem at /var/lib/registry
+# (bound to the PVC above).
+configmap:
+  configmap:
+    enabled: true
+    name: zot-config
+    data:
+      config.json: |-
+        {
+          "distSpecVersion": "1.1.0",
+          "storage": {
+            "rootDirectory": "/var/lib/registry",
+            "dedupe": true,
+            "gc": true
+          },
+          "http": {
+            "address": "0.0.0.0",
+            "port": "5000",
+            "realm": "zot",
+            "auth": {
+              "htpasswd": {
+                "path": "/secret/htpasswd"
+              }
+            },
+            "accessControl": {
+              "repositories": {
+                "**": {
+                  "policies": [
+                    {
+                      "users": ["push-user"],
+                      "actions": ["read", "create", "update", "delete"]
+                    },
+                    {
+                      "users": ["pull-user"],
+                      "actions": ["read"]
+                    }
+                  ],
+                  "defaultPolicy": [],
+                  "anonymousPolicy": []
+                }
+              }
+            }
+          },
+          "log": {
+            "level": "info"
+          },
+          "extensions": {
+            "metrics": {
+              "enable": true,
+              "prometheus": {
+                "path": "/metrics"
+              }
+            },
+            "search": {
+              "enable": true
+            },
+            "ui": {
+              "enable": true
+            }
+          }
+        }
+
+# ----- ExternalSecret: htpasswd from Vault ----------------------------------
+# Vault path is filled in by the per-env values file (vaultPath: <env>/app/registry).
+externalsecret-htpasswd:
+  externalSecret:
+    enabled: true
+    name: zot-htpasswd
+    namespace: registry
+    targetSecretName: zot-htpasswd
+    data:
+      - secretKey: htpasswd
+        property: htpasswd
+
+# ----- ESO SecretStore in this namespace ------------------------------------
+secret-store:
+  enabled: true
+  name: vault-backend
+  # vaultUrl supplied per-env in values-{dev,test,prod}.yaml.
+
+# ----- ServiceMonitor + alerts ----------------------------------------------
+monitoring:
+  serviceMonitors:
+    registry:
+      enabled: true
+      namespaces:
+        - registry
+      # Matches the Service auto-created by the `app` deployment chart
+      # (selector labels are app.kubernetes.io/{name=app, instance=registry-<env>}).
+      matchLabels:
+        app.kubernetes.io/name: app
+        app.kubernetes.io/instance: 'registry-{{ .Values.global.env }}'
+      endpoints:
+        - port: http
+          path: /metrics
+          interval: 30s
+  prometheusRules:
+    registry:
+      enabled: true
+      groups:
+        - name: registry
+          interval: 60s
+          rules:
+            - alert: RegistryDown
+              expr: up{job=~".*registry.*"} == 0
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Zot registry pod has been unreachable for 5+ minutes"
+                description: "Pulls + pushes are failing platform-wide. Check `microk8s kubectl -n registry get pods,events`."
+
+            - alert: RegistryStorageFillingUp
+              expr: (kubelet_volume_stats_available_bytes{persistentvolumeclaim="zot-data"}
+                     / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim="zot-data"}) < 0.20
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Zot image-store PVC has < 20% free space"
+                description: "Consider running Zot GC or growing the PVC. df-style check: kubectl -n registry exec deploy/registry-dev-app -- du -sh /var/lib/registry"

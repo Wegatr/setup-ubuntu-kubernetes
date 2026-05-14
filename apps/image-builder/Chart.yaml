@@ -1,7 +1,7 @@
 apiVersion: v2
 name: image-builder
 version: 1.0.0
-description: Tekton-based image build pipeline (git-clone → tag → buildah → trivy → gitleaks → summary) with multi-provider webhook triggers (GitHub, Bitbucket, Azure DevOps). Pushes to the MicroK8s built-in registry. See README.md.
+description: Tekton-based image build pipeline (git-clone → tag → buildah → trivy → gitleaks → summary) with multi-provider webhook triggers (GitHub, Bitbucket, Azure DevOps). Pushes to the GitOps-managed Zot registry at apps/registry/ (zot.dev.<DOMAIN_SUFFIX>). See README.md.
 type: application
 
 dependencies:
@@ -19,6 +19,15 @@ dependencies:
     version: 1.0.0
     repository: file://../../charts/external-secret
     alias: externalsecret-webhooks
+
+  # Pulls Zot push-user + push-password from Vault (secret/<env>/app/registry)
+  # into a 2-key Secret. The buildah-build-push Task envFroms this Secret and
+  # runs `buildah login` before bud/push — keeps the credentials out of
+  # pipeline params + step args.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-registry-push
 
   # Per-namespace SecretStore (visible as an ArgoCD-managed resource).
   - name: secret-store

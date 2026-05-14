@@ -106,6 +106,22 @@ ADDONS=(
     "metrics-server"   # Resource metrics for `kubectl top` + HPA
 )
 
+# Addons that should be explicitly DISABLED on every install. Useful for
+# cleaning up snap defaults that conflict with GitOps-managed equivalents.
+#
+# Why this exists for `registry`:
+#   MicroK8s ships a built-in container registry addon (`microk8s enable registry`)
+#   running insecurely on :32000 with no auth, no TLS, no persistence
+#   guarantees. We replace it with a GitOps-managed Zot deployment
+#   (apps/registry/) that gives us htpasswd auth, TLS via cert-manager, and
+#   a real PVC for image data. Leaving the built-in addon enabled wastes
+#   resources and creates ambiguity about which registry is canonical.
+#
+# Empty array = no-op. List addon names exactly as MicroK8s reports them.
+DISABLED_ADDONS=(
+    "registry"         # Superseded by GitOps-managed Zot at apps/registry/
+)
+
 # Upstream DNS resolvers CoreDNS uses for non-cluster lookups.
 # Required on hosts running systemd-resolved (Ubuntu default): the host's
 # /etc/resolv.conf points to 127.0.0.53, which is not reachable from inside pods,

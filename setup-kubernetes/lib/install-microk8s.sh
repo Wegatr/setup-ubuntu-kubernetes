@@ -5,8 +5,8 @@
 #   - fix_coredns_upstream         (systemd-resolved doesn't reach pods)
 #   - align_calico_backend         (NFT vs legacy iptables backend mismatch)
 #
-# Globals consumed: MICROK8S_CHANNEL, MICROK8S_USER, ADDONS, FORCE_INSTALL,
-#                   DNS_UPSTREAM_SERVERS, DNS_FORCE_TCP.
+# Globals consumed: MICROK8S_CHANNEL, MICROK8S_USER, ADDONS, DISABLED_ADDONS,
+#                   FORCE_INSTALL, DNS_UPSTREAM_SERVERS, DNS_FORCE_TCP.
 [[ -z "${_COMMON_KUBERNETES_LOADED:-}" ]] && { echo "lib/install-microk8s.sh requires common-kubernetes.sh" >&2; exit 1; }
 
 install_microk8s() {
@@ -252,6 +252,42 @@ enable_addons() {
     fi
 
     log_ok "All addons enabled successfully"
+    return 0
+}
+
+# Disable every addon listed in DISABLED_ADDONS. Idempotent: addons that are
+# already off are skipped, and a missing/empty DISABLED_ADDONS is a no-op.
+#
+# Use case: addons that snap-installed MicroK8s defaults `auto-enabled` (the
+# built-in `registry` addon being the prime example, since we run Zot via
+# GitOps instead) and that we want OFF on every fresh + every existing
+# install. Adding the addon name here means a future re-run of
+# `--install-microk8s` always lands the cluster in the same state, regardless
+# of what the previous run / snap default did.
+disable_addons() {
+    if [[ ${#DISABLED_ADDONS[@]:-0} -eq 0 ]]; then
+        return 0
+    fi
+
+    log_step "Disabling MicroK8s addons listed in DISABLED_ADDONS..."
+
+    for addon in "${DISABLED_ADDONS[@]}"; do
+        if ! is_addon_enabled "${addon}"; then
+            log_ok "Addon '${addon}' already disabled, skipping"
+            continue
+        fi
+
+        log_info "Disabling addon '${addon}'..."
+        # `microk8s disable` returns 0 even if the addon was already off,
+        # so we don't have to special-case the race-with-another-process case.
+        microk8s disable "${addon}" || {
+            log_warn "Failed to disable addon '${addon}' — continuing"
+            continue
+        }
+
+        log_ok "Addon '${addon}' disabled"
+    done
+
     return 0
 }
 
