@@ -69,9 +69,22 @@ monitoring:
 
     external-secrets:
       enabled: true
-      # external-secrets-metrics Service exists once metrics.service.enabled=true
-      # is set at install time (setup-gitops/modules/07-deployment-operations.sh).
-      namespaces: [external-secrets-system]
+      # ESO runs per-namespace in this platform (see apps/external-secrets/
+      # + argocd/<env>/apps/applicationset-eso.yaml). One controller per app
+      # namespace, each emitting /metrics on the local `external-secrets`
+      # Service with metrics.service.enabled=true.
+      #
+      # Listing every app-namespace explicitly so the monitor stays scoped
+      # and doesn't pick up unrelated workloads that happen to share the
+      # label. Keep in sync with applicationset-eso.yaml's elements list.
+      namespaces:
+        - mongodb
+        - postgresql
+        - postfix
+        - seq
+        - dbgate
+        - observability
+        - image-builder
       matchLabels:
         app.kubernetes.io/name: external-secrets
       endpoints:

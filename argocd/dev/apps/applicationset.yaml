@@ -25,6 +25,20 @@ spec:
   generators:
     - list:
         elements:
+          # Wave 0 — ExternalSecret CRDs (cluster-scoped by K8s design).
+          # Every downstream namespace's ExternalSecret/SecretStore CR needs
+          # these registered with the API server BEFORE the per-NS ESO
+          # controllers (in applicationset-eso.yaml, wave 1) start. Without
+          # the CRDs in place first, `kubectl apply` of any ExternalSecret
+          # produces "Kubernetes API could not find external-secrets.io/
+          # ExternalSecret" — the failure mode this app fixes.
+          - name: external-secrets-crds
+            syncWave: "0"
+            namespace: external-secrets-system
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
           # Wave 3 — Tekton operator + CRDs. Must exist before image-builder
           # (wave 25) creates Pipelines / Tasks / EventListeners.
           - name: tekton

@@ -1,0 +1,2 @@
+# DEV — no per-env overrides needed. scopedNamespace + the destination
+# namespace are set per-instance by argocd/dev/apps/applicationset-eso.yaml.

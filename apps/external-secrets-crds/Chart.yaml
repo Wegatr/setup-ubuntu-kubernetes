@@ -1,0 +1,17 @@
+apiVersion: v2
+name: external-secrets-crds
+version: 1.0.0
+description: |
+  External-Secrets-Operator CRDs ONLY (ExternalSecret, SecretStore,
+  ClusterSecretStore, PushSecret, …).  Cluster-scoped by Kubernetes design —
+  CRDs cannot be namespaced. Sync wave 0 so apps/external-secrets/
+  (per-namespace controllers, wave 1) can apply ExternalSecret/SecretStore
+  CRs against an API that already knows the types.
+type: application
+dependencies:
+  # Pin to the upstream ESO chart version — same one we use for the
+  # per-namespace controllers in apps/external-secrets/Chart.yaml so the
+  # CRD schema matches the controller's expectations exactly.
+  - name: external-secrets
+    version: 0.20.4
+    repository: oci://ghcr.io/external-secrets/charts

@@ -25,6 +25,17 @@ spec:
   generators:
     - list:
         elements:
+          # Wave 0 — ExternalSecret CRDs (cluster-scoped by K8s design).
+          # Per-NS ESO controllers in applicationset-eso.yaml (wave 1) and
+          # all downstream apps with ExternalSecret CRs depend on these
+          # being registered with the API server first.
+          - name: external-secrets-crds
+            syncWave: "0"
+            namespace: external-secrets-system
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
           - name: coredns
             syncWave: "5"
             namespace: kube-system

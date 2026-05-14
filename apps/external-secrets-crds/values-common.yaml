@@ -1,0 +1,37 @@
+# Render ONLY the CRDs from the upstream external-secrets chart. Every
+# Deployment, ServiceAccount, RBAC binding, webhook config, and cert-
+# controller is disabled — so nothing in this app has access to any Secret
+# anywhere. The CRDs are pure schema definitions at cluster scope.
+external-secrets:
+  installCRDs: true
+
+  # No operator pod (the per-namespace controllers in apps/external-secrets/
+  # are the actual reconcilers).
+  createOperator: false
+
+  # No ServiceAccount / RBAC: nothing in this app needs to call the K8s API.
+  serviceAccount:
+    create: false
+  rbac:
+    create: false
+
+  # No webhook → no ValidatingWebhookConfiguration (cluster-scope) and no
+  # webhook pod. ExternalSecret CRs won't be validated at admission time;
+  # they'll be validated by the per-namespace controllers at reconcile time.
+  webhook:
+    create: false
+
+  # cert-controller's only job is rotating the webhook's TLS cert. With
+  # the webhook disabled, the cert-controller has nothing to do.
+  certController:
+    create: false
+
+  # CRD conversion webhook would re-introduce a cluster-wide webhook
+  # endpoint. Off — we only ship v1, not v1alpha1.
+  crds:
+    conversion:
+      enabled: false
+
+  # The crds.create* knobs default to true and don't add any non-CRD
+  # resources, so leave them at defaults. They just control which optional
+  # CRDs (ClusterExternalSecret, ClusterSecretStore, etc.) get rendered.

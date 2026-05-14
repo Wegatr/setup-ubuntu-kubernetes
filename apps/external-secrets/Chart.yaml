@@ -1,0 +1,20 @@
+apiVersion: v2
+name: external-secrets
+version: 1.0.0
+description: |
+  Namespace-scoped External-Secrets-Operator controller. Deployed once per
+  app namespace by argocd/<env>/apps/applicationset-eso.yaml at sync wave 1.
+  Each instance:
+    * runs as one pod in its own namespace
+    * has Role/RoleBinding scoped to that namespace only (NO ClusterRole,
+      NO cluster-wide Secret access)
+    * watches only ExternalSecret / SecretStore CRs in its own namespace
+    * authenticates to Vault using the per-namespace external-secrets-sa
+      created by charts/secret-store/
+  CRDs and any other cluster-wide pieces come from apps/external-secrets-crds/
+  (sync wave 0).
+type: application
+dependencies:
+  - name: external-secrets
+    version: 0.20.4
+    repository: oci://ghcr.io/external-secrets/charts
