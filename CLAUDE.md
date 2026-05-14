@@ -60,16 +60,23 @@ argocd/{dev,test,prod}/  Per-env GitOps bootstrap: root-app.yaml (App-of-Apps
 
 This repo is shared between **at least two hosts** that the user operates:
 
-- A **26.04 dev box** — see project memory `host-26-04-dev-box`.
+- A **26.04 dev box** — see project memory `host-26-04-dev-box`. HTTPS git
+  credential cache is set up here (`credential.helper=store`); commits +
+  pushes work from this host directly. Active claude sessions usually run
+  here under `/home/server/repos/setup-ubuntu-kubernetes`.
 - A **24.04 sister host** — separately managed, you don't have access.
-- A **Windows workstation** — where this Claude session is currently running
-  (path `D:\repos\kartalbas\...`). Used for editing + committing; the
-  installer scripts only run on the Ubuntu hosts.
+- A **Windows workstation** (`D:\repos\kartalbas\...`) — also has HTTPS
+  credential caching. Used interchangeably with the Linux box for editing
+  + committing; the installer scripts run on the Ubuntu hosts only.
 
 Each Ubuntu host keeps its own `setup-kubernetes/configs/config.<env>`
 (gitignored). Values like `STORAGE_PATH` differ between them intentionally
 (e.g. `/data` on 26.04, `/mnt/data` on 24.04). **Never unify configs**;
-each is per-host.
+each is per-host. Same applies to `setup-kubernetes/configs/secrets.<env>`
+(also gitignored) — the per-host Vault-seed input file. Updates to the
+checked-in `configs/secrets.example` (template) do NOT propagate to the
+per-host `configs/secrets.<env>` files automatically; the user must
+hand-update those when the schema grows.
 
 **Any change you push to `main` runs on both hosts** the next time the user
 `git pull`s. Don't merge OS-specific fixes that would regress the working
@@ -97,29 +104,68 @@ follow that pattern.
 
 ### GitOps tree side (`apps/`, `argocd/`, `charts/`, `platform/`)
 
-- The `repoURL: https://to-your-repo-folder` and `targetRevision: master`
-  placeholders in `argocd/<env>/root-app.yaml` and
-  `argocd/<env>/apps/applicationset.yaml` **must be replaced** with the real
-  repo URL + branch before any GitOps sync will work. The README documents
-  the `sed` command. ArgoCD shows `ComparisonError` until this is done.
-- The image-builder's `apps/tekton/` chart is intentionally minimal — the
-  upstream Tekton release manifests are NOT vendored automatically. See
-  `apps/tekton/README.md` for the `curl` commands that fetch them into
-  `apps/tekton/templates/release-*.yaml`. Bumping Tekton versions is a
-  manual refresh.
-- `apps/image-builder/templates/triggers/azuredevops.yaml` does NOT validate
-  the Basic-auth secret (CEL can only check header presence). Phase A
-  ships with this limitation; see
-  [`apps/image-builder/README.md`](apps/image-builder/README.md)
-  "Security hardening" for the two clean fixes.
-- `apps/dbgate/values-common.yaml` Ingress + connection FQDNs use Helm
-  `tpl` to compose `gate.<env>.<domain>` and the database Service names
-  (`mongodb-<env>-headless.mongodb.svc.cluster.local`, etc.) from platform
-  globals — those expressions only render because the consuming charts
-  (our `ingress` library; the `deployment` library after the `tpl` patch
-  added in this repo) explicitly `tpl` those fields. Don't replace `tpl`
-  with raw value rendering.
-- Storage class centralization is **partial**: subchart values blocks
+- **Repo + branch**: `argocd/<env>/{root-app.yaml, apps/applicationset.yaml}`
+  point at `https://github.com/kartalbas/setup-ubuntu-kubernetes.git` @
+  `main`. The legacy placeholder shape (`<github-account>/<github-repo>` /
+  `master`) is gone; if you ever see it reappear, that's a regression.
+- **ClusterIssuer name**: `platform/values-common.yaml` has
+  `global.clusterIssuer: letsencrypt-prod`. This MUST equal
+  `CLUSTER_ISSUER_NAME` in each per-host `configs/config.<env>` because
+  setup-kubernetes creates the ClusterIssuer with that name. Mismatch =
+  every GitOps-deployed Certificate stuck in "ClusterIssuer not found".
+  The legacy value `letsencrypt-ci` was wrong; don't reintroduce.
+- **External-Secrets-Operator**: deployed as a single ArgoCD-managed
+  Application at `apps/external-secrets/` (sync wave 1, **not**
+  cluster-wide-installed). Vendored CRDs in `templates/` cover ONLY
+  the 2 we use (`ExternalSecret`, `SecretStore`) — not the chart's 23.
+  Sync option `ServerSideApply=true` is mandatory because the
+  `secretstores.external-secrets.io` CRD's OpenAPI schema is ~580 KB,
+  exceeding the 262 KB kubectl client-side-apply annotation limit. The
+  upstream chart ships `installCRDs=false` in our values; webhook +
+  cert-controller disabled.
+- **`apps/tekton/`**: vendored upstream YAMLs at `templates/release-{pipelines,
+  triggers,interceptors}.yaml`. Versions pinned in `values-common.yaml`
+  (informational only — actual versions = whatever's in the templates).
+  Currently Pipelines `v1.6.0` (gcr.io anon-pull broke at v0.62.0, ghcr.io
+  works from v0.65.0+), Triggers + Interceptors `v0.34.0`. Bumping is a
+  manual `curl` refresh of the three files (see `apps/tekton/README.md`)
+  plus a `preserveUnknownFields: false` sed-strip on the result (legacy
+  v1beta1 CRD field, stripped by K8s 1.22+ on write → permanent ArgoCD
+  drift if left in).
+- **Tekton Task step resources**: in v1, `steps[].resources` was renamed
+  to `steps[].computeResources`. K8s silently drops the old name. Write
+  `computeResources:` in `apps/image-builder/templates/tasks/*.yaml` —
+  otherwise per-step CPU / memory pins disappear silently.
+- **Bitnami chart deps** (`apps/{mongodb,postgresql,redis}/Chart.yaml`):
+  pinned at `oci://registry-1.docker.io/bitnamicharts` — the legacy
+  HTTPS index at `https://charts.bitnami.com/bitnami` started trimming
+  older versions in Aug 2025 (only the latest stays). `postgresql 17.x`
+  is GONE from both `bitnamicharts` and `bitnamilegacy`; we're on chart
+  18.6.6 (PostgreSQL 18 appVersion). mongodb chart 19.0.3 (DB 8.x),
+  redis chart 25.5.3 (DB 8.x).
+- **`apps/image-builder/templates/triggers/azuredevops.yaml`** does NOT
+  validate the Basic-auth secret (CEL can only check header presence).
+  Phase A ships with this limitation; see
+  [`apps/image-builder/README.md`](apps/image-builder/README.md) "Security
+  hardening" for the two clean fixes.
+- **`apps/image-builder/templates/trivy-db-cache-warmer.yaml`** keeps the
+  `trivy-db-cache` PVC bound at all times. The cluster default
+  StorageClass `microk8s-hostpath` is `WaitForFirstConsumer`, so without
+  a consumer the PVC sits in Pending. The warmer is a 1-replica pause
+  container; it co-mounts RWO with Tekton TaskRuns on the same node.
+- **`apps/dbgate/values-common.yaml`** Ingress + connection FQDNs use
+  Helm `tpl` to compose `gate.<env>.<domain>` and the database Service
+  names (`mongodb-<env>-headless.mongodb.svc.cluster.local`, etc.) from
+  platform globals — those expressions only render because the consuming
+  charts (our `ingress` library; the `deployment` library after the `tpl`
+  patch added in this repo) explicitly `tpl` those fields. Don't replace
+  `tpl` with raw value rendering.
+- **`apps/seq` cluster-issuer is hardcoded**: the datalust seq chart does
+  NOT `tpl` user-provided ingress annotations, so we can't reference
+  `.Values.global.clusterIssuer` inside seq's values. The literal
+  `letsencrypt-prod` is in `apps/seq/values-{dev,test,prod}.yaml`.
+  Must match the platform-global manually.
+- **Storage class centralization is partial**: subchart values blocks
   (Bitnami mongodb / redis / postgresql / kube-prometheus-stack PVCs)
   intentionally omit `storageClass` so they fall back to either
   `global.storageClass` (when the chart honors Helm's global convention)
@@ -147,12 +193,36 @@ For the GitOps tree, an additional pre-flight applies:
 3. **`build.<env>.<DOMAIN_SUFFIX>`** — needed by the image-builder
    EventListener Ingress (Phase A: DEV only). Must resolve to the host's
    public IPv4 same as the others.
-4. **Vault data** at `<env>/app/<name>` paths for every app that has an
-   ExternalSecret (mongodb, postgresql, postfix, seq, dbgate, observability,
-   image-builder). The platform won't sync cleanly until ESO can pull these.
-5. **Vault role bound to app namespaces** — every app namespace needs to be
-   in `bound_service_account_namespaces` on the `external-secrets` role.
-   This is a user-side `setup-gitops` workflow, not the installer's job.
+4. **Vault data + auth config**: handled by `setup-kubernetes.sh
+   --<env> --seed-vault`. This step is built into the installer now
+   (`lib/seed-vault.sh`):
+   - sources `configs/secrets.<env>` (gitignored per-host file with the
+     real secret values + the `VAULT_SCHEMA` array that maps shell
+     variables → Vault paths/keys)
+   - mounts `kv-v2` at `secret/`, enables `kubernetes` auth, writes the
+     `external-secrets` policy + role with
+     `bound_service_account_namespaces` = all app namespaces
+   - writes one KV-v2 entry per `(category, name)` tuple at
+     `secret/<env>/<category>/<name>`. Re-runnable: each call creates
+     a new KV-v2 version, latest wins.
+
+   Two categories in use:
+   - `app`     — workload secrets ESO reads via per-namespace
+                 SecretStore (mongodb, postgresql, postfix, seq, dbgate,
+                 observability, image-builder)
+   - `system`  — control-plane creds for humans/automation (argocd
+                 admin-password, kube dashboard-token, vault root-token
+                 + 5 separate unseal-key-1..5 entries). Not read by ESO;
+                 in Vault purely for retrieval.
+
+   Schema format in `configs/secrets.{example,<env>}` is 4-field:
+       `<SHELL_VAR>|<category>|<name>|<vault-key>`
+   3-field legacy rows still parse with `category=app` defaulted.
+
+   **Per-host drift**: edits to checked-in `secrets.example` (template)
+   don't propagate to per-host `secrets.<env>` files. When the schema
+   grows (e.g. new `DBGATE_ADMIN_PASSWORD` key added 2026-05-14), each
+   host's `secrets.<env>` must be hand-aligned + `--seed-vault` re-run.
 
 ## When something fails
 
@@ -184,12 +254,9 @@ only needed for write operations the install script itself does.
 
 - Remote: `https://github.com/kartalbas/setup-ubuntu-kubernetes.git`
 - Branch: `main`.
-- The 26.04 Linux host has **no GitHub auth configured** (no `gh` CLI, no
-  SSH private keys, no credential helper). Don't try to install or generate
-  credentials autonomously from that host.
-- The Windows workstation **does** have HTTPS credential caching set up
-  (this session pushed `3685564` successfully). Commits + pushes are
-  safe from there.
+- Both the 26.04 Linux dev box and the Windows workstation have HTTPS
+  credential caching set up (`credential.helper=store`). Commits + pushes
+  work from either host without further setup.
 - When you commit, set author identity per-command (not via `git config`):
   ```bash
   git -c user.email='kartalbas@gmail.com' -c user.name='Mehmet Kartalbas' commit -m '…'
@@ -238,10 +305,14 @@ Same idempotency rule. Specific patterns to model:
   `platform/values-common.yaml` (or per-env if env-specific). Reference
   via `.Values.global.<key>` in chart templates. For upstream charts that
   don't `tpl` their values (Bitnami / kube-prometheus-stack subchart
-  blocks), document the manual sync in the value's comment.
+  blocks, datalust seq), document the manual sync in the value's comment.
 - **Adding a new library chart** — drop `charts/<name>/` following an
   existing chart's pattern; reference it as a Helm dep with
   `repository: file://../../charts/<name>` from consumer Chart.yamls.
+- **Adding a new secret to Vault** — add a shell variable to
+  `configs/secrets.example` (template) AND add a row to its
+  `VAULT_SCHEMA` array. Each per-host `secrets.<env>` must mirror both
+  changes by hand (gitignored, not auto-updated).
 - **Always `helm template`** the affected chart locally before pushing:
   ```bash
   helm dependency build apps/<app>
@@ -256,22 +327,59 @@ Same idempotency rule. Specific patterns to model:
   `templatePatch:` field intentionally lives inside a `|` block scalar
   for this reason — keep new conditional logic inside `templatePatch`.
 
+## Common drift causes (defensive YAML)
+
+K8s' API server normalizes / strips certain fields on apply. If a chart
+emits the un-normalized form, ArgoCD shows OutOfSync forever, even after
+successful syncs. Patterns to follow proactively:
+
+- **CPU as Quantity**: write `cpu: "2"` (string), not `cpu: 2` (integer).
+  The API stores Quantity as a string; integers get string-cast on
+  persistence. Memory values always carry a suffix (`Gi`/`Mi`) so they're
+  already string-typed.
+- **`ExternalSecret.spec.data[].remoteRef`**: emit every defaulted field
+  explicitly (`conversionStrategy: Default`, `decodingStrategy: None`,
+  `metadataPolicy: None`, **`nullBytePolicy: Ignore`**). ESO v2's CRD has
+  `nullBytePolicy` with default `Ignore`; without explicit emit, live has
+  it but desired doesn't → drift. (We removed it once when ESO v0.20.4's
+  CRD didn't have the field — that direction is now wrong. Always emit
+  for ESO v1.x+.)
+- **Tekton Task step**: use `computeResources:` not `resources:`. K8s
+  silently strips the old name in v1, your limits get lost.
+- **CRDs over the annotation limit**: kube-prometheus-stack PrometheusRule
+  CRD + ESO SecretStore CRD both exceed the 262 KB
+  `kubectl.kubernetes.io/last-applied-configuration` annotation cap. Apps
+  installing these MUST have `ServerSideApply=true` in their sync options.
+  Pattern in `argocd/<env>/apps/applicationset.yaml`: `specialOptions:
+  "observability"` / `"external-secrets"` trigger this via `templatePatch`.
+
+## ArgoCD `comparedTo_revision: null` quirk on multi-source Apps
+
+The ApplicationSet's Application spec has two `spec.sources` entries (one
+`ref: values`, one chart source). Sometimes ArgoCD's compare tracker
+records `comparedTo.source.repoURL: ""` and the diff never re-renders
+after a Hard Refresh. Symptoms: live + desired match per `kubectl get`,
+but UI shows OutOfSync. Fix: **delete the Application** — the AppSet
+re-creates it within seconds, with a fresh compare cache. Not a workload
+delete, just the `Application` CR in `argocd` namespace. The pattern is
+inert in `apps/observability/` (`ServerSideApply=true` + `ignoreDifferences`
+in the AppSet templatePatch) but elsewhere occasionally bites.
+
 ## Project memory
 
 Stored at `~/.claude/projects/-home-server-repos-setup-ubuntu-kubernetes/memory/`
 on the Linux dev box, mirrored at
 `C:\Users\mkadm\.claude\projects\D--repos-kartalbas-setup-ubuntu-kubernetes\memory\`
-on Windows (this session):
+on Windows:
 
 - `host-26-04-dev-box` — IPs, OS, storage path, domain for the Linux dev box.
 - `dont-assume-os-diff-first` — when 24.04 works and 26.04 doesn't, check
   DNS / port-80 / configs before kernel / CNI.
 
 Update or add to these when you learn new durable facts about the project
-or environment. Especially worth adding:
+or environment. Especially worth tracking:
 
-- The Git remote URL once it's been substituted into the GitOps tree
-  (current state: still using the `https://to-your-repo-folder` placeholder
-  literally; see "Hardcoded constraints" above).
 - Per-host inventory of which envs have been GitOps-bootstrapped (i.e. which
-  hosts have run the `kubectl apply -f argocd/<env>/root-app.yaml` step).
+  hosts have run the `argocd/argo-manage.sh --env <env> --bootstrap` step).
+- Per-host `--seed-vault` status (when Vault was last re-seeded with the
+  latest `configs/secrets.<env>` schema).
