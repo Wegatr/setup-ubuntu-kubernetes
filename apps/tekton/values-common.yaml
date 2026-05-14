@@ -5,7 +5,7 @@
 # The chart itself emits the ServiceMonitor + alert rules; the actual operator
 # manifests are vendored in templates/release-*.yaml (refresh by re-downloading).
 release:
-  pipelinesVersion: "v0.62.0"     # informational — vendored manifest must match
+  pipelinesVersion: "v1.2.0"     # gcr.io anon-pull broke; v0.65+ uses ghcr.io
   triggersVersion: "v0.30.0"      # informational
   interceptorsVersion: "v0.30.0"  # informational
 
