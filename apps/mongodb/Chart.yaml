@@ -5,7 +5,10 @@ description: MongoDB with transaction support (3-node replica set)
 dependencies:
   - name: mongodb
     version: 18.4.4
-    repository: https://charts.bitnami.com/bitnami
+    # Bitnami trimmed their HTTPS index in Aug 2025 — older versions are
+    # OCI-only now. Pin to OCI so the dep resolves once 18.4.4 ages out
+    # of the HTTPS index too.
+    repository: oci://registry-1.docker.io/bitnamicharts
   - name: prometheus-mongodb-exporter
     version: 3.7.0
     repository: https://prometheus-community.github.io/helm-charts

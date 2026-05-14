@@ -4,8 +4,18 @@ version: 1.0.0
 description: PostgreSQL (standalone primary) with Bitnami's bundled postgres-exporter for metrics
 dependencies:
   - name: postgresql
-    version: 17.1.0
-    repository: https://charts.bitnami.com/bitnami
+    # Bitnami removed every postgresql 17.x chart from public distribution in
+    # Aug 2025 (charts.bitnami.com index trimmed; both bitnamicharts and
+    # bitnamilegacy OCI registries no longer carry 17.x). 18.6.6 is the
+    # current chart and the lowest still available in bitnamicharts. The
+    # appVersion bumps PostgreSQL 16 → 18 — fresh cluster, no data to
+    # migrate, fine to take.
+    version: 18.6.6
+    # Bitnami's HTTPS index now ships only the very latest version per chart;
+    # every other version is in OCI. Switching repos here keeps version pins
+    # resolvable for new installs and forward-compatible as more legacy
+    # versions get rotated out of the index.
+    repository: oci://registry-1.docker.io/bitnamicharts
   - name: secret-store
     version: 1.0.0
     repository: file://../../charts/secret-store
