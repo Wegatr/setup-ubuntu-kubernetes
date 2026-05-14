@@ -28,7 +28,7 @@ mongodb:
       cpu: 500m
       memory: 1Gi
     limits:
-      cpu: 2
+      cpu: "2"
       memory: 4Gi
 
 # Per-env exporter ExternalSecret: same Vault path as core mongodb creds,
