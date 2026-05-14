@@ -828,3 +828,7 @@ init_logging() {
         mkdir -p "${STATE_DIR}"
     fi
 }
+
+# Sentinel — lib/*.sh files probe this to fail fast if sourced without
+# common-kubernetes.sh already loaded. Keep this as the last statement.
+readonly _COMMON_KUBERNETES_LOADED=1
