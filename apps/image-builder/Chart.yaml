@@ -5,12 +5,14 @@ description: Tekton-based image build pipeline (git-clone → tag → buildah �
 type: application
 
 dependencies:
-  # Pulls per-repo SSH deploy key from Vault into a Secret that the git-clone
-  # Task's ssh-credentials workspace mounts.
+  # Pulls the HTTPS git-credentials store file from Vault into a Secret
+  # whose `gitcredentials` key is envFrom'd by the git-clone Task step.
+  # One Secret covers all providers (GitHub / Bitbucket / Azure DevOps) —
+  # value is multi-line, one `https://<user>:<pat>@<host>` per provider.
   - name: external-secret
     version: 1.0.0
     repository: file://../../charts/external-secret
-    alias: externalsecret-git-ssh
+    alias: externalsecret-git-https
 
   # Pulls all per-provider webhook signing secrets from Vault into a single
   # Secret with keys github/bitbucket/azuredevops. Each Tekton Interceptor

@@ -1,8 +1,18 @@
 {{- /*
-git-clone — clones a source repo over SSH using a deploy key mounted from
-the ssh-credentials workspace. Adapted from tektoncd/catalog git-clone v0.9
-(MIT licensed), simplified for our single use case (SSH only, no submodules
-auto-init by default, no LFS — add params if needed later).
+git-clone — clones a source repo over HTTPS using a PAT-based credential
+helper. Auth credentials are pulled from Vault by ESO into the
+`image-builder-git-https` Secret in this namespace; this step envFroms
+that Secret, writes a ~/.git-credentials file at start-up, and points git
+at it via `credential.helper=store`. Git then auto-injects the matching
+user:pat into every `https://<host>/...` clone URL.
+
+The credentials value is multi-line — one `https://<user>:<pat>@<host>`
+record per Git provider the platform builds from (GitHub / Bitbucket /
+Azure DevOps). Git's credential-store matches by URL prefix, so multiple
+providers coexist in one Secret without collision.
+
+Adapted from tektoncd/catalog git-clone v0.9 (MIT). Simplified for our
+single use case (HTTPS only, no submodules auto-init, no LFS).
 */ -}}
 apiVersion: tekton.dev/v1
 kind: Task
@@ -14,18 +24,15 @@ metadata:
     app.kubernetes.io/component: task
 spec:
   description: >-
-    Clone a Git repo over SSH into the `source` workspace. Honors a single
-    revision (branch / tag / commit SHA). Emits the resolved commit SHA as
-    a result for downstream tasks (image tag, OCI labels).
+    Clone a Git repo over HTTPS into the `source` workspace. Honors a
+    single revision (branch / tag / commit SHA). Emits the resolved commit
+    SHA as a result for downstream tasks (image tag, OCI labels).
   workspaces:
     - name: source
       description: Output workspace — the cloned repo lands here.
-    - name: ssh-credentials
-      description: Mounts files `id_rsa` and `known_hosts` for SSH auth.
-      mountPath: /workspace/ssh
   params:
     - name: url
-      description: SSH git URL (e.g. git@github.com:org/repo.git).
+      description: HTTPS git URL (e.g. https://github.com/org/repo.git).
       type: string
     - name: revision
       description: Branch / tag / commit SHA to check out.
@@ -47,9 +54,13 @@ spec:
   steps:
     - name: clone
       image: alpine/git:2.45.2
+      envFrom:
+        # GITCREDENTIALS = multi-line value, one credential-store record
+        # per provider. ESO pulls it from secret/<env>/app/image-builder
+        # key `gitcredentials`. See externalsecret-git-https in values.
+        - secretRef:
+            name: image-builder-git-https
       env:
-        - name: GIT_SSH_COMMAND
-          value: "ssh -i /workspace/ssh/id_rsa -o UserKnownHostsFile=/workspace/ssh/known_hosts -o StrictHostKeyChecking=yes"
         - name: HOME
           value: /workspace/source
       workingDir: /workspace/source
@@ -57,13 +68,13 @@ spec:
         #!/usr/bin/env sh
         set -eu
 
-        # Tekton mounts the ssh Secret files mode-0644. SSH refuses to use a
-        # private key with world-readable permissions, so copy + chmod first.
-        mkdir -p /tmp/ssh
-        cp /workspace/ssh/id_rsa /tmp/ssh/id_rsa
-        cp /workspace/ssh/known_hosts /tmp/ssh/known_hosts
-        chmod 600 /tmp/ssh/id_rsa
-        export GIT_SSH_COMMAND="ssh -i /tmp/ssh/id_rsa -o UserKnownHostsFile=/tmp/ssh/known_hosts -o StrictHostKeyChecking=yes"
+        # Materialize the git-credentials store file from the env var.
+        # `printf '%s\n'` preserves the trailing newline that git expects
+        # between records. Mode 600 — file contains PATs.
+        printf '%s\n' "${GITCREDENTIALS}" > /tmp/git-credentials
+        chmod 600 /tmp/git-credentials
+        export HOME=/tmp
+        git config --global credential.helper "store --file=/tmp/git-credentials"
 
         TARGET="/workspace/source$( [ -n "$(params.subdirectory)" ] && echo /$(params.subdirectory) )"
         mkdir -p "$TARGET"

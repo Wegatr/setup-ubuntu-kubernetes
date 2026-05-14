@@ -3,7 +3,7 @@
 # Phase A: image-builder is NOT included in argocd/prod/apps/applicationset.yaml,
 # so this chart is never deployed in PROD. The file exists for symmetry — if
 # you later flip image-builder on in PROD (Phase B), point the Vault path here.
-externalsecret-git-ssh:
+externalsecret-git-https:
   externalSecret:
     vaultPath: prod/app/image-builder
 

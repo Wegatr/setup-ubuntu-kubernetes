@@ -35,7 +35,7 @@ spec:
     buildah build+push, trivy scan, credential scan, and a summary task.
   params:
     - name: git-url
-      description: SSH git URL of the source repo.
+      description: HTTPS git URL of the source repo (e.g. https://github.com/org/repo.git).
       type: string
     - name: git-revision
       description: Branch / tag / commit SHA to build.
@@ -59,8 +59,6 @@ spec:
   workspaces:
     - name: source
       description: Shared between all tasks; cloned source lives here.
-    - name: ssh-credentials
-      description: SSH deploy key for git-clone.
     - name: trivy-db-cache
       description: Persistent Trivy vulnerability DB cache.
   tasks:
@@ -75,8 +73,6 @@ spec:
       workspaces:
         - name: source
           workspace: source
-        - name: ssh-credentials
-          workspace: ssh-credentials
 
     - name: tag
       taskRef:

@@ -1,5 +1,5 @@
 # DEV-specific image-builder config. Phase A: image-builder runs on DEV only.
-externalsecret-git-ssh:
+externalsecret-git-https:
   externalSecret:
     vaultPath: dev/app/image-builder
 

@@ -3,10 +3,13 @@
 TriggerTemplate — common shape consumed by all three provider Triggers. Each
 binding feeds the same four params; the template spawns a PipelineRun.
 
-Workspaces are PVC-backed:
-  - source           : volumeClaimTemplate (10Gi) — fresh per run
-  - ssh-credentials  : Secret-backed (image-builder-git-ssh, mode 0400)
-  - trivy-db-cache   : pre-provisioned PVC (trivy-db-cache, see trivy-db-pvc.yaml)
+Workspaces:
+  - source         : volumeClaimTemplate (10Gi) — fresh per run
+  - trivy-db-cache : pre-provisioned PVC (trivy-db-cache, see trivy-db-pvc.yaml)
+
+Git auth is HTTPS+PAT, materialized as a Secret in this namespace by ESO
+(externalsecret-git-https) and consumed via `envFrom secretRef` inside
+the git-clone Task step — no workspace mount needed.
 */ -}}
 apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerTemplate
@@ -16,7 +19,7 @@ metadata:
 spec:
   params:
     - name: git-url
-      description: SSH URL of the source repo.
+      description: HTTPS URL of the source repo.
     - name: git-revision
       description: Commit SHA to build.
     - name: image-name
@@ -56,10 +59,6 @@ spec:
                   requests:
                     storage: {{ .Values.workspaces.sourceSize | quote }}
                 storageClassName: {{ .Values.global.storageClass | quote }}
-          - name: ssh-credentials
-            secret:
-              secretName: image-builder-git-ssh
-              defaultMode: 0400
           - name: trivy-db-cache
             persistentVolumeClaim:
               claimName: trivy-db-cache

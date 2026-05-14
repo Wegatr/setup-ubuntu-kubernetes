@@ -240,6 +240,22 @@ auto-update on each install.
   `disable_addons()` in `lib/install-microk8s.sh`. Idempotent + no-op when
   the array is empty (existing test/prod hosts that never ran with the
   addon enabled). Add new names here if other snap defaults need cleanup.
+- **image-builder git-clone uses HTTPS+PAT only**: no SSH anywhere. The
+  `git-clone` Tekton Task envFroms a Secret `image-builder-git-https`
+  (materialized by ESO from Vault path `secret/<env>/app/image-builder`,
+  key `gitcredentials`) that contains a multi-line git-credentials-store
+  file — one `https://<user>:<pat>@<host>` per provider. The step
+  exports `GITCREDENTIALS` from envFrom, writes it to `~/.git-credentials`,
+  and points git at it via `credential.helper=store`. Username
+  conventions: `pat` for Azure DevOps, `oauth2` for GitHub, `x-token-auth`
+  for Bitbucket. TriggerBindings emit HTTPS URLs from webhook payloads
+  (`body.repository.clone_url` for GitHub, `body.resource.repository.remoteUrl`
+  for Azure DevOps, composed `https://bitbucket.org/<full_name>.git` for
+  Bitbucket). The old SSH-based pattern with `IMAGE_BUILDER_ID_RSA` +
+  `IMAGE_BUILDER_KNOWN_HOSTS` was removed during the May 2026 migration
+  — don't reintroduce. Rotate PATs by editing the single
+  `IMAGE_BUILDER_GIT_CREDENTIALS` heredoc in `configs/secrets.<env>` and
+  re-running `--seed-vault`.
 - **image-builder push topology**: `pipeline.registry` is rendered from
   `.Values.global.domain` via Helm `tpl` at every chart-render —
   `apps/image-builder/values-common.yaml` has the literal

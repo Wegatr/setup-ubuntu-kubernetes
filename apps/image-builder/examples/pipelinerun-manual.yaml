@@ -17,7 +17,7 @@ spec:
     serviceAccountName: pipeline-sa
   params:
     - name: git-url
-      value: git@github.com:<org>/<repo>.git
+      value: https://github.com/<org>/<repo>.git    # HTTPS URL — auth via envFrom Secret
     - name: git-revision
       value: main
     - name: image-name
@@ -35,10 +35,9 @@ spec:
             requests:
               storage: 10Gi
           # storageClassName resolves to the platform default (microk8s-hostpath).
-    - name: ssh-credentials
-      secret:
-        secretName: image-builder-git-ssh
-        defaultMode: 0400
     - name: trivy-db-cache
       persistentVolumeClaim:
         claimName: trivy-db-cache
+  # Note: git auth is HTTPS+PAT. Credentials come from the `image-builder-git-https`
+  # Secret in this namespace (materialized by ESO from Vault); the git-clone Task
+  # envFrom-mounts it, no workspace declaration needed.

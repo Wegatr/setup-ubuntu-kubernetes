@@ -2,7 +2,7 @@
 Minimum RBAC for the pipeline-sa ServiceAccount. The Tekton controllers in
 tekton-pipelines already have cluster-wide rights to manage Pods/TaskRuns —
 this Role only covers what the PipelineRun's own steps need to do:
-  - read mounted Secrets (ssh-credentials, dockerconfig, webhook-secrets)
+  - read mounted Secrets (image-builder-git-https, dockerconfig, webhook-secrets)
   - create/delete the workspace PVCs Tekton provisions per-run
   - list TaskRuns / PipelineRuns to assemble the logging-summary task output
 */ -}}

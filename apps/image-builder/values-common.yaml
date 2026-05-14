@@ -50,21 +50,23 @@ eventListener:
       enabled: true
       branchFilter: 'main|master'
 
-# ExternalSecret #1 — SSH deploy key for the source repo. The git-clone Task
-# mounts these two files (id_rsa + known_hosts) from the ssh-credentials
-# workspace. Add the corresponding public key as a deploy key in the Git
-# provider's repo settings.
-externalsecret-git-ssh:
+# ExternalSecret #1 — HTTPS git credentials. The git-clone Task envFroms
+# this Secret. The `gitcredentials` key holds a multi-line value, one
+# `https://<user>:<pat>@<host>` record per Git provider the platform
+# builds from. Git's credential-helper-store matches by URL prefix at
+# clone time. To onboard a new provider, just append another line to the
+# `gitcredentials` value in Vault — no chart change needed.
+externalsecret-git-https:
   externalSecret:
     enabled: true
-    name: image-builder-git-ssh
+    name: image-builder-git-https
     namespace: image-builder
-    targetSecretName: image-builder-git-ssh
+    targetSecretName: image-builder-git-https
     data:
-      - secretKey: id_rsa
-        property: id_rsa
-      - secretKey: known_hosts
-        property: known_hosts
+      # Secret key MUST be `GITCREDENTIALS` (matches the env var the
+      # git-clone step reads via envFrom secretRef → ${GITCREDENTIALS}).
+      - secretKey: GITCREDENTIALS
+        property: gitcredentials
 
 # ExternalSecret #2 — Per-provider webhook signing secrets. One Kubernetes
 # Secret with three keys; each Tekton Interceptor references one.

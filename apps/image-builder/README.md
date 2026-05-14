@@ -71,19 +71,27 @@ Public entry point (Phase A — DEV cluster only):
    microk8s enable registry
    ```
 
-3. **Vault contents** at `dev/app/image-builder` (provision via `setup-gitops`):
-   - `id_rsa` — SSH deploy key (add the corresponding public key as a deploy
-     key on every source repo you want to build)
-   - `known_hosts` — `ssh-keyscan github.com bitbucket.org ssh.dev.azure.com`
-     output, concatenated
-   - `github-webhook-secret` — HMAC secret you'll paste into GitHub's webhook
-     UI
+3. **Vault contents** at `dev/app/image-builder` (provision via the
+   `setup-kubernetes/configs/secrets.<env>` schema + `--seed-vault`):
+   - `gitcredentials` — multi-line **git credential-store file**, one
+     `https://<user>:<pat>@<host>` record per Git provider the platform
+     builds from. The Tekton git-clone Task envFroms this Secret and points
+     git at it via `credential.helper=store`. Username conventions:
+       - Azure DevOps:  `pat`           (anything works, AzDO ignores it)
+       - GitHub:        `oauth2`        (recommended for fine-grained PATs)
+       - Bitbucket:     `x-token-auth`  (App Password as the token)
+     Generate PATs in each provider's developer-tokens UI with read-only
+     repo scope. Rotate by editing this single Vault key + re-running
+     `--seed-vault`.
+   - `github-webhook-secret` — HMAC secret you'll paste into GitHub's
+     webhook UI
    - `bitbucket-webhook-secret` — HMAC secret for Bitbucket
    - `azuredevops-webhook-secret` — Basic-auth password for Azure DevOps
      Service Hooks
 
-   Generate secrets with `openssl rand -hex 32` — they're shared between the
-   Git provider and our cluster, so they don't need to be human-typeable.
+   Generate webhook secrets with `openssl rand -hex 32` — they're shared
+   between the Git provider and our cluster, so they don't need to be
+   human-typeable.
 
 4. **Vault role** (in sibling `setup-gitops` repo): add `image-builder` to the
    `external-secrets` role's `bound_service_account_namespaces` list.
@@ -154,7 +162,7 @@ Azure DevOps uses **Service Hooks** at the **project** level (not repo-level).
 
    | Pipeline param | From payload |
    |---|---|
-   | `git-url` | `body.resource.repository.sshUrl` |
+   | `git-url` | `body.resource.repository.remoteUrl` *(HTTPS clone URL)* |
    | `git-revision` | `body.resource.refUpdates[0].newObjectId` |
    | `image-name` | `body.resource.repository.name` |
    | `image-version` | `"0.0.0"` *(default)* |
@@ -179,7 +187,7 @@ curl -i -X POST "https://build.dev.<your-domain>/azuredevops" \
     "resource": {
       "repository": {
         "name": "myapp",
-        "sshUrl": "git@ssh.dev.azure.com:v3/myorg/myproject/myapp"
+        "remoteUrl": "https://myorg@dev.azure.com/myorg/myproject/_git/myapp"
       },
       "refUpdates": [
         { "name": "refs/heads/main", "newObjectId": "0000000000000000000000000000000000000001" }
@@ -226,7 +234,7 @@ Expected: HTTP 202, a new PipelineRun named `build-xxxxx` within ~5s.
 
    | Pipeline param | From payload |
    |---|---|
-   | `git-url` | `body.repository.ssh_url` |
+   | `git-url` | `body.repository.clone_url` *(HTTPS clone URL)* |
    | `git-revision` | `body.after` |
    | `image-name` | `body.repository.name` |
    | `image-version` | `"0.0.0"` |
@@ -244,7 +252,7 @@ BODY='{
   "after": "0000000000000000000000000000000000000001",
   "repository": {
     "name": "myapp",
-    "ssh_url": "git@github.com:myorg/myapp.git"
+    "clone_url": "https://github.com/myorg/myapp.git"
   }
 }'
 
@@ -343,11 +351,10 @@ Expected: HTTP 202; PipelineRun appears within ~5s.
 ```bash
 tkn -n image-builder pipeline start build-pipeline \
   --serviceaccount pipeline-sa \
-  -p git-url=git@github.com:org/repo.git \
+  -p git-url=https://github.com/org/repo.git \
   -p git-revision=main \
   -p image-name=myapp \
   -p image-version=1.0.0 \
-  --workspace name=ssh-credentials,secret=image-builder-git-ssh \
   --workspace name=trivy-db-cache,claimName=trivy-db-cache \
   --workspace name=source,volumeClaimTemplateFile=- <<'EOF'
 spec:
@@ -357,6 +364,9 @@ spec:
       storage: 10Gi
 EOF
 ```
+
+Git auth comes from the `image-builder-git-https` Secret in this namespace
+(materialized by ESO from Vault) — no workspace mount needed.
 
 Add `--showlog` to stream logs as the run executes.
 

@@ -4,7 +4,7 @@ TriggerBindings — map per-provider webhook payload fields to the shared
 TriggerTemplate's `params:`. Each Trigger references its own binding.
 
 The TriggerTemplate (templates/triggertemplate.yaml) expects:
-  - git-url       (string)   SSH URL of the source repo
+  - git-url       (string)   HTTPS URL of the source repo
   - git-revision  (string)   commit SHA to build
   - image-name    (string)   image name (without registry/tag)
   - image-version (string)   semver base — taken from the repo's name or a
@@ -15,6 +15,10 @@ For image-version we use "0.0.0" — semver bumps are typically tied to git
 tags, which are out of scope for a push-triggered build. If you push a tag
 instead, the github/bitbucket Interceptors will filter it out by default
 (branchFilter regex).
+
+Git auth is HTTPS+PAT, materialized as Secret `image-builder-git-https`
+by ESO in this namespace; the git-clone Task envFroms it. Bindings emit
+HTTPS clone URLs (so `credential.helper=store` can match).
 */ -}}
 {{- if .Values.eventListener.triggers.github.enabled }}
 ---
@@ -26,7 +30,9 @@ metadata:
 spec:
   params:
     - name: git-url
-      value: $(body.repository.ssh_url)
+      # GitHub's push payload has both `ssh_url` and `clone_url` — the
+      # latter is the HTTPS form (https://github.com/<owner>/<repo>.git).
+      value: $(body.repository.clone_url)
     - name: git-revision
       value: $(body.after)
     - name: image-name
@@ -44,11 +50,12 @@ metadata:
 spec:
   params:
     - name: git-url
-      # Bitbucket exposes the SSH URL under repository.links.clone[?(@.name=='ssh')].href.
-      # CEL extraction would be cleaner but TriggerBinding doesn't run CEL —
-      # so we rely on the first push change's source for git-revision and
-      # construct the SSH URL from the repository's full_name.
-      value: "git@bitbucket.org:$(body.repository.full_name).git"
+      # Bitbucket's payload exposes clone URLs under links.clone[] indexed
+      # by name. TriggerBinding doesn't run CEL, so we compose the HTTPS
+      # URL from the repository's full_name (works for bitbucket.org —
+      # for self-hosted Bitbucket Server, override via webhook query
+      # parameters at the Service Hook config side).
+      value: "https://bitbucket.org/$(body.repository.full_name).git"
     - name: git-revision
       value: $(body.push.changes[0].new.target.hash)
     - name: image-name
@@ -66,8 +73,12 @@ metadata:
 spec:
   params:
     - name: git-url
-      # Azure DevOps exposes sshUrl when SSH is enabled on the repo.
-      value: $(body.resource.repository.sshUrl)
+      # Azure DevOps's push event exposes both `sshUrl` and `remoteUrl`;
+      # `remoteUrl` is the HTTPS clone URL (https://<org>@dev.azure.com/
+      # <org>/<project>/_git/<repo>). Git's credential.helper=store
+      # matches by URL prefix — `https://...@dev.azure.com` line in
+      # `gitcredentials` injects the PAT on clone.
+      value: $(body.resource.repository.remoteUrl)
     - name: git-revision
       value: $(body.resource.refUpdates[0].newObjectId)
     - name: image-name
