@@ -2,8 +2,12 @@
 # values-common.yaml (vault); rewrites here apply ONLY to the DEV cluster.
 extraRewrites:
   # Zot OCI registry runs on DEV only (apps/registry/). Point in-cluster
-  # lookups at the ClusterIP service so image-builder + workload pulls don't
-  # exit + re-enter the cluster via the public IPv4 (which requires NAT
-  # hairpinning support on the host's router).
+  # lookups at the Traefik ingress service, NOT at the Zot pod's service
+  # directly: Zot itself listens HTTP on :5000; TLS terminates at the
+  # Traefik Ingress with the cert-manager-issued LE cert. So in-cluster
+  # https:// connections need to go through Traefik to get TLS termination
+  # + the right cert chain. Without this rewrite buildah & friends would
+  # resolve to the host's public IPv4 and bounce through the home router
+  # (which would need NAT-hairpinning + Traefik to round-trip back in).
   - from: 'zot.dev.{{ .Values.global.domain }}'
-    to: registry-dev-app.registry.svc.cluster.local
+    to: traefik.ingress.svc.cluster.local
