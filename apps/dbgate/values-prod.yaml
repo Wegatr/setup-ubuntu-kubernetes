@@ -77,7 +77,7 @@ basicauth:
 # to load the middleware, which in turn drops the router and returns 404.
 # So we keep this secret single-keyed and pull DB creds into a second one.
 # Per-namespace SecretStore (visible as an ArgoCD-managed resource).
-secret-store:
+secret-store: {}
 
 externalsecret-auth:
   externalSecret:

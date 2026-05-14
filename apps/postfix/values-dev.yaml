@@ -43,7 +43,7 @@ mail:
             mountPath: /dkim-keys
 
 # Per-namespace SecretStore (visible as an ArgoCD-managed resource under this app).
-secret-store:
+secret-store: {}
 
 # ExternalSecret (external-secret) — pulls DKIM key from Vault
 external-secret:

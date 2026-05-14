@@ -1,0 +1,15 @@
+dependencies:
+- name: mongodb
+  repository: https://charts.bitnami.com/bitnami
+  version: 18.4.4
+- name: prometheus-mongodb-exporter
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 3.7.0
+- name: secret-store
+  repository: file://../../charts/secret-store
+  version: 1.0.0
+- name: monitoring
+  repository: file://../../charts/monitoring
+  version: 2.0.0
+digest: sha256:894b714ac510000208382ca4112f4b41b1eab745365b76b265276c771ca17938
+generated: "2026-05-14T16:06:50.637223515Z"

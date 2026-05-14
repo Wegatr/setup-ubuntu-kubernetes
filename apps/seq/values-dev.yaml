@@ -1,5 +1,5 @@
 # Per-namespace SecretStore (visible as an ArgoCD-managed resource).
-secret-store:
+secret-store: {}
 
 # External Secrets configuration
 externalSecret:

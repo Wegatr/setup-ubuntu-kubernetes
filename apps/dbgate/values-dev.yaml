@@ -77,7 +77,7 @@ basicauth:
 
 # ExternalSecret #1 — Traefik BasicAuth credentials.
 # Per-namespace SecretStore (visible as an ArgoCD-managed resource).
-secret-store:
+secret-store: {}
 
 externalsecret-auth:
   externalSecret:
