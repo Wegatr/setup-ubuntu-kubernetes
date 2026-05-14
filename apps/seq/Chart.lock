@@ -1,9 +1,0 @@
-dependencies:
-- name: seq
-  repository: https://helm.datalust.co
-  version: 2025.2.2
-- name: secret-store
-  repository: file://../../charts/secret-store
-  version: 1.0.0
-digest: sha256:4ce25487efa2c703e1154ee71d404381706762e7413f04981a895206adc0b96e
-generated: "2026-05-14T16:06:46.854974155Z"

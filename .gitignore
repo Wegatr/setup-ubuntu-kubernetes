@@ -16,6 +16,13 @@ secrets.dev.pub.txt
 secrets.test.pub.txt
 secrets.prod.pub.txt
 
+# Helm dependency build artefacts — `helm dependency build` populates
+# `charts/` and `Chart.lock` under each app, but ArgoCD does its own
+# dependency fetch when rendering, so tracking these would only bloat the
+# repo and cause version drift when Chart.yaml is bumped without a re-build.
+apps/*/charts/
+apps/*/Chart.lock
+
 # Encrypted secrets backup
 secrets.enc
 
