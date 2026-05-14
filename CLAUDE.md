@@ -173,25 +173,38 @@ follow that pattern.
   so the fallback always lands on the right thing. Don't add explicit
   `storageClass: microk8s-hostpath` back into subchart values blocks.
 - **`apps/registry/` runs on DEV only**: single platform-wide Zot OCI
-  registry at `zot.dev.<DOMAIN_SUFFIX>`. The ApplicationSet entry exists
-  ONLY in `argocd/dev/apps/applicationset.yaml` (sync wave 7) — test/prod
-  do not generate this Application. Image storage on the platform default
-  StorageClass (50Gi PVC). htpasswd auth with **three users** is
-  materialized from Vault by ESO:
-  - `admin` — Zot's `accessControl.adminPolicy` (cross-repo admin: read +
-    create + update + delete spanning every repository, plus the UI
-    Settings / GC / Browse-all panels). For interactive ops via the web UI.
-  - `push-user` — read + create + update + delete on every repo. Consumed
-    by image-builder's buildah-build-push task (envFromSecret).
-  - `pull-user` — read-only on every repo. Consumed by every workload
-    namespace's imagePullSecret (via charts/acr-secret/).
-  `defaultPolicy` + `anonymousPolicy` are both `[]` (no anonymous access).
-  The chart is a chart-of-charts: deployment + ingress + pvc + configmap +
-  external-secret + secret-store + monitoring deps; no custom templates.
-  Image pin is `ghcr.io/project-zot/zot-linux-amd64:v2.1.16` matching
-  `Chart.yaml`'s `appVersion`. Don't switch to the upstream
-  `project-zot/helm-charts/zot` chart — our wrapper is consistent with the
-  rest of the platform's library-chart pattern.
+  registry at `zot.dev.<DOMAIN_SUFFIX>` + a Joxit UI at
+  `zotui.dev.<DOMAIN_SUFFIX>`. The ApplicationSet entry exists ONLY in
+  `argocd/dev/apps/applicationset.yaml` (sync wave 7) — test/prod do not
+  generate this Application. Image storage on the platform default
+  StorageClass (50Gi PVC).
+  - **Topology**: ONE Helm release deploys TWO pods + TWO Services +
+    TWO Ingresses. The Chart.yaml has two `deployment` deps (aliased
+    `app` for Zot, `ui` for Joxit) and two `ingress` deps (aliased
+    `ingress-zot` for the OCI endpoint, `ingress-ui` for the Joxit
+    frontend). Zot's own minimal UI is disabled in `config.json`
+    (`extensions.ui.enable: false`) — Joxit is the only browser-facing UI.
+  - **Joxit (UI)**: image `joxit/docker-registry-ui:2.6.0`. Single nginx
+    pod that serves the Joxit SPA and reverse-proxies `/v2/*` to
+    `http://registry-<env>-app.registry.svc.cluster.local:5000`. The
+    browser only ever connects to `zotui.dev.<domain>` — Joxit's nginx
+    handles same-origin CORS. Browser Basic-Auth → Joxit forwards the
+    `Authorization` header unchanged → Zot enforces htpasswd +
+    accessControl. `DELETE_IMAGES=true` env exposes delete buttons; the
+    admin user's policy actions are what actually let the API call succeed.
+  - **htpasswd auth — three users** materialized from Vault by ESO:
+    - `admin` — Zot's `accessControl.adminPolicy` (cross-repo admin:
+      read+create+update+delete spanning every repo). Use for Joxit UI
+      interactive ops (browse, delete).
+    - `push-user` — read+create+update+delete on every repo. Consumed by
+      image-builder's buildah-build-push task (envFromSecret).
+    - `pull-user` — read-only on every repo. Consumed by every workload
+      namespace's imagePullSecret (via `charts/acr-secret/`).
+    `defaultPolicy` + `anonymousPolicy` are both `[]` (no anonymous access).
+  - **Zot image** pin is `ghcr.io/project-zot/zot-linux-amd64:v2.1.16`
+    matching `Chart.yaml`'s `appVersion`. Don't switch to the upstream
+    `project-zot/helm-charts/zot` chart — our wrapper is consistent with
+    the rest of the platform's library-chart pattern.
 - **MicroK8s built-in `registry` addon is disabled**: the snap's HTTP-only
   `:32000` registry is superseded by the GitOps-managed Zot above. The
   cleanup happens via `DISABLED_ADDONS=("registry")` in
@@ -243,7 +256,14 @@ For the GitOps tree, an additional pre-flight applies:
 3. **`build.<env>.<DOMAIN_SUFFIX>`** — needed by the image-builder
    EventListener Ingress (Phase A: DEV only). Must resolve to the host's
    public IPv4 same as the others.
-4. **Vault data + auth config**: handled by `setup-kubernetes.sh
+4. **`zot.dev.<DOMAIN_SUFFIX>` + `zotui.dev.<DOMAIN_SUFFIX>`** — DEV-only,
+   both pointing at the DEV host's public IPv4. Public-internet access is
+   required so test/prod clusters can pull images from Zot, and so the
+   user can reach the Joxit UI from a browser. Inside the DEV cluster
+   itself, CoreDNS has a rewrite (`apps/coredns/values-dev.yaml`
+   `extraRewrites`) that points zot.dev at the Traefik service for
+   in-cluster traffic; this is invisible to external clients.
+5. **Vault data + auth config**: handled by `setup-kubernetes.sh
    --<env> --seed-vault`. This step is built into the installer now
    (`lib/seed-vault.sh`):
    - sources `configs/secrets.<env>` (gitignored per-host file with the

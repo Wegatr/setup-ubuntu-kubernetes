@@ -89,34 +89,107 @@ pvc:
     # .Values.global.storageClass (microk8s-hostpath on the platform default).
     storageSize: "50Gi"
 
-# ----- Public Ingress (zot.dev.<DOMAIN_SUFFIX>) -----------------------------
-# `host` + service name + TLS secret name use Helm tpl to pull
-# .Values.global.env and .Values.global.domain at render time. Forced to DEV
-# only at deploy time via the ApplicationSet (test/prod don't generate this
-# Application). The hostname literal still includes `.dev.` because TEST/PROD
-# clusters point their pull-dockerconfigjson at this same DEV hostname.
-ingress:
+# ----- Joxit UI pod (Deployment + Service via charts/deployment/) -----------
+# Single nginx pod that serves the Joxit SPA and reverse-proxies /v2/* to
+# the in-cluster Zot service. Browser auth = HTTP Basic, the Authorization
+# header passes through Joxit's nginx to Zot unchanged. DELETE_IMAGES=true
+# enables tag-delete buttons (admin user has the policy actions; push-user
+# also if you want it).
+ui:
+  image:
+    repository: joxit/docker-registry-ui
+    tag: "2.6.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  containerPort: 80
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 80
+  env:
+    # Title in the page header.
+    - name: REGISTRY_TITLE
+      value: "Platform Registry"
+    # Upstream OCI endpoint — point at the in-cluster Zot Service so
+    # joxit's nginx doesn't have to go through Traefik. Falls back to
+    # plain HTTP intentionally (Zot has no native TLS; TLS termination
+    # for OCI clients is at Traefik). The browser never sees this URL.
+    - name: NGINX_PROXY_PASS_URL
+      value: 'http://registry-{{ .Values.global.env }}-app.registry.svc.cluster.local:5000'
+    # Surface the delete UI. Zot enforces accessControl per request, so
+    # only admin / push-user actually get the API call accepted.
+    - name: DELETE_IMAGES
+      value: "true"
+    - name: SHOW_CONTENT_DIGEST
+      value: "true"
+    - name: SHOW_CATALOG_NB_TAGS
+      value: "true"
+    # Single-pass scan ceiling for /v2/_catalog. Bump if the catalog grows.
+    - name: CATALOG_ELEMENTS_LIMIT
+      value: "1000"
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 3
+    periodSeconds: 10
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "32Mi"
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
+
+# ----- Two Ingresses: OCI endpoint + UI endpoint ----------------------------
+# Both share the same cert-manager ClusterIssuer + Traefik class. Hostnames,
+# Service names, TLS secret names all use Helm tpl.
+
+# zot.dev.<DOMAIN> — OCI clients (docker push, buildah push, skopeo).
+ingress-zot:
   ingress:
     enabled: true
     className: public
     annotations:
-      # OCI clients (docker push, buildah push, skopeo) send chunked uploads
-      # with arbitrarily-large bodies (multi-MB to multi-GB layers). Traefik
-      # default has no body-size limit, so no extra middleware needed here.
-      # If a future hardening adds RequestBodySize middleware, attach it via
-      # this annotations block.
+      # OCI clients send chunked uploads with arbitrarily-large bodies
+      # (multi-MB to multi-GB layers). Traefik default has no body-size
+      # limit so no extra middleware needed. If a future hardening adds
+      # RequestBodySize middleware, attach it via this annotations block.
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
     host: 'zot.dev.{{ .Values.global.domain }}'
     paths:
       - path: /
         pathType: Prefix
-        # Service name = <release>-app (deployment library chart naming).
-        # Release name = registry-<env>, so on DEV: registry-dev-app.
+        # Service name = <release>-<chartAlias> (deployment lib chart's
+        # fullname includes the alias). Release = registry-<env>.
         serviceName: 'registry-{{ .Values.global.env }}-app'
         servicePort: 5000
     tls:
       enabled: true
       secretName: 'registry-{{ .Values.global.env }}-tls'
+
+# zotui.dev.<DOMAIN> — Joxit UI (browse, delete, vuln view).
+ingress-ui:
+  ingress:
+    enabled: true
+    className: public
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    host: 'zotui.dev.{{ .Values.global.domain }}'
+    paths:
+      - path: /
+        pathType: Prefix
+        serviceName: 'registry-{{ .Values.global.env }}-ui'
+        servicePort: 80
+    tls:
+      enabled: true
+      secretName: 'registry-{{ .Values.global.env }}-ui-tls'
 
 # ----- Zot config.json (mounted into the pod) -------------------------------
 # Access-control policy:
@@ -189,7 +262,7 @@ configmap:
               "enable": true
             },
             "ui": {
-              "enable": true
+              "enable": false
             }
           }
         }

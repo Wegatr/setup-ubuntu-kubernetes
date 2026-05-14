@@ -12,6 +12,16 @@ dependencies:
     repository: file://../../charts/deployment
     alias: app
 
+  # Joxit `docker-registry-ui` — full-featured browser frontend for the
+  # OCI distribution API (list, browse, delete tags/manifests, see vuln
+  # summaries). Talks to Zot's HTTP port via in-cluster service; the
+  # browser only ever sees this pod's nginx (proxy_pass forwards /v2/*
+  # to Zot). Zot's own minimal UI is disabled in config.json below.
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: ui
+
   # Image storage — Bound by the Zot pod at /var/lib/registry. The DB lives
   # here too (filesystem-backed). On MicroK8s hostpath this is just a dir
   # under /var/snap/microk8s/common/default-storage.
@@ -19,12 +29,17 @@ dependencies:
     version: 1.0.0
     repository: file://../../charts/pvc
 
-  # Public Ingress at zot.dev.<DOMAIN_SUFFIX>. cert-manager issues a LE cert
-  # via the platform-global ClusterIssuer; no Traefik basic-auth middleware
-  # because Zot enforces htpasswd auth itself on /v2/.
+  # Two separate public Ingresses: zot.dev.<DOMAIN> for OCI clients
+  # (docker / buildah / skopeo / curl) and zotui.dev.<DOMAIN> for the
+  # Joxit UI. cert-manager issues independent LE certs for each.
   - name: ingress
     version: 1.0.0
     repository: file://../../charts/ingress
+    alias: ingress-zot
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+    alias: ingress-ui
 
   # ConfigMap with Zot's config.json (HTTP server + auth + accessControl +
   # metrics extension). Mounted at /etc/zot/config.json by the Deployment.
