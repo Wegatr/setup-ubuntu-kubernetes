@@ -30,6 +30,15 @@ release YAML directly into `templates/release-*.yaml`.
      apps/tekton/templates/release-pipelines.yaml \
      apps/tekton/templates/release-triggers.yaml \
      apps/tekton/templates/release-interceptors.yaml
+
+   # Disable the affinity-assistant's "coschedule by workspaces" default.
+   # Our image-build pipeline uses TWO RWO PVCs in the trivy task (the per-run
+   # source workspace + the persistent trivy-db-cache); with the default the
+   # affinity-assistant errors with "more than one PersistentVolumeClaim is
+   # bound". On single-node MicroK8s the affinity-assistant brings no benefit
+   # anyway — pod placement is unambiguous.
+   sed -i 's/^  coschedule: "workspaces"/  coschedule: "disabled"/' \
+     apps/tekton/templates/release-pipelines.yaml
    ```
 
    Bump the three versions in `values-common.yaml` `release:` block so the
