@@ -67,31 +67,15 @@ monitoring:
           tlsConfig:
             insecureSkipVerify: true
 
-    vault-connector:
+    external-secrets:
       enabled: true
-      # ESO runs per-namespace in this platform under the alias
-      # `vault-connector`: each app that needs Vault access depends on the
-      # upstream external-secrets chart with `alias: vault-connector` in its
-      # own Chart.yaml (see apps/<app>/Chart.yaml + the `vault-connector:`
-      # block in apps/<app>/values-common.yaml), scoped to that app's
-      # namespace via scopedNamespace + scopedRBAC. Helm's alias rewrites
-      # `app.kubernetes.io/name` on every rendered resource to
-      # `vault-connector` — that's the label we match here.
-      #
-      # Listing every app-namespace explicitly keeps the monitor scoped and
-      # avoids picking up unrelated workloads that happen to share the
-      # label. Keep this list in sync with the apps/*/Chart.yaml deps that
-      # alias external-secrets as vault-connector.
-      namespaces:
-        - mongodb
-        - postgresql
-        - postfix
-        - seq
-        - dbgate
-        - observability
-        - image-builder
+      # ESO is installed as a single ArgoCD-managed Application
+      # (apps/external-secrets/) in the external-secrets-system namespace.
+      # The controller's metrics Service ships with the chart when
+      # metrics.service.enabled=true.
+      namespaces: [external-secrets-system]
       matchLabels:
-        app.kubernetes.io/name: vault-connector
+        app.kubernetes.io/name: external-secrets
       endpoints:
         - port: metrics
           path: /metrics
@@ -441,61 +425,3 @@ grafana-admin-secret:
 # Alertmanager sends mail directly via Postfix (in-cluster, no auth required)
 # — no SMTP credentials secret needed.
 
-# ============================================================================
-# Per-namespace ESO controller — runs IN namespace `observability`, watches only this
-# namespace's ExternalSecret/SecretStore CRs. CRDs come from
-# apps/external-secrets-crds/ (cluster-wide, K8s constraint). Everything
-# below is inlined per-app so each Application is self-contained.
-# ============================================================================
-vault-connector:
-  installCRDs: false            # CRDs are cluster-wide, owned by apps/external-secrets-crds/
-  createOperator: true
-
-  # SCOPING — the whole reason this controller is per-namespace:
-  # scopedNamespace + scopedRBAC=true together cause the chart to render
-  # Role/RoleBinding (not ClusterRole/CRB) and start the controller with
-  # --namespace=observability. The pod cannot read or write Secrets outside this
-  # namespace, even if its SA token were exfiltrated.
-  scopedNamespace: observability
-  scopedRBAC: true
-
-  # Cluster-* reconcilers are off — they require ClusterRole privileges we
-  # deliberately don't grant. Leaving them on causes "forbidden" reconcile
-  # errors every tick.
-  processClusterExternalSecret: false
-  processClusterPushSecret: false
-  processClusterStore: false
-  processClusterGenerator: false
-
-  # The chart's harmless servicebindings-aggregation ClusterRole is also
-  # off — strict "no cluster-wide objects from this chart" compliance.
-  rbac:
-    servicebindings:
-      create: false
-
-  # No webhook → no cluster-wide ValidatingWebhookConfiguration, no webhook
-  # pod, no cert-controller. CR validation happens at reconcile-time rather
-  # than admission-time.
-  webhook:
-    create: false
-  certController:
-    create: false
-
-  replicaCount: 1
-  leaderElect: false        # single replica, no contention
-
-  resources:
-    requests:
-      cpu: 25m
-      memory: 64Mi
-    limits:
-      cpu: 200m
-      memory: 256Mi
-
-  # Expose /metrics so apps/observability/'s external-secrets ServiceMonitor
-  # discovers this controller.
-  metrics:
-    service:
-      enabled: true
-  serviceMonitor:
-    enabled: false           # the central monitor in observability owns this

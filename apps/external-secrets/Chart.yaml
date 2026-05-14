@@ -1,0 +1,24 @@
+apiVersion: v2
+name: external-secrets
+version: 1.0.0
+description: |
+  External-Secrets-Operator — controller + vendored CRDs.
+
+  One ArgoCD-managed Application per cluster (dev/test/prod each on its own
+  cluster). Visible in ArgoCD next to coredns / mongodb / …
+
+  Why we vendor only 2 CRDs:
+    The upstream `external-secrets` chart ships 23 CRDs covering every
+    possible secret-provider + generator type (AWS, GCP, Azure, GitHub,
+    Quay, ECR, ACR, password-generator, ssh-keys, …). We only ever apply
+    SecretStore + ExternalSecret in this platform, so the rest is noise
+    and the bundled `secretstores.external-secrets.io` CRD (~580 KB) is
+    too large for the kubectl client-side-apply annotation limit (262 KB).
+    We disable installCRDs in the chart and apply just the two CRDs we
+    use from templates/. The Application's sync option ServerSideApply=true
+    avoids the annotation limit on the SecretStore CRD.
+type: application
+dependencies:
+  - name: external-secrets
+    version: 0.20.4
+    repository: oci://ghcr.io/external-secrets/charts

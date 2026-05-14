@@ -12,16 +12,6 @@ dependencies:
   - name: prometheus-mongodb-exporter
     version: 3.7.0
     repository: https://prometheus-community.github.io/helm-charts
-  # Per-namespace ESO controller. Runs IN this app's namespace, with
-  # Role/RoleBinding scoped to that namespace (no ClusterRole/CRB), watching
-  # only the SecretStore + ExternalSecret CRs we render via secret-store/
-  # external-secret library deps below. CRDs come from
-  # apps/external-secrets-crds/ (cluster-wide, K8s constraint — CRDs cannot
-  # be namespaced).
-  - name: external-secrets
-    alias: vault-connector
-    version: 0.20.4
-    repository: oci://ghcr.io/external-secrets/charts
   - name: secret-store
     version: 1.0.0
     repository: file://../../charts/secret-store

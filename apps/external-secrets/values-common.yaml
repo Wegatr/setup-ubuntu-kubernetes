@@ -1,0 +1,59 @@
+# ESO controller install. CRDs come from templates/ in this chart (just the
+# 2 we use: ExternalSecret + SecretStore), not from the upstream chart.
+external-secrets:
+  # We ship the 2 CRDs we need as static manifests in templates/, so disable
+  # the chart's CRD installation. Each cluster gets ExternalSecret +
+  # SecretStore CRDs via this Application; everything else (generators,
+  # cluster-scoped variants, PushSecret) stays out.
+  installCRDs: false
+
+  # The actual controller Deployment. ONE controller per cluster — it
+  # watches every namespace where charts/secret-store/ has rendered a local
+  # SecretStore + external-secrets-sa ServiceAccount. Vault's
+  # bound_service_account_namespaces (configured by --seed-vault) is what
+  # gates which namespaces' SAs are actually allowed to read secrets.
+  createOperator: true
+
+  # The chart's harmless servicebindings-aggregation ClusterRole — drop it,
+  # we don't run any servicebinding-aware controller.
+  rbac:
+    servicebindings:
+      create: false
+
+  # No admission webhook. Skipping the cluster-wide
+  # ValidatingWebhookConfiguration + the webhook pod + the cert-controller
+  # (which exists only to rotate the webhook's TLS cert). CR validation
+  # moves from admission-time to reconcile-time; bad CRs surface in
+  # ExternalSecret .status instead of failing at apply.
+  webhook:
+    create: false
+  certController:
+    create: false
+
+  # We don't use Cluster* CRs anywhere in this platform — disable the
+  # corresponding reconcile loops (otherwise the controller logs reconcile
+  # errors looking for CRDs we deliberately didn't install).
+  processClusterExternalSecret: false
+  processClusterPushSecret: false
+  processClusterStore: false
+  processClusterGenerator: false
+  processPushSecret: false
+
+  replicaCount: 1
+  leaderElect: false
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 250m
+      memory: 384Mi
+
+  # Expose /metrics so apps/observability/'s external-secrets ServiceMonitor
+  # discovers the controller.
+  metrics:
+    service:
+      enabled: true
+  serviceMonitor:
+    enabled: false   # owned by apps/observability/

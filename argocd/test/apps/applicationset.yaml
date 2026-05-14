@@ -25,16 +25,17 @@ spec:
   generators:
     - list:
         elements:
-          # Wave 0 — ExternalSecret CRDs (cluster-scoped by K8s design).
-          # Per-NS ESO controllers in applicationset-eso.yaml (wave 1) and
-          # all downstream apps with ExternalSecret CRs depend on these
-          # being registered with the API server first.
-          - name: external-secrets-crds
-            syncWave: "0"
+          # Wave 1 — ESO controller + the 2 CRDs we use (ExternalSecret +
+          # SecretStore). One Application per cluster. specialOptions=
+          # external-secrets activates ServerSideApply=true in templatePatch
+          # below — the bundled SecretStore CRD's OpenAPI schema exceeds
+          # the 262 KB last-applied-configuration annotation limit.
+          - name: external-secrets
+            syncWave: "1"
             namespace: external-secrets-system
             prune: "true"
             createNamespace: "true"
-            specialOptions: ""
+            specialOptions: "external-secrets"
 
           - name: coredns
             syncWave: "5"
@@ -130,6 +131,9 @@ spec:
         syncOptions:
           - CreateNamespace={{ .createNamespace }}
           {{- if eq .specialOptions "observability" }}
+          - ServerSideApply=true
+          {{- end }}
+          {{- if eq .specialOptions "external-secrets" }}
           - ServerSideApply=true
           {{- end }}
       {{- if eq .specialOptions "observability" }}

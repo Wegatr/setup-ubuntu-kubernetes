@@ -25,19 +25,22 @@ spec:
   generators:
     - list:
         elements:
-          # Wave 0 — ExternalSecret CRDs (cluster-scoped by K8s design).
-          # Every downstream namespace's ExternalSecret/SecretStore CR needs
-          # these registered with the API server BEFORE the per-NS ESO
-          # controllers (in applicationset-eso.yaml, wave 1) start. Without
-          # the CRDs in place first, `kubectl apply` of any ExternalSecret
-          # produces "Kubernetes API could not find external-secrets.io/
-          # ExternalSecret" — the failure mode this app fixes.
-          - name: external-secrets-crds
-            syncWave: "0"
+          # Wave 1 — External-Secrets-Operator (controller + the 2 CRDs we
+          # actually use). One Application per cluster — dev/test/prod each
+          # run on their own cluster. Sync wave 1 so it lands before
+          # workload apps at wave 10+ that create SecretStore /
+          # ExternalSecret CRs. Visible in ArgoCD next to the workload apps.
+          #
+          # specialOptions=external-secrets activates ServerSideApply=true in
+          # templatePatch below — the bundled SecretStore CRD's OpenAPI
+          # schema is ~580 KB which exceeds the 262 KB
+          # last-applied-configuration annotation limit on client-side apply.
+          - name: external-secrets
+            syncWave: "1"
             namespace: external-secrets-system
             prune: "true"
             createNamespace: "true"
-            specialOptions: ""
+            specialOptions: "external-secrets"
 
           # Wave 3 — Tekton operator + CRDs. Must exist before image-builder
           # (wave 25) creates Pipelines / Tasks / EventListeners.
@@ -167,6 +170,9 @@ spec:
         syncOptions:
           - CreateNamespace={{ .createNamespace }}
           {{- if eq .specialOptions "observability" }}
+          - ServerSideApply=true
+          {{- end }}
+          {{- if eq .specialOptions "external-secrets" }}
           - ServerSideApply=true
           {{- end }}
       {{- if eq .specialOptions "observability" }}

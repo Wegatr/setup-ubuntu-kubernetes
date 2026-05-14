@@ -1,0 +1,2 @@
+# DEV — no per-env overrides. The dev cluster runs the same single-replica
+# ESO controller as test/prod, with values from values-common.yaml.

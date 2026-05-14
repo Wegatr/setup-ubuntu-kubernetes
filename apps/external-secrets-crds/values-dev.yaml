@@ -1,3 +1,0 @@
-# DEV-specific overrides — none today. The CRDs are version-pinned in
-# Chart.yaml and rendered by values-common.yaml; no per-env differences
-# exist for a CRD-only release.
