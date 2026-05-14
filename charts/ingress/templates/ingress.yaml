@@ -1,0 +1,73 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ingress.fullname" . }}
+  labels:
+    {{- include "ingress.labels" . | nindent 4 }}
+  annotations:
+    {{- /*
+    cert-manager ClusterIssuer is centralized — pick (in order of precedence):
+      1. ingress.clusterIssuer in this consumer's values (explicit override)
+      2. .Values.global.clusterIssuer (from platform/values-common.yaml)
+    Set ingress.clusterIssuer: "" (empty) to suppress the annotation entirely.
+    */}}
+    {{- $issuer := .Values.ingress.clusterIssuer | default .Values.global.clusterIssuer }}
+    {{- if $issuer }}
+    cert-manager.io/cluster-issuer: {{ $issuer | quote }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- /*
+  Hostnames support Go template syntax (Helm `tpl`) so values can reference
+  .Values.global.env and .Values.global.domain — e.g.
+    ingress.host: 'gate.{{ .Values.global.env }}.{{ .Values.global.domain }}'
+  */}}
+  {{- if .Values.ingress.tls }}
+  {{- if or .Values.ingress.tls.enabled .Values.ingress.tls.secretName }}
+  tls:
+  {{- if .Values.ingress.host }}
+  - hosts:
+    - {{ tpl .Values.ingress.host . }}
+    secretName: {{ tpl (.Values.ingress.tls.secretName | default (printf "%s-tls" (include "ingress.fullname" .))) . }}
+  {{- else }}
+  {{- range .Values.ingress.hosts }}
+  - hosts:
+    - {{ tpl . $ }}
+    secretName: {{ tpl ($.Values.ingress.tls.secretName | default (printf "%s-tls" (include "ingress.fullname" $))) $ }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  rules:
+  {{- if .Values.ingress.paths }}
+  - host: {{ tpl .Values.ingress.host . }}
+    http:
+      paths:
+      {{- range .Values.ingress.paths }}
+      - path: {{ .path }}
+        pathType: {{ .pathType | default "Prefix" }}
+        backend:
+          service:
+            name: {{ tpl .serviceName $ }}
+            port:
+              number: {{ .servicePort }}
+      {{- end }}
+  {{- else }}
+  {{- range .Values.ingress.hosts }}
+  - host: {{ tpl . $ }}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ $.Values.ingress.serviceName }}
+            port:
+              number: {{ $.Values.ingress.servicePort }}
+  {{- end }}
+  {{- end }}
+{{- end }}

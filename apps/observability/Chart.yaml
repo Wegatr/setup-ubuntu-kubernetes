@@ -1,0 +1,41 @@
+apiVersion: v2
+name: observability
+version: 1.0.0
+description: Platform observability stack (Prometheus, Grafana, Alertmanager, Loki, Tempo, Alloy). Apps declare their own monitoring via the shared `monitoring` library chart (charts/monitoring); this app also depends on it for cluster-wide Alloy + cluster-level alerts + monitors for foreign infra (cert-manager, Traefik, Vault, ESO, ArgoCD).
+type: application
+
+dependencies:
+  # Per-app + cluster-wide monitoring resources (ServiceMonitor, PodMonitor,
+  # PrometheusRule, AlertmanagerConfig, Alloy DaemonSet config).
+  - name: monitoring
+    version: 2.0.0
+    repository: file://../../charts/monitoring
+
+  # Core metrics + Grafana + Alertmanager
+  - name: kube-prometheus-stack
+    version: 84.0.0
+    repository: https://prometheus-community.github.io/helm-charts
+
+  # Logs
+  - name: loki
+    version: 6.44.0
+    repository: https://grafana.github.io/helm-charts
+
+  # Traces
+  - name: tempo
+    version: 1.23.3
+    repository: https://grafana.github.io/helm-charts
+
+  # Unified log shipper + OTLP receiver
+  - name: alloy
+    version: 1.3.0
+    repository: https://grafana.github.io/helm-charts
+
+  # Vault-backed secrets (one alias per credential)
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: grafana-admin-secret
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store

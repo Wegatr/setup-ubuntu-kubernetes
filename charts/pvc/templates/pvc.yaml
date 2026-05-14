@@ -1,0 +1,19 @@
+{{- if .Values.pvc.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.pvc.name }}
+  labels:
+    {{- include "pvc.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.pvc.accessModes | nindent 4 }}
+  {{- /*
+  Storage class: explicit pvc.storageClassName wins; otherwise falls back to
+  .Values.global.storageClass (platform/values-common.yaml).
+  */}}
+  storageClassName: {{ .Values.pvc.storageClassName | default .Values.global.storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.pvc.storageSize }}
+{{- end }}

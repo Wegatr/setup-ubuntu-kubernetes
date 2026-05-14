@@ -1,0 +1,5 @@
+apiVersion: v2
+name: rbac
+version: 1.0.0
+description: Generic RBAC chart (ServiceAccount + Role + RoleBinding)
+type: application

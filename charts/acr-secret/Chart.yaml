@@ -1,0 +1,5 @@
+apiVersion: v2
+name: acr-secret
+version: 1.0.0
+description: Generic ACR image pull secret via ExternalSecret (dockerconfigjson)
+type: application

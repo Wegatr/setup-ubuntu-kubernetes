@@ -1,0 +1,93 @@
+redis:
+  # Architecture: standalone
+  architecture: standalone
+  terminationGracePeriodSeconds: 3
+
+  # Authentication (disabled for internal use)
+  auth:
+    enabled: false
+
+  # Master configuration
+  master:
+    # Persistence configuration
+    persistence:
+      enabled: true
+      accessModes:
+        - ReadWriteOnce
+
+    # PVC retention policy
+    persistentVolumeClaimRetentionPolicy:
+      enabled: true
+      whenDeleted: Retain
+      whenScaled: Retain
+
+    # Redis configuration - Enable AOF for durability
+    configuration: |
+      appendonly yes
+      appendfsync everysec
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      ports:
+        redis: 6379
+
+  # Security context
+  podSecurityContext:
+    enabled: true
+    fsGroup: 1001
+
+  containerSecurityContext:
+    enabled: true
+    runAsUser: 1001
+    runAsNonRoot: true
+
+  # Disable replica (single instance)
+  replica:
+    replicaCount: 0
+
+# Monitoring chart — emits Redis alert rules. The redis-exporter sub-chart
+# below already emits its own ServiceMonitor labelled release: observability.
+monitoring:
+  prometheusRules:
+    redis:
+      enabled: true
+      groups:
+        - name: redis
+          interval: 60s
+          rules:
+            - alert: RedisDown
+              expr: redis_up == 0
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Redis instance {{ $labels.instance }} is down"
+
+            # RedisMemoryPressure removed: redis_memory_max_bytes is 0 (unlimited)
+            # in this deployment, so the ratio is undefined / always-firing-on-NaN.
+            # Reinstate with a real maxmemory check or an absolute threshold once
+            # a maxmemory limit is set in Redis.
+
+            - alert: RedisEvictionsSpiking
+              expr: rate(redis_evicted_keys_total[5m]) > 10
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Redis evicting keys at > 10/s"
+
+# prometheus-redis-exporter subchart. No auth needed (REDIS_AUTH_ENABLED=false).
+# Per-env redisAddress in values-{env}.yaml.
+prometheus-redis-exporter:
+  fullnameOverride: redis-exporter
+  serviceMonitor:
+    enabled: true
+    labels: { release: observability }
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi

@@ -1,0 +1,102 @@
+mail:
+  recreateOnRedeploy: false
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 587
+  config:
+    general:
+      # Mirrors .Values.global.timezone (platform/values-common.yaml). The
+      # bokysan/docker-postfix chart consumes this env var directly without
+      # running tpl on it, so the value is literal here — keep in sync with
+      # the platform default.
+      TZ: "Europe/Amsterdam"
+      LOG_FORMAT: "json"
+      DKIM_SELECTOR: "mail"
+    postfix:
+      smtp_tls_security_level: "may"
+      smtp_tls_CApath: "/etc/ssl/certs"
+      mynetworks: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8"
+      inet_interfaces: "all"
+      message_size_limit: "26214400"
+      maximal_queue_lifetime: "5d"
+      bounce_queue_lifetime: "5d"
+      queue_run_delay: "300s"
+      minimal_backoff_time: "300s"
+      maximal_backoff_time: "4000s"
+      # Accept mail for our own hostname locally so bounces TO
+      # no-reply@mail.<env>.<domain> are delivered locally into Maildir
+      # instead of trying DNS/MX lookup on a closed port 25.
+      mydestination: "$myhostname"
+
+      # Store local delivery in Maildir format on the persistent volume
+      home_mailbox: "Maildir/"
+      mailbox_size_limit: "104857600"
+
+      # Route all local mail to a single catchall user
+      local_recipient_maps: ""
+      luser_relay: "catchall"
+
+      # Delay warning after 4 hours of failed delivery
+      delay_warning_time: "4h"
+
+      # No notify_classes -- bounces stay local in Maildir
+      notify_classes: ""
+
+      # Outbound SMTP timeouts
+      smtp_connect_timeout: "30s"
+      smtp_helo_timeout: "60s"
+      smtp_mail_timeout: "120s"
+      smtp_rcpt_timeout: "120s"
+      smtp_data_init_timeout: "120s"
+      smtp_data_xfer_timeout: "300s"
+      smtp_data_done_timeout: "600s"
+
+      # Inbound rate limiting
+      smtpd_client_message_rate_limit: "50"
+      smtpd_recipient_limit: "100"
+      smtpd_client_connection_rate_limit: "10"
+      smtpd_client_connection_count_limit: "5"
+
+      # Outbound rate limiting to protect IP reputation
+      default_destination_concurrency_limit: "5"
+      default_destination_rate_delay: "1s"
+      initial_destination_concurrency: "2"
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessModes: [ReadWriteOnce]
+  pod:
+    securityContext:
+      fsGroup: 101
+      seccompProfile:
+        type: RuntimeDefault
+  terminationGracePeriodSeconds: 120
+
+# Monitoring chart — postfix alert rules are pre-written but disabled because
+# this chart doesn't ship a postfix-exporter yet (the postfix_* metrics they
+# reference don't exist). Flip `enabled: true` after wiring up an exporter
+# Deployment + ServiceMonitor that produces postfix_* metrics.
+monitoring:
+  prometheusRules:
+    postfix:
+      enabled: false
+      groups:
+        - name: postfix
+          interval: 60s
+          rules:
+            - alert: PostfixQueueBackup
+              expr: postfix_showq_message_size_bytes > 50e6
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Postfix mail queue > 50 MB"
+
+            - alert: PostfixDeferredQueueGrowing
+              expr: rate(postfix_queue_message_size_bytes{queue="deferred"}[10m]) > 0
+              for: 30m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Postfix deferred queue growing for 30 minutes"

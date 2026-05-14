@@ -1,0 +1,5 @@
+apiVersion: v2
+name: coredns
+version: 1.0.0
+description: CoreDNS Corefile with vault.<env>.<domain> rewrite to internal Vault Service. Owns kube-system/coredns ConfigMap.
+type: application

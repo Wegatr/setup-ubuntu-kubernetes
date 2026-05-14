@@ -1,0 +1,75 @@
+# Tekton operator install — NOT version-pinned at the Helm-chart level because
+# Tekton releases are best consumed as raw YAML manifests from
+# storage.googleapis.com/tekton-releases. See README.md.
+#
+# The chart itself emits the ServiceMonitor + alert rules; the actual operator
+# manifests are vendored in templates/release-*.yaml (refresh by re-downloading).
+release:
+  pipelinesVersion: "v0.62.0"     # informational — vendored manifest must match
+  triggersVersion: "v0.30.0"      # informational
+  interceptorsVersion: "v0.30.0"  # informational
+
+# Default-deny feature flags / config-defaults for Tekton Pipelines.
+# - disable affinity assistant: not needed on single-node MicroK8s where every
+#   PipelineRun's pods land on the same node anyway, and it adds overhead.
+# - default ServiceAccount: use the app's pipeline-sa from image-builder.
+#
+# These settings are applied via a ConfigMap patch (see templates/config-patches.yaml)
+# rather than baked into the upstream manifests so we can refresh those without
+# losing the config.
+config:
+  disableAffinityAssistant: true
+  defaultServiceAccount: pipeline-sa
+
+# Monitoring — scrape the Tekton controllers' metrics endpoints and alert on
+# Pipeline failures + long-running PipelineRuns.
+monitoring:
+  serviceMonitors:
+    tekton-pipelines:
+      enabled: true
+      namespaces: [tekton-pipelines]
+      matchLabels:
+        app.kubernetes.io/part-of: tekton-pipelines
+      endpoints:
+        - port: http-metrics
+          interval: 60s
+    tekton-triggers:
+      enabled: true
+      namespaces: [tekton-pipelines]
+      matchLabels:
+        app.kubernetes.io/part-of: tekton-triggers
+      endpoints:
+        - port: http-metrics
+          interval: 60s
+
+  prometheusRules:
+    tekton:
+      enabled: true
+      groups:
+        - name: tekton
+          interval: 60s
+          rules:
+            - alert: TektonControllerDown
+              expr: up{job=~"tekton-pipelines.*|tekton-triggers.*"} == 0
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Tekton controller {{ $labels.job }} is down"
+
+            - alert: PipelineRunFailed
+              expr: increase(tekton_pipelines_controller_pipelinerun_count{status="failed"}[10m]) > 0
+              for: 1m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Tekton PipelineRun failed in last 10 min"
+                description: "Check `tkn pipelinerun list` in the image-builder namespace."
+
+            - alert: PipelineRunRunningTooLong
+              expr: time() - max(tekton_pipelines_controller_running_pipelineruns_count > 0) > 1800
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Tekton PipelineRun has been running > 30 minutes"

@@ -1,0 +1,32 @@
+apiVersion: v2
+name: dbgate
+version: 1.0.0
+description: DBGate — unified web UI for MongoDB and Redis (replaces mongoexpress/redisinsight)
+type: application
+appVersion: "7.1.9"
+dependencies:
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: app
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+  - name: middleware
+    version: 1.0.0
+    repository: file://../../charts/middleware
+    alias: basicauth
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-auth
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-db
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store

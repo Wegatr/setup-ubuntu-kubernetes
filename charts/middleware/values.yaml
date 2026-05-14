@@ -1,0 +1,8 @@
+middleware:
+  enabled: true
+  type: basicAuth
+  basicAuth:
+    secretName: ""
+  redirectScheme:
+    scheme: "https"
+    permanent: true

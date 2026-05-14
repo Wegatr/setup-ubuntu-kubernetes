@@ -1,0 +1,15 @@
+externalSecret:
+  enabled: true
+  name: ""
+  namespace: ""
+  # secretStoreName + secretStoreKind: empty here. The template falls back to
+  # .Values.global.secretStoreName (platform/values-common.yaml: vault-backend)
+  # and defaults kind to "SecretStore".
+  secretStoreName: ""
+  secretStoreKind: ""
+  targetSecretName: ""
+  vaultPath: ""
+  data: []
+  # Example data structure:
+  # - secretKey: password
+  #   property: password

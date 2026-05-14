@@ -1,0 +1,66 @@
+{{- if .Values.eventListener.enabled }}
+{{- /*
+TriggerTemplate — common shape consumed by all three provider Triggers. Each
+binding feeds the same four params; the template spawns a PipelineRun.
+
+Workspaces are PVC-backed:
+  - source           : volumeClaimTemplate (10Gi) — fresh per run
+  - ssh-credentials  : Secret-backed (image-builder-git-ssh, mode 0400)
+  - trivy-db-cache   : pre-provisioned PVC (trivy-db-cache, see trivy-db-pvc.yaml)
+*/ -}}
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: image-build
+  namespace: {{ .Release.Namespace }}
+spec:
+  params:
+    - name: git-url
+      description: SSH URL of the source repo.
+    - name: git-revision
+      description: Commit SHA to build.
+    - name: image-name
+      description: Image name (no registry, no tag).
+    - name: image-version
+      description: Semver base; default "0.0.0".
+      default: "0.0.0"
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: build-
+        namespace: {{ .Release.Namespace }}
+        labels:
+          app.kubernetes.io/name: image-builder
+          tekton.dev/pipeline: build-pipeline
+      spec:
+        pipelineRef:
+          name: build-pipeline
+        taskRunTemplate:
+          serviceAccountName: {{ .Values.pipeline.serviceAccountName }}
+        params:
+          - name: git-url
+            value: $(tt.params.git-url)
+          - name: git-revision
+            value: $(tt.params.git-revision)
+          - name: image-name
+            value: $(tt.params.image-name)
+          - name: image-version
+            value: $(tt.params.image-version)
+        workspaces:
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                resources:
+                  requests:
+                    storage: {{ .Values.workspaces.sourceSize | quote }}
+                storageClassName: {{ .Values.global.storageClass | quote }}
+          - name: ssh-credentials
+            secret:
+              secretName: image-builder-git-ssh
+              defaultMode: 0400
+          - name: trivy-db-cache
+            persistentVolumeClaim:
+              claimName: trivy-db-cache
+{{- end }}

@@ -1,0 +1,59 @@
+mail:
+  config:
+    general:
+      ALLOWED_SENDER_DOMAINS: "digitaplatform.com"
+    postfix:
+      myhostname: "mail.dev.digitaplatform.com"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  extraVolumes:
+    - name: dkim-keys-secret
+      secret:
+        secretName: postfix-dkim-key
+        defaultMode: 0400
+        items:
+          - key: dkim-private-key
+            path: mail.dev.digitaplatform.com.private
+    - name: dkim-keys
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: dkim-keys
+      mountPath: /etc/opendkim/keys
+  pod:
+    initContainers:
+      - name: fix-dkim-permissions
+        image: busybox:latest
+        command:
+          - sh
+          - -c
+          - |
+            cp /dkim-source/mail.dev.digitaplatform.com.private /dkim-keys/mail.dev.digitaplatform.com.private
+            chmod 700 /dkim-keys
+            chmod 600 /dkim-keys/mail.dev.digitaplatform.com.private
+        volumeMounts:
+          - name: dkim-keys-secret
+            mountPath: /dkim-source
+            readOnly: true
+          - name: dkim-keys
+            mountPath: /dkim-keys
+
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource under this app).
+secret-store:
+
+# ExternalSecret (external-secret) — pulls DKIM key from Vault
+external-secret:
+  externalSecret:
+    enabled: true
+    name: postfix-dkim-key
+    namespace: postfix
+    secretStoreKind: SecretStore
+    targetSecretName: postfix-dkim-key
+    vaultPath: dev/app/postfix
+    data:
+      - secretKey: dkim-private-key
+        property: dkim-private-key

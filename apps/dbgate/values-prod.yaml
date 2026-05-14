@@ -1,0 +1,108 @@
+app:
+  # All env vars — Helm array-replaces (no merge with values-common.yaml `env`).
+  # DBGate reads CONNECTIONS=mongo,redis,postgres and materializes each connection
+  # from per-connection LABEL_/SERVER_/PORT_/ENGINE_/USER_/PASSWORD_/URL_ vars.
+  # Credentials come from Vault via the dbgate-db-credentials secret (see externalSecret below).
+  env:
+    # Disable DBGate's own login/JWT auth — Traefik's BasicAuth middleware
+    # at the ingress layer handles all access control. Without this, DBGate
+    # 7.x shows its own login page AND rejects the UI's API calls with
+    # "jwt malformed" because there's no valid DBGate session token.
+    - name: SKIP_ALL_AUTH
+      value: "true"
+    - name: CONNECTIONS
+      value: "mongo,redis,postgres"
+    # --- MongoDB ---
+    - name: LABEL_mongo
+      value: "MongoDB (PROD)"
+    - name: ENGINE_mongo
+      value: "mongo@dbgate-plugin-mongo"
+    - name: SERVER_mongo
+      value: "mongodb-prod-headless.mongodb.svc.cluster.local"
+    - name: PORT_mongo
+      value: "27017"
+    - name: USER_mongo
+      value: "root"
+    - name: PASSWORD_mongo
+      valueFrom:
+        secretKeyRef:
+          name: dbgate-db-credentials
+          key: mongodb-password
+    # --- Redis (no password: REDIS_AUTH_ENABLED=false in cluster config) ---
+    - name: LABEL_redis
+      value: "Redis (PROD)"
+    - name: ENGINE_redis
+      value: "redis@dbgate-plugin-redis"
+    - name: URL_redis
+      value: "redis://redis-prod-master.redis.svc.cluster.local:6379"
+    # --- PostgreSQL ---
+    - name: LABEL_postgres
+      value: "PostgreSQL (PROD)"
+    - name: ENGINE_postgres
+      value: "postgres@dbgate-plugin-postgres"
+    - name: SERVER_postgres
+      value: "postgresql-prod.postgresql.svc.cluster.local"
+    - name: PORT_postgres
+      value: "5432"
+    - name: USER_postgres
+      value: "postgres"
+    - name: PASSWORD_postgres
+      valueFrom:
+        secretKeyRef:
+          name: dbgate-db-credentials
+          key: postgresql-password
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# Traefik BasicAuth middleware — reads htpasswd from `users` key of dbgate-credentials.
+# Middleware name pinned to `basic-auth` (env-independent) via fullnameOverride.
+# Referenced by the Ingress annotation: `dbgate-basic-auth@kubernetescrd`.
+# Aliased as `basicauth` in Chart.yaml.
+basicauth:
+  fullnameOverride: basic-auth
+  middleware:
+    enabled: true
+    type: basicAuth
+    basicAuth:
+      secretName: dbgate-credentials
+
+# ExternalSecret #1 — Traefik BasicAuth credentials.
+# Traefik's BasicAuth middleware requires a Secret with EXACTLY ONE key
+# (the htpasswd blob under key `users`). Any extra key makes Traefik refuse
+# to load the middleware, which in turn drops the router and returns 404.
+# So we keep this secret single-keyed and pull DB creds into a second one.
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource).
+secret-store:
+
+externalsecret-auth:
+  externalSecret:
+    enabled: true
+    name: dbgate-credentials
+    namespace: dbgate
+    secretStoreKind: SecretStore
+    targetSecretName: dbgate-credentials
+    vaultPath: prod/app/dbgate
+    data:
+      - secretKey: users
+        property: auth
+
+# ExternalSecret #2 — DB passwords injected into the DBGate pod env vars
+# (PASSWORD_mongo via valueFrom.secretKeyRef above).
+externalsecret-db:
+  externalSecret:
+    enabled: true
+    name: dbgate-db-credentials
+    namespace: dbgate
+    secretStoreKind: SecretStore
+    targetSecretName: dbgate-db-credentials
+    vaultPath: prod/app/dbgate
+    data:
+      - secretKey: mongodb-password
+        property: mongodb-password
+      - secretKey: postgresql-password
+        property: postgresql-password

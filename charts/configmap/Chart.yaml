@@ -1,0 +1,5 @@
+apiVersion: v2
+name: configmap
+version: 1.0.0
+description: Generic ConfigMap chart
+type: application

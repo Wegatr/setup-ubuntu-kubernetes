@@ -1,0 +1,5 @@
+# TEST-specific platform globals.
+# Merged with platform/values-common.yaml by every Application via $values ref.
+global:
+  env: test
+  vaultUrl: https://vault.test.digitaplatform.com:8200

@@ -1,0 +1,117 @@
+{{- /*
+buildah-build-push — builds an OCI image from a Containerfile in the source
+workspace, applies the four standard org.opencontainers.image.* labels, and
+pushes to the configured registry.
+
+MicroK8s specifics:
+  - STORAGE_DRIVER=vfs. The default overlay driver requires fuse + a kernel
+    config that MicroK8s' default kubelet doesn't expose; vfs is slower but
+    just works.
+  - BUILDAH_FORMAT=oci. Default docker manifest format works too but oci is
+    the modern default and Trivy handles both.
+  - privileged: true. Buildah needs CAP_SYS_ADMIN for the underlying chroot
+    operations. PodSecurityStandards on MicroK8s default-allow this; if you
+    enable PSA, mark the image-builder namespace `privileged`.
+  - --tls-verify=false on push. The MicroK8s registry is HTTP-only on the
+    in-cluster service hostname.
+
+The image-digest result is consumed by trivy-scan (scans by digest, not tag,
+to avoid TOCTOU between push and scan).
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: buildah-build-push
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: task
+spec:
+  description: Build a Containerfile with Buildah and push to the registry.
+  workspaces:
+    - name: source
+      description: Contains the Containerfile and build context.
+  params:
+    - name: image-name
+      description: Image name (registry path WITHOUT tag), e.g. myapp.
+      type: string
+    - name: image-tag
+      description: Tag to push (from generate-image-tag).
+      type: string
+    - name: registry
+      description: Registry hostname:port.
+      type: string
+      default: {{ .Values.pipeline.registry | quote }}
+    - name: containerfile
+      description: Path to the Containerfile inside the source workspace.
+      type: string
+      default: Containerfile
+    - name: context
+      description: Build context dir inside the source workspace.
+      type: string
+      default: "."
+    - name: git-url
+      description: For OCI label org.opencontainers.image.source.
+      type: string
+    - name: git-revision
+      description: Resolved commit SHA for OCI label .revision.
+      type: string
+    - name: build-timestamp
+      description: ISO-8601 UTC timestamp for OCI label .created.
+      type: string
+    - name: version
+      description: Semver base for OCI label .version.
+      type: string
+  results:
+    - name: image-digest
+      description: Pushed image digest (sha256:...).
+    - name: image-reference
+      description: Fully-qualified image reference (registry/name:tag).
+  steps:
+    - name: build-and-push
+      image: quay.io/buildah/stable:v1.39
+      env:
+        - name: STORAGE_DRIVER
+          value: vfs
+        - name: BUILDAH_FORMAT
+          value: oci
+      securityContext:
+        privileged: true
+        runAsUser: 0
+      workingDir: /workspace/source/$(params.context)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        IMAGE_REF="$(params.registry)/$(params.image-name):$(params.image-tag)"
+        echo "Building $IMAGE_REF from $(params.containerfile)"
+
+        buildah --storage-driver=vfs bud \
+          --format=oci \
+          --tls-verify=false \
+          --label "org.opencontainers.image.source=$(params.git-url)" \
+          --label "org.opencontainers.image.revision=$(params.git-revision)" \
+          --label "org.opencontainers.image.created=$(params.build-timestamp)" \
+          --label "org.opencontainers.image.version=$(params.version)" \
+          -f "$(params.containerfile)" \
+          -t "$IMAGE_REF" \
+          .
+
+        echo "Pushing $IMAGE_REF"
+        buildah --storage-driver=vfs push \
+          --tls-verify=false \
+          --digestfile /tmp/digest \
+          "$IMAGE_REF" \
+          "docker://$IMAGE_REF"
+
+        DIGEST="$(cat /tmp/digest)"
+        echo "Pushed: $IMAGE_REF @ $DIGEST"
+        printf "%s" "$DIGEST" > $(results.image-digest.path)
+        printf "%s" "$IMAGE_REF" > $(results.image-reference.path)
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: 2
+          memory: 4Gi

@@ -1,0 +1,3 @@
+# PROD-specific Tekton overrides — none today. Phase A: image-builder is not
+# enabled in PROD (see argocd/prod/apps/applicationset.yaml), so this chart
+# is also unused in PROD. The file exists for symmetry with other apps.

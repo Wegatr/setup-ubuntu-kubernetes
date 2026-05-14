@@ -1,0 +1,5 @@
+apiVersion: v2
+name: deployment
+version: 1.0.0
+description: Generic deployment chart (Deployment + Service)
+type: application

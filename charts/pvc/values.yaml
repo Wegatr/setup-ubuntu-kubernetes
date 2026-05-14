@@ -1,0 +1,7 @@
+pvc:
+  enabled: true
+  name: ""
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  storageSize: "10Gi"

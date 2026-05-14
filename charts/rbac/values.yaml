@@ -1,0 +1,11 @@
+rbac:
+  enabled: true
+  clusterWide: false
+  rules: []
+  # Example:
+  # rules:
+  #   - apiGroups: ["batch"]
+  #     resources: ["jobs"]
+  #     verbs: ["create", "get", "list", "watch"]
+  #
+  # Set clusterWide: true for ClusterRole + ClusterRoleBinding (cross-namespace access)

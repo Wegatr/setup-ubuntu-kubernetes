@@ -1,0 +1,69 @@
+# Defaults for the monitoring chart. Every consumer (apps/observability/, apps/mongodb/,
+# apps/redis/, apps/postfix/, ...) overrides these from its own values-*.yaml.
+#
+# Each consumer adds this chart as a Helm dependency:
+#   dependencies:
+#     - name: monitoring
+#       version: 2.0.0
+#       repository: file://../../charts/monitoring
+#
+# Then declares what to monitor under the top-level `monitoring:` key in its values file.
+
+# Release label tying our CRs to the central kube-prometheus-stack Prometheus / Alertmanager.
+# Prometheus and Alertmanager are configured with cluster-wide selectors (see
+# apps/observability/values-common.yaml), so this label is purely informational — Prometheus
+# picks up every monitor/rule in the cluster regardless of label. We still set it consistently
+# in case the selectors are tightened later.
+prometheusReleaseLabel: observability
+
+# -----------------------------------------------------------------------------
+# Per-app resources. Each is a map: the key becomes metadata.name on the CR.
+# Empty by default; consumers populate.
+# -----------------------------------------------------------------------------
+
+# Map of ServiceMonitor entries. See charts/monitoring/templates/servicemonitors.yaml.
+# Example:
+#   serviceMonitors:
+#     my-app:
+#       enabled: true
+#       namespaces: [my-app]                              # spec.namespaceSelector.matchNames
+#       matchLabels: { app.kubernetes.io/name: my-app }   # spec.selector.matchLabels
+#       matchExpressions: []                              # optional
+#       endpoints:
+#         - port: metrics
+#           path: /metrics
+#           interval: 60s
+serviceMonitors: {}
+
+# Map of PodMonitor entries. See charts/monitoring/templates/podmonitors.yaml.
+# Same shape as serviceMonitors but with `podMetricsEndpoints` instead of `endpoints`.
+podMonitors: {}
+
+# Map of PrometheusRule entries. Each entry has a `groups:` list following the standard
+# PrometheusRule spec. Note: `{{ $labels.x }}` and `{{ $value }}` are Prometheus template
+# variables, NOT Helm — they pass through verbatim because the rules come in via values.
+# See charts/monitoring/templates/prometheusrules.yaml.
+prometheusRules: {}
+
+# Map of AlertmanagerConfig entries. Each entry routes alerts matching `matchers` to the
+# listed email recipients. See charts/monitoring/templates/alertmanagerconfigs.yaml.
+# Alerts that match no AlertmanagerConfig fall through to the global default route
+# configured in apps/observability/values-{env}.yaml.
+# Example:
+#   alertmanagerConfigs:
+#     mongodb:
+#       enabled: true
+#       matchers:
+#         - { name: namespace, value: mongodb }
+#       emails: [db-team@<domain>]
+alertmanagerConfigs: {}
+
+# -----------------------------------------------------------------------------
+# Platform-only resources. Only apps/observability/ sets these to true.
+# -----------------------------------------------------------------------------
+
+# Alloy DaemonSet config (log shipper + OTLP trace receiver). Cluster-wide pod-log discovery
+# means this can only live in one chart instance — the observability stack itself.
+alloy:
+  logsEnabled: false
+  tracesEnabled: false

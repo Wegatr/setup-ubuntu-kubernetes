@@ -1,0 +1,45 @@
+{{- if and .Values.eventListener.enabled .Values.eventListener.triggers.github.enabled }}
+{{- /*
+GitHub push event → PipelineRun.
+
+Uses Tekton's built-in `github` ClusterInterceptor which validates the
+X-Hub-Signature-256 HMAC header against the secret in
+`image-builder-webhook-secrets.github`. The CEL filter restricts to push
+events on matching branches.
+
+The payload's `repository.ssh_url` + `after` (commit SHA) feed the pipeline's
+git-url and git-revision params via the TriggerBinding.
+*/ -}}
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: github-push
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: github
+spec:
+  interceptors:
+    - ref:
+        name: github
+      params:
+        - name: secretRef
+          value:
+            secretName: image-builder-webhook-secrets
+            secretKey: github
+        - name: eventTypes
+          value: ["push"]
+    - ref:
+        name: cel
+      params:
+        - name: filter
+          # Extract branch from refs/heads/<branch>; match the configured regex.
+          value: >-
+            body.ref.startsWith('refs/heads/') &&
+            body.ref.split('/').slice(2).join('/').matches('{{ .Values.eventListener.triggers.github.branchFilter }}')
+  bindings:
+    - ref: github-binding
+  template:
+    ref: image-build
+{{- end }}

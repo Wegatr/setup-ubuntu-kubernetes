@@ -1,0 +1,3 @@
+# TEST-specific Tekton overrides — none today. Phase A: image-builder is not
+# enabled in TEST (see argocd/test/apps/applicationset.yaml), so this chart
+# is also unused in TEST. The file exists for symmetry with other apps.

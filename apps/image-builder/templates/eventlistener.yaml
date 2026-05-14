@@ -1,0 +1,43 @@
+{{- if .Values.eventListener.enabled }}
+{{- /*
+Single EventListener serving all three providers. The Triggers below (one per
+provider, each in templates/triggers/) attach to this listener via the
+`triggers:` ref list.
+
+The Service backing the EventListener is named `el-image-builder` by Tekton's
+controller (prefix `el-` + EventListener name). Our Ingress points at it.
+*/ -}}
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: image-builder
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: eventlistener
+spec:
+  serviceAccountName: {{ .Values.pipeline.serviceAccountName }}
+  triggers:
+    {{- if .Values.eventListener.triggers.github.enabled }}
+    - triggerRef: github-push
+    {{- end }}
+    {{- if .Values.eventListener.triggers.bitbucket.enabled }}
+    - triggerRef: bitbucket-push
+    {{- end }}
+    {{- if .Values.eventListener.triggers.azuredevops.enabled }}
+    - triggerRef: azuredevops-push
+    {{- end }}
+  resources:
+    kubernetesResource:
+      spec:
+        template:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    cpu: 50m
+                    memory: 64Mi
+                  limits:
+                    cpu: 200m
+                    memory: 256Mi
+{{- end }}

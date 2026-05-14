@@ -1,0 +1,5 @@
+apiVersion: v2
+name: middleware
+version: 1.0.0
+description: Generic Traefik Middleware chart (basicAuth, etc.)
+type: application

@@ -1,0 +1,44 @@
+# Manual PipelineRun example. Copy, edit `params:` for your repo + image, then:
+#
+#   kubectl -n image-builder apply -f pipelinerun-manual.yaml
+#   tkn -n image-builder pipelinerun logs -L -f
+#
+# For repeat builds, prefer the EventListener webhook — this file is only for
+# initial verification / debugging.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: build-manual-
+  namespace: image-builder
+spec:
+  pipelineRef:
+    name: build-pipeline
+  taskRunTemplate:
+    serviceAccountName: pipeline-sa
+  params:
+    - name: git-url
+      value: git@github.com:<org>/<repo>.git
+    - name: git-revision
+      value: main
+    - name: image-name
+      value: <repo-name>             # becomes <registry>/<repo-name>:<tag>
+    - name: image-version
+      value: "0.1.0"
+    - name: containerfile
+      value: Containerfile           # path inside the cloned repo
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 10Gi
+          # storageClassName resolves to the platform default (microk8s-hostpath).
+    - name: ssh-credentials
+      secret:
+        secretName: image-builder-git-ssh
+        defaultMode: 0400
+    - name: trivy-db-cache
+      persistentVolumeClaim:
+        claimName: trivy-db-cache

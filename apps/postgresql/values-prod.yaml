@@ -1,0 +1,21 @@
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource).
+secret-store:
+
+# External Secrets configuration — Vault path for PROD
+externalSecret:
+  vaultPath: prod/app/postgresql
+
+postgresql:
+  primary:
+    # Production environment storage
+    persistence:
+      size: 50Gi
+
+    # Production environment resources
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 4Gi

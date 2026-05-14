@@ -1,0 +1,41 @@
+{{- if and .Values.eventListener.enabled .Values.eventListener.triggers.bitbucket.enabled }}
+{{- /*
+Bitbucket push event → PipelineRun.
+
+Uses Tekton's built-in `bitbucket` ClusterInterceptor which validates the
+X-Hub-Signature header (HMAC) against `image-builder-webhook-secrets.bitbucket`.
+The CEL filter matches push events on configured branches.
+*/ -}}
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: bitbucket-push
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: trigger
+    provider: bitbucket
+spec:
+  interceptors:
+    - ref:
+        name: bitbucket
+      params:
+        - name: secretRef
+          value:
+            secretName: image-builder-webhook-secrets
+            secretKey: bitbucket
+        - name: eventTypes
+          value: ["repo:push"]
+    - ref:
+        name: cel
+      params:
+        - name: filter
+          # Bitbucket payload: each push has changes[].new.name = branch.
+          value: >-
+            body.push.changes.exists(c, c.new != null && c.new.type == 'branch'
+            && c.new.name.matches('{{ .Values.eventListener.triggers.bitbucket.branchFilter }}'))
+  bindings:
+    - ref: bitbucket-binding
+  template:
+    ref: image-build
+{{- end }}

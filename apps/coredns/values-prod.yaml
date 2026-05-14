@@ -1,0 +1,2 @@
+# PROD-specific coredns overrides — none today. Rewrites are declared in
+# values-common.yaml; vault.<env>.<domain> is composed from platform globals.

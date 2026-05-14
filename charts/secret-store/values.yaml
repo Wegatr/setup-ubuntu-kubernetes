@@ -1,0 +1,32 @@
+# Defaults for secret-store.
+# Apps enable this chart as a dependency; the Vault URL (env-specific) is
+# supplied by each app's values-{test,prod}.yaml.
+
+enabled: true
+
+# Name and namespace of the rendered SecretStore CR. Namespace defaults to
+# the app's release namespace, which is the intended behaviour.
+name: vault-backend
+
+# Vault provider configuration. `vaultUrl` MUST be provided by the app's
+# values-{test,prod}.yaml — it differs per environment:
+#   TEST: https://vault.<env>.<domain>
+#   PROD: https://vault.<env>.<domain>
+vaultUrl: ""
+vaultNamespace: vault
+kvPath: secret
+kvVersion: v2
+
+# Optional base64-encoded PEM CA bundle for Vault. Empty by default because
+# Vault uses a publicly-trusted Let's Encrypt certificate; the in-cluster
+# trust store already validates it.
+caBundle: ""
+
+# Vault's Kubernetes auth. The chart creates a local ServiceAccount
+# (named `external-secrets-sa`) in the release namespace; the namespaced
+# SecretStore references it locally. Vault's `external-secrets` role must
+# include this namespace in its `bound_service_account_namespaces` list
+# — managed in setup-gitops/setup-gitops.sh + applied via `vault write`.
+kubernetesAuthPath: kubernetes
+role: external-secrets
+serviceAccountName: external-secrets-sa

@@ -1,0 +1,67 @@
+# DBGate — unified web UI for MongoDB, Redis, and PostgreSQL.
+# Pod gets BasicAuth via Traefik middleware (public FQDN gate.<env>.<domain>).
+# All connections are baked in via env vars → zero-click UX after login.
+# All connection passwords are pulled from Vault via ExternalSecret (vault-backend SecretStore).
+app:
+  image:
+    repository: dbgate/dbgate
+    tag: "7.1.9"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  containerPort: 3000
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 3000
+  # DBGate data dir — persists saved queries / last-opened tabs across pod restarts.
+  volumeMounts:
+    - name: dbgate-data
+      mountPath: /root/.dbgate
+  volumes:
+    - name: dbgate-data
+      persistentVolumeClaim:
+        claimName: dbgate-data
+  # Probes — DBGate root path returns 200 when up.
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 15
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+pvc:
+  pvc:
+    enabled: true
+    name: dbgate-data
+    # storageClassName omitted — falls back to .Values.global.storageClass
+    # (platform/values-common.yaml: microk8s-hostpath).
+    accessModes:
+      - ReadWriteOnce
+    storageSize: "1Gi"
+
+# Ingress — env-derived hostname, Service name, and TLS Secret name composed
+# from .Values.global.env + .Values.global.domain via Helm `tpl`. The ingress
+# chart's templates apply tpl to `host`, `paths[].serviceName`, and
+# `tls.secretName` — see charts/ingress/templates/ingress.yaml.
+# cert-manager.io/cluster-issuer is auto-applied from .Values.global.clusterIssuer.
+ingress:
+  ingress:
+    enabled: true
+    className: public
+    annotations:
+      traefik.ingress.kubernetes.io/router.middlewares: dbgate-basic-auth@kubernetescrd
+    host: 'gate.{{ .Values.global.env }}.{{ .Values.global.domain }}'
+    paths:
+      - path: /
+        pathType: Prefix
+        serviceName: 'dbgate-{{ .Values.global.env }}-app'
+        servicePort: 3000
+    tls:
+      enabled: true
+      secretName: 'dbgate-{{ .Values.global.env }}-tls'

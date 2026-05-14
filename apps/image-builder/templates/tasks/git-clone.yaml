@@ -1,0 +1,94 @@
+{{- /*
+git-clone — clones a source repo over SSH using a deploy key mounted from
+the ssh-credentials workspace. Adapted from tektoncd/catalog git-clone v0.9
+(MIT licensed), simplified for our single use case (SSH only, no submodules
+auto-init by default, no LFS — add params if needed later).
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: git-clone
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: task
+spec:
+  description: >-
+    Clone a Git repo over SSH into the `source` workspace. Honors a single
+    revision (branch / tag / commit SHA). Emits the resolved commit SHA as
+    a result for downstream tasks (image tag, OCI labels).
+  workspaces:
+    - name: source
+      description: Output workspace — the cloned repo lands here.
+    - name: ssh-credentials
+      description: Mounts files `id_rsa` and `known_hosts` for SSH auth.
+      mountPath: /workspace/ssh
+  params:
+    - name: url
+      description: SSH git URL (e.g. git@github.com:org/repo.git).
+      type: string
+    - name: revision
+      description: Branch / tag / commit SHA to check out.
+      type: string
+      default: main
+    - name: depth
+      description: Shallow clone depth (0 = full clone).
+      type: string
+      default: "1"
+    - name: subdirectory
+      description: Subdirectory inside the workspace to clone into.
+      type: string
+      default: ""
+  results:
+    - name: commit
+      description: Resolved commit SHA.
+    - name: url
+      description: Repository URL (echoed back for downstream tasks).
+  steps:
+    - name: clone
+      image: alpine/git:2.45.2
+      env:
+        - name: GIT_SSH_COMMAND
+          value: "ssh -i /workspace/ssh/id_rsa -o UserKnownHostsFile=/workspace/ssh/known_hosts -o StrictHostKeyChecking=yes"
+        - name: HOME
+          value: /workspace/source
+      workingDir: /workspace/source
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        # Tekton mounts the ssh Secret files mode-0644. SSH refuses to use a
+        # private key with world-readable permissions, so copy + chmod first.
+        mkdir -p /tmp/ssh
+        cp /workspace/ssh/id_rsa /tmp/ssh/id_rsa
+        cp /workspace/ssh/known_hosts /tmp/ssh/known_hosts
+        chmod 600 /tmp/ssh/id_rsa
+        export GIT_SSH_COMMAND="ssh -i /tmp/ssh/id_rsa -o UserKnownHostsFile=/tmp/ssh/known_hosts -o StrictHostKeyChecking=yes"
+
+        TARGET="/workspace/source$( [ -n "$(params.subdirectory)" ] && echo /$(params.subdirectory) )"
+        mkdir -p "$TARGET"
+        cd "$TARGET"
+
+        if [ "$(params.depth)" != "0" ]; then
+          DEPTH_FLAG="--depth=$(params.depth)"
+        else
+          DEPTH_FLAG=""
+        fi
+
+        git init
+        git remote add origin "$(params.url)"
+        # shellcheck disable=SC2086
+        git fetch $DEPTH_FLAG origin "$(params.revision)"
+        git checkout FETCH_HEAD
+
+        RESOLVED_SHA="$(git rev-parse HEAD)"
+        echo "Cloned $(params.url)@$(params.revision) -> $RESOLVED_SHA"
+        printf "%s" "$RESOLVED_SHA" > $(results.commit.path)
+        printf "%s" "$(params.url)" > $(results.url.path)
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi

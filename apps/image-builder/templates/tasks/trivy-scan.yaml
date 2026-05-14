@@ -1,0 +1,77 @@
+{{- /*
+trivy-scan — scans the just-built image by digest. Fails the PipelineRun if
+any HIGH or CRITICAL vulnerability is found. Honors `.trivyignore` from the
+source workspace so per-app waivers travel with the code.
+
+The vulnerability DB lives on a PVC (workspace `trivy-db-cache`) to avoid
+re-downloading ~600MB on every run. The DB self-updates every 6h.
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: trivy-scan
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: task
+spec:
+  description: Scan an image with Trivy; fail on HIGH/CRITICAL.
+  workspaces:
+    - name: source
+      description: Used only to read an optional .trivyignore.
+    - name: trivy-db-cache
+      description: PVC-backed cache for the vulnerability DB.
+      mountPath: /trivy-cache
+  params:
+    - name: image-reference
+      description: Full image reference (registry/name:tag) to scan.
+      type: string
+    - name: image-digest
+      description: Image digest (sha256:...). Used to ensure scan-by-digest.
+      type: string
+    - name: severity
+      description: Comma-separated severity levels to fail on.
+      type: string
+      default: HIGH,CRITICAL
+    - name: registry
+      description: Registry hostname:port (passed for --tls-verify and insecure flag).
+      type: string
+      default: {{ .Values.pipeline.registry | quote }}
+  steps:
+    - name: scan
+      image: aquasec/trivy:0.59.1
+      env:
+        - name: TRIVY_CACHE_DIR
+          value: /trivy-cache
+        - name: TRIVY_NO_PROGRESS
+          value: "true"
+      workingDir: /workspace/source
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        TARGET="$(params.image-reference)@$(params.image-digest)"
+
+        # Pass --trivyignores only if the file exists in the source workspace.
+        TRIVYIGNORE_FLAG=""
+        if [ -f /workspace/source/.trivyignore ]; then
+          TRIVYIGNORE_FLAG="--ignorefile /workspace/source/.trivyignore"
+        fi
+
+        echo "Scanning $TARGET (severity=$(params.severity))"
+        # shellcheck disable=SC2086
+        trivy image \
+          --insecure \
+          --severity "$(params.severity)" \
+          --exit-code 1 \
+          --ignore-unfixed \
+          $TRIVYIGNORE_FLAG \
+          --format table \
+          "$TARGET"
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1
+          memory: 2Gi

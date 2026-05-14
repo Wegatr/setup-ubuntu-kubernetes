@@ -1,0 +1,8 @@
+# DEV-specific platform globals.
+# Merged with platform/values-common.yaml by every Application via $values ref.
+global:
+  env: dev
+  # Vault public URL — kept explicit per env (derivable from domain+env, but
+  # documenting asymmetric cases like prod's bare mail.<domain> needs explicit
+  # per-env values anyway).
+  vaultUrl: https://vault.dev.digitaplatform.com:8200

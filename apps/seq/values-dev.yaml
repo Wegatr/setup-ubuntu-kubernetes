@@ -1,0 +1,47 @@
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource).
+secret-store:
+
+# External Secrets configuration
+externalSecret:
+  enabled: true
+  name: seq-credentials
+  namespace: seq
+  secretStoreKind: SecretStore
+  targetSecretName: seq-credentials
+  vaultPath: dev/app/seq
+  data:
+    - secretKey: admin-password
+      property: admin-password
+    - secretKey: api-key
+      property: api-key
+
+seq:
+  # Dev environment storage
+  persistence:
+    size: 50Gi
+
+  # Dev environment resources
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: 1
+      memory: 4Gi
+
+  # Ingress - UI hosts and enable
+  ui:
+    ingress:
+      enabled: true
+      hosts:
+        - log.dev.digitaplatform.com
+
+  # Ingress - global annotations, className and TLS
+  ingress:
+    className: public
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-ci
+    tls:
+      - secretName: seq-dev-tls
+        hosts:
+          - log.dev.digitaplatform.com

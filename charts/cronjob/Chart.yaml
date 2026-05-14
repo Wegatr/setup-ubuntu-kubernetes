@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cronjob
+version: 1.0.0
+description: Generic CronJob chart for scheduled container jobs
+type: application

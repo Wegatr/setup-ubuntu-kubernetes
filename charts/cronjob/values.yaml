@@ -1,0 +1,32 @@
+cronjob:
+  enabled: true
+  schedule: "0 0 * * *"
+  suspend: false
+  concurrencyPolicy: Allow
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  restartPolicy: Never
+
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+command: []
+args: []
+
+env: []
+extraEnv: []
+
+initContainers: []
+
+volumeMounts: []
+volumes: []
+
+resources: {}
+
+imagePullSecrets: []
+
+serviceAccountName: ""

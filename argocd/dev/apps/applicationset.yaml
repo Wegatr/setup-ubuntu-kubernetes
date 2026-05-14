@@ -1,0 +1,168 @@
+# ApplicationSet — generates one ArgoCD Application per app for the DEV cluster.
+# Replaces the per-app Application files that used to live in this directory.
+# RepoURL and targetRevision live HERE (one place), no longer duplicated 8×.
+#
+# Bootstrap: argocd/dev/root-app.yaml syncs this directory; ArgoCD creates the
+# ApplicationSet; the applicationset-controller materializes the 8 Applications.
+#
+# To add a new app: append an entry to `generators[0].list.elements` below.
+# To change the repo / branch globally for this env: edit the two literals in
+# the `sources:` template once. All 8 generated Applications follow.
+#
+# Per-app conditional fields (syncPolicy.syncOptions extras, ignoreDifferences)
+# live in `templatePatch:` further down. That field is a YAML string, so the
+# linter doesn't try to parse the Go template directives inside it.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform-apps-dev
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+
+  generators:
+    - list:
+        elements:
+          # Wave 3 — Tekton operator + CRDs. Must exist before image-builder
+          # (wave 25) creates Pipelines / Tasks / EventListeners.
+          - name: tekton
+            syncWave: "3"
+            namespace: tekton-pipelines
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          # Wave 5 — DNS must resolve before any ESO/SecretStore tries Vault.
+          - name: coredns
+            syncWave: "5"
+            namespace: kube-system
+            prune: "false"
+            createNamespace: "false"
+            specialOptions: ""
+
+          # Wave 10 — Core data stores. Independent peers.
+          - name: mongodb
+            syncWave: "10"
+            namespace: mongodb
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: postgresql
+            syncWave: "10"
+            namespace: postgresql
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          # Wave 20 — Adjacent platform services.
+          - name: postfix
+            syncWave: "20"
+            namespace: postfix
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: redis
+            syncWave: "20"
+            namespace: redis
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: seq
+            syncWave: "20"
+            namespace: seq
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          # Wave 25 — image-build pipeline. Runs after wave-20 services
+          # (postfix / redis / seq) so the build pipeline has email +
+          # logging available; before wave-30 UIs that may consume newly-
+          # built images.
+          - name: image-builder
+            syncWave: "25"
+            namespace: image-builder
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          # Wave 30 — UIs + observability stack.
+          - name: dbgate
+            syncWave: "30"
+            namespace: dbgate
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          # observability triggers extra patch (ignoreDifferences + ServerSideApply)
+          # in templatePatch below.
+          - name: observability
+            syncWave: "30"
+            namespace: observability
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: "observability"
+
+  template:
+    metadata:
+      name: "{{ .name }}-dev"
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: "{{ .syncWave }}"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      sources:
+        # Values-only source: makes `$values/...` resolvable inside the chart
+        # source's helm.valueFiles list below. The `&repo` / `&branch` YAML
+        # anchors let the chart source below reuse the same literal — one
+        # source of truth per env, no duplication.
+        - repoURL: &repo "https://github.com/<github-account>/<github-repo>.git"
+          targetRevision: &branch master
+          ref: values
+        # Chart source — references the anchors above.
+        - repoURL: *repo
+          targetRevision: *branch
+          path: "apps/{{ .name }}"
+          helm:
+            valueFiles:
+              - $values/platform/values-common.yaml
+              - $values/platform/values-dev.yaml
+              - values-common.yaml
+              - values-dev.yaml
+      destination:
+        server: "https://kubernetes.default.svc"
+        namespace: "{{ .namespace }}"
+
+  # All per-app conditional logic lives here, inside a YAML block scalar (|).
+  # The linter doesn't parse Go template directives inside string values, so
+  # this stays free of "Implicit map key" / "Block collection in flow"
+  # warnings. ArgoCD's applicationset-controller renders this and strategic-
+  # merges the result onto the template above.
+  templatePatch: |
+    spec:
+      syncPolicy:
+        automated:
+          prune: {{ .prune }}
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace={{ .createNamespace }}
+          {{- if eq .specialOptions "observability" }}
+          - ServerSideApply=true
+          {{- end }}
+      {{- if eq .specialOptions "observability" }}
+      ignoreDifferences:
+        - group: apps
+          kind: StatefulSet
+          jsonPointers:
+            - /spec/volumeClaimTemplates
+        - group: apps
+          kind: Deployment
+          jqPathExpressions:
+            - '.spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor'
+      {{- end }}

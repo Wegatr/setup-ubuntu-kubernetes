@@ -1,0 +1,11 @@
+apiVersion: v2
+name: seq
+version: 1.0.0
+description: Seq logging application
+dependencies:
+  - name: seq
+    version: 2025.2.2
+    repository: https://helm.datalust.co
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store

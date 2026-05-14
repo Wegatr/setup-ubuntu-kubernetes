@@ -1,0 +1,18 @@
+seq:
+  # Accept EULA
+  acceptEULA: "Y"
+
+  # Admin password from ExternalSecret-managed k8s secret
+  firstRunAdminPasswordSecret:
+    name: seq-credentials
+    key: admin-password
+
+  # Persistence configuration
+  persistence:
+    enabled: true
+    accessMode: ReadWriteOnce
+    path: /data
+
+  # Service configuration
+  service:
+    type: ClusterIP

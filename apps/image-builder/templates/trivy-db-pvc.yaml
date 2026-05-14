@@ -1,0 +1,23 @@
+{{- if .Values.trivyDbCache.enabled }}
+{{- /*
+Persists the Trivy vulnerability database (~600MB) across PipelineRuns.
+Without this, every run re-downloads from ghcr.io/aquasecurity/trivy-db
+which adds ~30s per scan and creates registry rate-limit risk.
+
+storageClassName defaults to .Values.global.storageClass via
+charts/pvc/templates/pvc.yaml — but we don't use that chart here (no
+generic-deployment dep needed), so we inline the same fallback.
+*/ -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trivy-db-cache
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.workspaces.trivyDbCacheSize | quote }}
+{{- end }}

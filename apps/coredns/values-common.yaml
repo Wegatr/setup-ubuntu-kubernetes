@@ -1,0 +1,7 @@
+# DNS rewrites applied to every env. The `from` hostname is composed at chart
+# render time from .Values.global.env + .Values.global.domain (Helm `tpl`),
+# so changing the platform domain in platform/values-common.yaml propagates
+# automatically to every env's rewrite list.
+rewrites:
+  - from: 'vault.{{ .Values.global.env }}.{{ .Values.global.domain }}'
+    to: vault.vault.svc.cluster.local

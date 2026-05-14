@@ -1,0 +1,48 @@
+{{- /*
+Owns kube-system/coredns. The base Corefile mirrors what the MicroK8s `dns`
+addon installs out of the box; the only differentiator is the per-env
+`rewrite name ...` rules that come from `.Values.rewrites`.
+
+The `reload` plugin already in the Corefile makes CoreDNS auto-detect this
+ConfigMap change and re-parse — no Deployment rollout needed. If
+`microk8s enable dns` is re-run later it will overwrite this; ArgoCD
+selfHeal restores it.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+  labels:
+    k8s-app: kube-dns
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+          lameduck 5s
+        }
+        ready
+        log . {
+          class error
+        }
+        {{- /*
+        Rewrites: `.from` is evaluated as a Go template (Helm `tpl`) so values
+        can reference .Values.global.env and .Values.global.domain — composing
+        per-env public hostnames from a single source of truth in
+        platform/values-{common,env}.yaml.
+        */}}
+        {{- range .Values.rewrites }}
+        rewrite name {{ tpl .from $ }} {{ .to }}
+        {{- end }}
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+          pods insecure
+          fallthrough in-addr.arpa ip6.arpa
+        }
+        prometheus :9153
+        forward . /etc/resolv.conf
+        cache 30
+        loop
+        reload
+        loadbalance
+    }

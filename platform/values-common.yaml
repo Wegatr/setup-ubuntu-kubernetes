@@ -1,0 +1,54 @@
+# Platform-wide constants shared across DEV / TEST / PROD.
+# Loaded by every app's ArgoCD Application via the `$values` ref source:
+#
+#   spec:
+#     sources:
+#       - repoURL: <repo>
+#         targetRevision: <branch>
+#         ref: values
+#       - repoURL: <repo>
+#         path: apps/<app>
+#         helm:
+#           valueFiles:
+#             - $values/platform/values-common.yaml   # ← this file
+#             - $values/platform/values-<env>.yaml
+#             - values-common.yaml
+#             - values-<env>.yaml
+#
+# Helm's built-in `global:` convention propagates these keys to every subchart
+# automatically. Templates reference them as `{{ .Values.global.<key> }}`.
+#
+# Per-env overrides live in values-{dev,test,prod}.yaml alongside this file.
+global:
+  # Public apex domain for all platform hostnames.
+  # Used in: ingress hosts (gate.<env>.<domain>, grafana.<env>.<domain>,
+  # log.<env>.<domain>), Vault URLs (vault.<env>.<domain>), Postfix mail
+  # (mail.<env>.<domain> — prod uses bare mail.<domain>, see values-prod.yaml),
+  # Alertmanager smtp_from + email body templates, CoreDNS rewrite source side.
+  domain: digitaplatform.com
+
+  # Timezone applied to MongoDB, PostgreSQL, and Postfix containers via their
+  # respective TZ env vars. Single source of truth — flipping this here flips
+  # the timezone everywhere. Resolves the prior Europe/Amsterdam vs
+  # Europe/Berlin inconsistency.
+  timezone: Europe/Amsterdam
+
+  # StorageClass for PersistentVolumeClaims. Our own `charts/pvc/` chart reads
+  # this; upstream charts (Bitnami, kube-prometheus-stack, loki, tempo) still
+  # have it hardcoded in their per-app values blocks for now — those would
+  # need invasive wrapper templates to fully dedupe. See plan note on Step 3.
+  storageClass: microk8s-hostpath
+
+  # cert-manager ClusterIssuer used by every public Ingress for LE certs.
+  clusterIssuer: letsencrypt-ci
+
+  # Name of the per-namespace ESO SecretStore that every app's ExternalSecret
+  # references. The actual SecretStore is rendered by the local `secret-store`
+  # chart dep in each app's namespace; this is just the consistent name.
+  secretStoreName: vault-backend
+
+  # Default Alertmanager recipients — catches all alerts not routed to an
+  # app-specific AlertmanagerConfig CR. Add per-team mailboxes in app values
+  # under `monitoring.alertmanagerConfigs.<name>.emails`.
+  alertRecipients:
+    - kartalbas@gmail.com

@@ -1,0 +1,68 @@
+{{- if .Values.cronjob.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "cronjob.fullname" . }}
+  labels:
+    {{- include "cronjob.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  suspend: {{ .Values.cronjob.suspend }}
+  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.cronjob.backoffLimit }}
+      ttlSecondsAfterFinished: {{ .Values.cronjob.ttlSecondsAfterFinished }}
+      template:
+        metadata:
+          labels:
+            {{- include "cronjob.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: {{ .Values.cronjob.restartPolicy }}
+          {{- if .Values.serviceAccountName }}
+          serviceAccountName: {{ .Values.serviceAccountName }}
+          {{- end }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.initContainers }}
+          initContainers:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: {{ include "cronjob.name" . }}
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              {{- with .Values.command }}
+              command:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              {{- with .Values.args }}
+              args:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              {{- if or .Values.env .Values.extraEnv }}
+              env:
+                {{- with .Values.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+                {{- with .Values.extraEnv }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              {{- end }}
+              {{- with .Values.volumeMounts }}
+              volumeMounts:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              {{- with .Values.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+          {{- with .Values.volumes }}
+          volumes:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

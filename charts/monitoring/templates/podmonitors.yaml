@@ -1,0 +1,29 @@
+{{- /*
+Emit one PodMonitor per entry under .Values.podMonitors. Same shape as
+servicemonitors.yaml but with podMetricsEndpoints. Use a PodMonitor when the
+metrics port exists on the pod but not on any Service (e.g. Traefik :9100,
+ArgoCD's per-component metrics ports).
+*/ -}}
+{{- range $name, $cfg := .Values.podMonitors }}
+{{- if $cfg.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $name }}
+  namespace: {{ default $.Release.Namespace $cfg.namespace }}
+  labels:
+    release: {{ $.Values.prometheusReleaseLabel }}
+spec:
+  {{- with $cfg.namespaces }}
+  namespaceSelector:
+    matchNames: {{ toYaml . | nindent 6 }}
+  {{- end }}
+  selector:
+    matchLabels: {{ toYaml $cfg.matchLabels | nindent 6 }}
+    {{- with $cfg.matchExpressions }}
+    matchExpressions: {{ toYaml . | nindent 6 }}
+    {{- end }}
+  podMetricsEndpoints: {{ toYaml $cfg.podMetricsEndpoints | nindent 4 }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,134 @@
+# ApplicationSet — generates one ArgoCD Application per app for the PROD cluster.
+# Replaces the per-app Application files that used to live in this directory.
+# RepoURL and targetRevision live HERE (one place), no longer duplicated 8×.
+#
+# Bootstrap: argocd/prod/root-app.yaml syncs this directory; ArgoCD creates the
+# ApplicationSet; the applicationset-controller materializes the 8 Applications.
+#
+# To add a new app: append an entry to `generators[0].list.elements` below.
+# To change the repo / branch globally for this env: edit the two literals in
+# the `sources:` template once. All 8 generated Applications follow.
+#
+# Per-app conditional fields (syncPolicy.syncOptions extras, ignoreDifferences)
+# live in `templatePatch:` further down. That field is a YAML string, so the
+# linter doesn't try to parse the Go template directives inside it.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform-apps-prod
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+
+  generators:
+    - list:
+        elements:
+          - name: coredns
+            syncWave: "5"
+            namespace: kube-system
+            prune: "false"
+            createNamespace: "false"
+            specialOptions: ""
+
+          - name: mongodb
+            syncWave: "10"
+            namespace: mongodb
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: postgresql
+            syncWave: "10"
+            namespace: postgresql
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: postfix
+            syncWave: "20"
+            namespace: postfix
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: redis
+            syncWave: "20"
+            namespace: redis
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: seq
+            syncWave: "20"
+            namespace: seq
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: dbgate
+            syncWave: "30"
+            namespace: dbgate
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: observability
+            syncWave: "30"
+            namespace: observability
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: "observability"
+
+  template:
+    metadata:
+      name: "{{ .name }}-prod"
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: "{{ .syncWave }}"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      sources:
+        # `&repo` / `&branch` anchors are reused by the second source below —
+        # the repo URL literal appears once per ApplicationSet.
+        - repoURL: &repo "https://github.com/<github-account>/<github-repo>.git"
+          targetRevision: &branch master
+          ref: values
+        - repoURL: *repo
+          targetRevision: *branch
+          path: "apps/{{ .name }}"
+          helm:
+            valueFiles:
+              - $values/platform/values-common.yaml
+              - $values/platform/values-prod.yaml
+              - values-common.yaml
+              - values-prod.yaml
+      destination:
+        server: "https://kubernetes.default.svc"
+        namespace: "{{ .namespace }}"
+
+  templatePatch: |
+    spec:
+      syncPolicy:
+        automated:
+          prune: {{ .prune }}
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace={{ .createNamespace }}
+          {{- if eq .specialOptions "observability" }}
+          - ServerSideApply=true
+          {{- end }}
+      {{- if eq .specialOptions "observability" }}
+      ignoreDifferences:
+        - group: apps
+          kind: StatefulSet
+          jsonPointers:
+            - /spec/volumeClaimTemplates
+        - group: apps
+          kind: Deployment
+          jqPathExpressions:
+            - '.spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor'
+      {{- end }}

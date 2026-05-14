@@ -1,0 +1,15 @@
+# Patterns to ignore when building the chart package and when Helm renders.
+# Default Helm ignores (VCS, OS files):
+.git/
+.gitignore
+.DS_Store
+*.tmp
+*.bak
+
+# Reference material — copy-paste sources for users, not chart templates.
+# These exist so a new app can be onboarded without inventing PipelineRun YAML
+# from scratch.
+examples/
+
+# Top-level README is documentation, not a template.
+README.md

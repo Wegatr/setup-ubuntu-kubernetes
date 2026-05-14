@@ -1,0 +1,14 @@
+apiVersion: v2
+name: tekton
+version: 1.0.0
+description: Tekton Pipelines + Tekton Triggers — installs the operators and CRDs that apps/image-builder/ depends on. See README.md for the install path (upstream release YAML is the source of truth; community Helm charts lag releases).
+type: application
+
+dependencies:
+  # The monitoring dep gives us ServiceMonitor + PrometheusRule emission for
+  # the Tekton controllers' :9090/metrics endpoints. Tekton itself is installed
+  # via the templates/ raw manifests (see templates/release-pipelines.yaml +
+  # release-triggers.yaml).
+  - name: monitoring
+    version: 2.0.0
+    repository: file://../../charts/monitoring

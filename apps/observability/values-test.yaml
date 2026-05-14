@@ -1,0 +1,227 @@
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource).
+secret-store:
+
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 1Gi
+        limits:
+          cpu: 1
+          memory: 4Gi
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 30Gi
+
+  alertmanager:
+    alertmanagerSpec:
+      storage:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 2Gi
+      # Discover AlertmanagerConfig CRs cluster-wide so per-app email-routing
+      # rules emitted by the monitoring chart (apps/<x>/values.monitoring.
+      # alertmanagerConfigs) actually take effect. Without these selectors,
+      # kube-prometheus-stack ignores AlertmanagerConfig CRs entirely.
+      alertmanagerConfigSelector: {}
+      alertmanagerConfigNamespaceSelector: {}
+      # Stop the operator from auto-injecting a `namespace=<ns>` matcher into
+      # each AlertmanagerConfig's route — let the config's own matchers fully
+      # control scope.
+      alertmanagerConfigMatcherStrategy:
+        type: None
+    # Custom email template (mounted as a Secret by the chart). Provides a
+    # human-readable subject and a plain-text body that lists severity,
+    # summary, description, all labels, and quick Grafana links per alert.
+    templateFiles:
+      alert.tmpl: |-
+        {{- define "alert.subject" -}}
+        [{{ if eq .Status "resolved" }}RESOLVED{{ else }}{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}{{ end }} | TEST] {{ if .CommonLabels.severity }}{{ .CommonLabels.severity | toUpper }}{{ else }}-{{ end }} {{ .CommonLabels.alertname }}{{ with .CommonLabels.namespace }} — {{ . }}{{ end }}{{ with .CommonLabels.pod }}/{{ . }}{{ end }}
+        {{- end -}}
+
+        {{- /* Loki Explore URL — namespace filter, last-3h time window.
+               Pod filter intentionally omitted: many alerts fire on Pending
+               or crashed pods that produced no logs; namespace scope shows
+               sibling-pod logs too which usually has the context.
+
+               Datasource is passed as {type,uid} object — Grafana 10+ Explore
+               silently shows "no data" when the legacy "datasource":"<name>"
+               string form doesn't resolve to a UID. Our Loki UID is "loki". */ -}}
+        {{- define "alert.loki_url" -}}
+        https://grafana.test.digitaplatform.com/explore?orgId=1&left=%7B%22datasource%22:%7B%22type%22:%22loki%22,%22uid%22:%22loki%22%7D,%22queries%22:%5B%7B%22refId%22:%22A%22,%22datasource%22:%7B%22type%22:%22loki%22,%22uid%22:%22loki%22%7D,%22expr%22:%22%7Bnamespace%3D%5C%22{{ .Labels.namespace }}%5C%22%7D%22%7D%5D,%22range%22:%7B%22from%22:%22now-3h%22,%22to%22:%22now%22%7D%7D
+        {{- end -}}
+
+        {{- /* Use the plain /alerting/list and /alerting/silences pages —
+               their deep-link parameters change across Grafana minor
+               versions and break frequently. The user clicks "New
+               silence" / filters the list manually from there. */ -}}
+        {{- define "alert.alert_url" -}}
+        https://grafana.test.digitaplatform.com/alerting/list
+        {{- end -}}
+
+        {{- define "alert.silence_url" -}}
+        https://grafana.test.digitaplatform.com/alerting/silences
+        {{- end -}}
+
+        {{- define "alert.text" -}}
+        =====================================================================
+         {{ .Status | toUpper }}{{ if .Alerts.Firing }}  |  {{ .Alerts.Firing | len }} firing{{ end }}{{ if .Alerts.Resolved }}  |  {{ .Alerts.Resolved | len }} resolved{{ end }}  |  TEST cluster
+        =====================================================================
+        {{ range .Alerts }}
+        --- {{ if .Labels.severity }}{{ .Labels.severity | toUpper }}{{ else }}?{{ end }} | {{ .Labels.alertname }} ---
+        Status:      {{ .Status | toUpper }}
+        Started:     {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}
+        {{- if eq .Status "resolved" }}
+        Ended:       {{ .EndsAt.Format "2006-01-02 15:04:05 MST" }}
+        {{- end }}
+
+        Summary:     {{ if .Annotations.summary }}{{ .Annotations.summary }}{{ else }}(no summary annotation set on the alert rule){{ end }}
+        {{- with .Annotations.description }}
+        Description: {{ . }}
+        {{- end }}
+        {{- with .Annotations.runbook_url }}
+        Runbook:     {{ . }}
+        {{- end }}
+
+        Labels:
+        {{- range $k, $v := .Labels }}
+          {{ $k }} = {{ $v }}
+        {{- end }}
+
+        Quick actions:
+        {{- if .Labels.namespace }}
+          Logs in Grafana:  {{ template "alert.loki_url" . }}
+        {{- end }}
+          Alert details:    {{ template "alert.alert_url" . }}
+          Create silence:   {{ template "alert.silence_url" . }}
+
+        {{ end }}
+        ---------------------------------------------------------------------
+        Sent by Alertmanager — kube-prometheus-stack on TEST.
+        Tune noisy rules by editing the corresponding PrometheusRule, or
+        create a silence to suppress for a fixed window.
+        {{- end -}}
+
+        {{- define "alert.html" -}}
+        <!DOCTYPE html>
+        <html><head><meta charset="utf-8"><title>{{ .Status | toUpper }} — {{ .CommonLabels.alertname }}</title></head>
+        <body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1f2937;max-width:760px;margin:0 auto;padding:16px;">
+        <h2 style="margin:0 0 4px 0;">{{ .Status | toUpper }}{{ if .Alerts.Firing }} — {{ .Alerts.Firing | len }} firing{{ end }}{{ if .Alerts.Resolved }} — {{ .Alerts.Resolved | len }} resolved{{ end }}</h2>
+        <p style="margin:0 0 16px 0;color:#6b7280;font-size:13px;">TEST cluster{{ range .GroupLabels.SortedPairs }} · {{ .Name }}={{ .Value }}{{ end }}</p>
+        {{ range .Alerts -}}
+        {{- /* Resolved overrides severity colour with green so RESOLVED
+               emails are immediately distinguishable at a glance. */ -}}
+        {{- $accent := "#3b82f6" -}}
+        {{- if eq .Labels.severity "critical" }}{{ $accent = "#dc2626" }}{{ end -}}
+        {{- if eq .Labels.severity "warning"  }}{{ $accent = "#f59e0b" }}{{ end -}}
+        {{- if eq .Status "resolved"          }}{{ $accent = "#16a34a" }}{{ end -}}
+        <div style="border-left:4px solid {{ $accent }};padding:8px 14px;margin-bottom:18px;background:#f9fafb;">
+          <h3 style="margin:0 0 8px 0;font-size:16px;">
+            <span style="display:inline-block;background:{{ $accent }};color:#fff;padding:1px 6px;border-radius:3px;font-size:11px;letter-spacing:0.5px;">{{ if eq .Status "resolved" }}✅ RESOLVED{{ else }}{{ if .Labels.severity }}{{ .Labels.severity | toUpper }}{{ else }}?{{ end }}{{ end }}</span>
+            &nbsp;{{ .Labels.alertname }}
+            {{- with .Labels.namespace }} <span style="color:#6b7280;font-weight:normal;">— {{ . }}</span>{{ end }}
+            {{- with .Labels.pod }}<span style="color:#6b7280;font-weight:normal;">/{{ . }}</span>{{ end }}
+          </h3>
+          <p style="margin:0 0 6px 0;"><strong>Summary:</strong> {{ if .Annotations.summary }}{{ .Annotations.summary }}{{ else }}(none){{ end }}</p>
+          {{- with .Annotations.description }}<p style="margin:0 0 6px 0;"><strong>Description:</strong> {{ . }}</p>{{ end }}
+          <p style="margin:0 0 10px 0;color:#6b7280;font-size:13px;">
+            {{ .Status | toUpper }} since {{ .StartsAt.Format "2006-01-02 15:04 MST" }}
+            {{- if eq .Status "resolved" }} · ended {{ .EndsAt.Format "2006-01-02 15:04 MST" }}{{ end }}
+            {{- with .Annotations.runbook_url }} · <a href="{{ . }}" style="color:#2563eb;">runbook</a>{{ end }}
+          </p>
+          <details style="margin:6px 0;"><summary style="cursor:pointer;color:#6b7280;font-size:12px;">Labels</summary>
+          <table style="border-collapse:collapse;font-size:12px;margin-top:6px;">
+          {{- range $k, $v := .Labels }}
+            <tr><td style="padding:1px 10px 1px 0;color:#6b7280;"><code>{{ $k }}</code></td><td style="padding:1px 0;"><code>{{ $v }}</code></td></tr>
+          {{- end }}
+          </table>
+          </details>
+          <p style="margin:10px 0 0 0;font-size:13px;">
+            {{- if .Labels.namespace }}<a href="{{ template "alert.loki_url" . }}" style="color:#2563eb;text-decoration:none;margin-right:14px;">📋 Logs in Grafana</a>{{ end }}
+            <a href="{{ template "alert.alert_url" . }}" style="color:#2563eb;text-decoration:none;margin-right:14px;">🔔 Alert details</a>
+            <a href="{{ template "alert.silence_url" . }}" style="color:#2563eb;text-decoration:none;">🔕 Silence</a>
+          </p>
+        </div>
+        {{ end }}
+        <p style="color:#9ca3af;font-size:11px;margin-top:24px;">Alertmanager · kube-prometheus-stack · TEST cluster</p>
+        </body></html>
+        {{- end -}}
+
+    config:
+      # kube-prometheus-stack runs Helm `tpl` on this entire config block —
+      # template expressions inside string values are resolved at render time.
+      global:
+        smtp_from: "alertmanager-{{ .Values.global.env }}@mail.{{ .Values.global.env }}.{{ .Values.global.domain }}"
+        smtp_smarthost: "postfix-{{ .Values.global.env }}-mail.postfix.svc.cluster.local:587"
+        smtp_require_tls: false
+      # Side-channel sentinels emitted by kube-prometheus-stack to verify the
+      # pipeline is alive — they are NOT real problems. Route them straight to
+      # /dev/null so they don't pollute the inbox.
+      #
+      # Default route receiver is now "null". Actual delivery is handled by the
+      # `platform-default` AlertmanagerConfig CR (see
+      # apps/observability/values-common.yaml.monitoring.alertmanagerConfigs),
+      # whose recipients come from .Values.global.alertRecipients in
+      # platform/values-common.yaml — ONE place to change the operator mailbox.
+      route:
+        receiver: "null"
+        group_by: [alertname, namespace]
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
+        routes:
+          - matchers: ['alertname = "Watchdog"']
+            receiver: "null"
+          - matchers: ['alertname = "InfoInhibitor"']
+            receiver: "null"
+          # Cosmetic info-level noise (CPUThrottlingHigh on tiny exporter
+          # pods, etc.). Visible in Grafana but not worth an email.
+          - matchers: ['severity = "info"']
+            receiver: "null"
+      receivers:
+        - name: "null"
+
+  grafana:
+    persistence:
+      enabled: true
+      size: 5Gi
+    ingress:
+      annotations:
+        cert-manager.io/cluster-issuer: "{{ .Values.global.clusterIssuer }}"
+      hosts:
+        - grafana.test.digitaplatform.com
+      tls:
+        - secretName: grafana-test-tls
+          hosts:
+            - grafana.test.digitaplatform.com
+
+# ============================================================================
+# Loki / Tempo storage
+# ============================================================================
+loki:
+  singleBinary:
+    persistence:
+      enabled: true
+      size: 50Gi
+
+tempo:
+  persistence:
+    enabled: true
+    size: 20Gi
+
+# ============================================================================
+# Vault paths — TEST
+# ============================================================================
+grafana-admin-secret:
+  externalSecret:
+    vaultPath: test/app/observability
+

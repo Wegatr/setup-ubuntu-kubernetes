@@ -1,0 +1,134 @@
+mongodb:
+  # Architecture: ReplicaSet for transaction support
+  architecture: replicaset
+  replicaCount: 3
+  replicaSetName: rs0
+  terminationGracePeriodSeconds: 3
+
+  # Authentication. Only the root user is provisioned. Consumers create app-level
+  # users + databases at runtime (or add auth.usernames + auth.databases here —
+  # the Bitnami chart requires the two lists to be set together with equal length).
+  auth:
+    enabled: true
+    existingSecret: mongodb-credentials
+    rootUser: root
+
+  # Persistence configuration
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+
+  # PVC retention policy - keeps data when StatefulSet deleted
+  persistentVolumeClaimRetentionPolicy:
+    enabled: true
+    whenDeleted: Retain
+    whenScaled: Retain
+
+  # Disable arbiter (use 3 full replicas instead)
+  arbiter:
+    enabled: false
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    ports:
+      mongodb: 27017
+
+  # Security context
+  podSecurityContext:
+    enabled: true
+    fsGroup: 1001
+
+  containerSecurityContext:
+    enabled: true
+    runAsUser: 1001
+    runAsNonRoot: true
+
+  # Timezone — Bitnami's mongodb chart renders extraEnvVars through
+  # `common.tplvalues.render` (Helm `tpl`), so this expression resolves at
+  # chart-render time from platform/values-common.yaml.global.timezone.
+  extraEnvVars:
+    - name: TZ
+      value: '{{ .Values.global.timezone }}'
+
+# Monitoring chart — emits MongoDB alert rules. The mongodb-exporter sub-chart
+# below still emits its own ServiceMonitor (already correctly labelled
+# release: observability), so we only declare PrometheusRules here.
+monitoring:
+  prometheusRules:
+    mongodb:
+      enabled: true
+      groups:
+        - name: mongodb
+          interval: 60s
+          rules:
+            - alert: MongoDBDown
+              expr: mongodb_up == 0
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "MongoDB instance {{ $labels.instance }} is down"
+
+            - alert: MongoDBReplicationLag
+              expr: (mongodb_rs_members_optimeDate{member_state="PRIMARY"} - on(set) group_right(member_state) mongodb_rs_members_optimeDate{member_state="SECONDARY"}) > 30
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "MongoDB replication lag > 30s"
+                description: "Secondary {{ $labels.name }} lagging primary by more than 30 seconds."
+
+            - alert: MongoDBConnectionsSaturated
+              expr: mongodb_ss_connections{conn_type="current"} / (mongodb_ss_connections{conn_type="current"} + mongodb_ss_connections{conn_type="available"}) > 0.8
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "MongoDB connection pool > 80% utilised"
+
+# prometheus-mongodb-exporter subchart configuration.
+# The exporter reads the full URI from the Kubernetes Secret named below;
+# the URI is assembled by the ExternalSecret template (see exporterSecret).
+prometheus-mongodb-exporter:
+  fullnameOverride: mongodb-exporter
+  existingSecret:
+    name: mongodb-exporter-credentials
+    key: mongodb-uri
+  # Override chart default of ["--collect-all"]: that flag enables the
+  # `profile` collector, which panics on every scrape with
+  #   descriptor Desc{fqName: "collector_scrape_time_ms",
+  #     constLabels: {collector="profile"}, ...} already exists
+  # (known percona/mongodb_exporter v0.41.0 bug). Enumerate collectors
+  # explicitly, omitting `profile`.
+  extraArgs:
+    - --collector.diagnosticdata
+    - --collector.replicasetstatus
+    - --collector.dbstats
+    - --collector.topmetrics
+    - --collector.indexstats
+    - --collector.collstats
+    - --collector.currentopmetrics
+  serviceMonitor:
+    enabled: true
+    additionalLabels: { release: observability }
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# ExternalSecret that assembles the mongodb-uri (root user + password from Vault)
+# into the Kubernetes Secret consumed by prometheus-mongodb-exporter. Per-env
+# vaultPath + template.data.mongodb-uri (host name) live in values-{env}.yaml.
+exporterSecret:
+  enabled: true
+  name: mongodb-exporter-credentials
+  secretStoreKind: SecretStore
+  targetSecretName: mongodb-exporter-credentials
+  data:
+    - secretKey: password
+      property: mongodb-root-password

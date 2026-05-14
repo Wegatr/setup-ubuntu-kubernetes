@@ -1,0 +1,25 @@
+{{- /*
+Emit one PrometheusRule per entry under .Values.prometheusRules. Each entry's
+`groups:` block follows the standard Prometheus rules format and is passed
+through toYaml verbatim.
+
+Prometheus template variables ({{ $labels.foo }}, {{ $value }}) inside alert
+annotations are NOT Helm — they're Prometheus's own templating, evaluated at
+alert-fire time. They pass through unmolested because values content is data,
+not Helm-rendered. (Contrast with the old per-app templates/prometheusrule.yaml
+files, which had to escape these with the {{`{{ }}`}} trick.)
+*/ -}}
+{{- range $name, $cfg := .Values.prometheusRules }}
+{{- if $cfg.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $name }}
+  namespace: {{ default $.Release.Namespace $cfg.namespace }}
+  labels:
+    release: {{ $.Values.prometheusReleaseLabel }}
+spec:
+  groups: {{ toYaml $cfg.groups | nindent 4 }}
+{{- end }}
+{{- end }}

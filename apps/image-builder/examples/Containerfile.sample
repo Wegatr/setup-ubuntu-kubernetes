@@ -1,0 +1,28 @@
+# Sample Containerfile — illustrates the OCI labels the buildah-build-push
+# Task injects automatically. You do NOT need to repeat them in your own
+# Containerfile; they're added via `--label` at build time.
+#
+# This sample builds a minimal Go binary into a distroless final image.
+# Replace with whatever your app actually needs.
+
+# ---- build stage --------------------------------------------------------
+FROM docker.io/library/golang:1.23-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/app ./cmd/app
+
+# ---- runtime ------------------------------------------------------------
+FROM gcr.io/distroless/static-debian12:nonroot
+
+# These four labels are added by buildah --label at build time. You can
+# additionally hard-code project-specific labels here if you want.
+#   org.opencontainers.image.source       (git URL)
+#   org.opencontainers.image.revision     (commit SHA)
+#   org.opencontainers.image.created      (build timestamp, ISO-8601)
+#   org.opencontainers.image.version      (semver base)
+
+COPY --from=build /out/app /app
+USER 65532:65532
+ENTRYPOINT ["/app"]

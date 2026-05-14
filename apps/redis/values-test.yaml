@@ -1,0 +1,17 @@
+redis:
+  master:
+    # Test environment storage
+    persistence:
+      size: 10Gi
+
+    # Test environment resources
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: 2
+        memory: 6Gi
+
+prometheus-redis-exporter:
+  redisAddress: redis://redis-test-headless.redis.svc.cluster.local:6379

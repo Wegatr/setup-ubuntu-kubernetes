@@ -1,0 +1,424 @@
+# Shared observability config across DEV / TEST / PROD. Per-env overrides go in
+# values-{dev,test,prod}.yaml.
+
+# ============================================================================
+# Monitoring chart — emits everything that ties the platform to Prometheus /
+# Alertmanager:
+#   - Alloy DaemonSet config (cluster-wide log shipper + OTLP receiver)
+#   - Cluster-level PrometheusRule (PodCrashLooping, NodeDiskFillingUp, ...)
+#   - ServiceMonitor / PodMonitor for foreign infra installed outside this repo
+#     (cert-manager, Traefik, Vault, ESO, ArgoCD — bootstrapped by sibling
+#     setup-gitops/ repo). These cannot ship with the foreign app charts, so
+#     they live here in the observability app.
+#
+# Apps in apps/ that need their own monitoring depend on the same chart and
+# declare their entries under their own top-level `monitoring:` key.
+# ============================================================================
+monitoring:
+  prometheusReleaseLabel: observability
+
+  alloy:
+    logsEnabled: true
+    tracesEnabled: true
+
+  # --------------------------------------------------------------------------
+  # ServiceMonitors for foreign infrastructure (deployed by setup-gitops, not
+  # by this repo). The observability app owns these CRs because the upstream
+  # tools have no chart of their own here.
+  # --------------------------------------------------------------------------
+  serviceMonitors:
+    cert-manager:
+      enabled: true
+      # cert-manager controller + cainjector + webhook all expose :9402.
+      namespaces: [cert-manager]
+      matchLabels:
+        app.kubernetes.io/instance: cert-manager
+      endpoints:
+        - targetPort: 9402
+          path: /metrics
+          interval: 60s
+          honorLabels: true
+
+    vault:
+      enabled: true
+      # Four Services share app.kubernetes.io/name=vault:
+      #   vault          — main (what we want)
+      #   vault-internal — raft peer-to-peer (extra label vault-internal=true)
+      # plus agent-injector and ui (different name labels). Exclude
+      # vault-internal via matchExpressions.
+      #
+      # Vault serves /v1/sys/metrics over HTTPS with a Let's Encrypt cert valid
+      # only for vault.<env>.<domain> — the in-cluster DNS name
+      # doesn't match — so insecureSkipVerify. Unauthenticated metrics access
+      # is enabled via listener."tcp".telemetry.unauthenticated_metrics_access
+      # in the Vault config (setup-gitops side).
+      namespaces: [vault]
+      matchLabels:
+        app.kubernetes.io/name: vault
+      matchExpressions:
+        - { key: vault-internal, operator: DoesNotExist }
+      endpoints:
+        - port: https
+          path: /v1/sys/metrics
+          scheme: https
+          params:
+            format: [prometheus]
+          interval: 60s
+          tlsConfig:
+            insecureSkipVerify: true
+
+    external-secrets:
+      enabled: true
+      # external-secrets-metrics Service exists once metrics.service.enabled=true
+      # is set at install time (setup-gitops/modules/07-deployment-operations.sh).
+      namespaces: [external-secrets-system]
+      matchLabels:
+        app.kubernetes.io/name: external-secrets
+      endpoints:
+        - port: metrics
+          path: /metrics
+          interval: 60s
+
+  # --------------------------------------------------------------------------
+  # PodMonitors — same as ServiceMonitor but the metrics port exists only on
+  # the pod (not on any public Service).
+  # --------------------------------------------------------------------------
+  podMonitors:
+    traefik:
+      enabled: true
+      # metrics.prometheus=true is set in Traefik args; port 9100 is on the pod
+      # but not on the public Service.
+      namespaces: [ingress]
+      matchLabels:
+        app.kubernetes.io/name: traefik
+      podMetricsEndpoints:
+        - port: metrics
+          path: /metrics
+          interval: 60s
+
+    argocd:
+      enabled: true
+      # Every argocd-* component pod exposes a `metrics` container port. One
+      # PodMonitor covers application-controller, applicationset-controller,
+      # notifications-controller, repo-server, server.
+      # dex-server exposes :5558 as `metrics` but doesn't serve a /metrics
+      # handler — scraping triggers permanent TargetDown. Exclude it.
+      # argocd-redis has no `metrics` port at all; the PodMonitor silently
+      # skips pods where the named port doesn't exist.
+      namespaces: [argocd]
+      matchLabels:
+        app.kubernetes.io/part-of: argocd
+      matchExpressions:
+        - { key: app.kubernetes.io/name, operator: NotIn, values: [argocd-dex-server] }
+      podMetricsEndpoints:
+        - port: metrics
+          path: /metrics
+          interval: 60s
+
+  # --------------------------------------------------------------------------
+  # Cluster-wide alert rules. Per-app rules live in each app's own values file.
+  # --------------------------------------------------------------------------
+  prometheusRules:
+    kubernetes:
+      enabled: true
+      groups:
+        - name: kubernetes
+          interval: 60s
+          rules:
+            - alert: PodCrashLooping
+              expr: rate(kube_pod_container_status_restarts_total[5m]) * 60 * 5 >= 2
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash-looping"
+                description: "Container {{ $labels.container }} has restarted {{ $value }} times in the last 5 minutes."
+
+            - alert: PodOOMKilled
+              expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+              for: 1m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} was OOMKilled"
+                description: "Container {{ $labels.container }} was killed by the OOM killer."
+
+            - alert: PodImagePullBackOff
+              expr: kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull"} == 1
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} cannot pull image"
+                description: "Container {{ $labels.container }}: {{ $labels.reason }}"
+
+            - alert: PodCrashLoopBackOff
+              expr: kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} == 1
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} in CrashLoopBackOff"
+                description: "Container {{ $labels.container }} repeatedly failing to start."
+
+            - alert: PodStuckPending
+              expr: kube_pod_status_phase{phase="Pending"} == 1
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} stuck in Pending"
+                description: "Pod has been Pending for more than 15 minutes."
+
+            - alert: PodNotReady
+              expr: kube_pod_status_ready{condition="true"} == 0 and on(namespace, pod) kube_pod_status_phase{phase="Running"} == 1
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} not ready"
+                description: "Pod is Running but readiness probe failing for 10 minutes."
+
+            - alert: NodeDiskFillingUp
+              expr: (node_filesystem_avail_bytes{mountpoint="/mnt/data"} / node_filesystem_size_bytes{mountpoint="/mnt/data"}) < 0.15
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Node {{ $labels.instance }} disk almost full"
+                description: "Less than 15% free on /mnt/data."
+
+  # --------------------------------------------------------------------------
+  # AlertmanagerConfig CRs.
+  #
+  # `platform-default` has no matchers — it's the catch-all that delivers any
+  # alert not already null-routed by the global config (Watchdog / InfoInhibitor
+  # / severity=info). With `emails:` omitted, the chart template falls back to
+  # .Values.global.alertRecipients (set in platform/values-common.yaml). This
+  # is THE single source of truth for the platform's alert mailbox — change it
+  # in one place to reroute every alert.
+  #
+  # Per-app overrides (e.g. mongodb → db-team@..., observability → ops@...)
+  # live in each app's own values file as additional AlertmanagerConfig
+  # entries with `matchers:` scoping them.
+  # --------------------------------------------------------------------------
+  alertmanagerConfigs:
+    platform-default:
+      enabled: true
+      # No matchers → catches every alert that passes the null-routes.
+      # No emails → falls back to .Values.global.alertRecipients.
+      # The receiver name defaults to the entry key ("platform-default").
+
+# ============================================================================
+# kube-prometheus-stack
+# ============================================================================
+kube-prometheus-stack:
+  fullnameOverride: observability
+
+  # MicroK8s bundles etcd/controller-manager/scheduler/proxy as snap services
+  # that don't expose the standard Prometheus endpoints. Disable those monitors
+  # so their "Down" alerts don't constantly fire — Kubernetes overall health
+  # is still visible via kube-state-metrics + node-exporter + apiserver.
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+
+  # Suppress built-in alert rules that are false-positive in this cluster:
+  #   RedisMemoryPressure — fires on the redis_exporter pod (which itself
+  #     has tiny limits), not the actual Redis. The metric labels aren't
+  #     scoped to real Redis instances.
+  defaultRules:
+    disabled:
+      RedisMemoryPressure: true
+
+  prometheus:
+    prometheusSpec:
+      ruleSelectorNilUsesHelmValues: false
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+      probeSelectorNilUsesHelmValues: false
+      retention: 15d
+
+  grafana:
+    fullnameOverride: grafana
+    admin:
+      existingSecret: grafana-admin-credentials
+      userKey: admin-user
+      passwordKey: admin-password
+    # MicroK8s hostpath doesn't allow root chown on mounted PVs — disable the
+    # chown init container and let fsGroup handle ownership at mount time.
+    initChownData:
+      enabled: false
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 472
+      runAsGroup: 472
+      fsGroup: 472
+    sidecar:
+      # The k8s-sidecar container fails on MicroK8s because its built-in
+      # kube-apiserver CA lacks the X.509 keyUsage extension, which newer
+      # Python SSL libs reject. Neither sidecar.skipTlsVerify nor the env-var
+      # overrides are honored by this chart version. Since datasources are
+      # fully declarative via additionalDataSources below (no runtime ConfigMap
+      # discovery needed) and dashboards will be provisioned via
+      # dashboardsConfigMaps, disable the sidecars entirely.
+      dashboards:
+        enabled: false
+      datasources:
+        enabled: false
+    # Dashboards: each app drops a ConfigMap labelled grafana_dashboard: "1"
+    # in its own namespace. Re-enable the dashboards sidecar above (and resolve
+    # the MicroK8s CA issue) to have Grafana auto-discover them, or list them
+    # explicitly under `dashboardsConfigMaps` here if sidecar discovery is off.
+    # Provision datasources explicitly. additionalDataSources wasn't producing
+    # a ConfigMap in this chart combination — explicit datasources.yaml works.
+    datasources:
+      datasources.yaml:
+        apiVersion: 1
+        datasources:
+          - name: Prometheus
+            type: prometheus
+            uid: prometheus
+            access: proxy
+            url: http://observability-prometheus.observability.svc.cluster.local:9090
+            isDefault: true
+          - name: Alertmanager
+            type: alertmanager
+            uid: alertmanager
+            access: proxy
+            url: http://observability-alertmanager.observability.svc.cluster.local:9093
+            jsonData:
+              implementation: prometheus
+          - name: Loki
+            type: loki
+            uid: loki
+            access: proxy
+            url: http://loki-gateway.observability.svc.cluster.local
+            jsonData:
+              derivedFields:
+                - datasourceUid: tempo
+                  matcherRegex: '"traceId":"(\w+)"'
+                  name: TraceID
+                  url: "$${__value.raw}"
+          - name: Tempo
+            type: tempo
+            uid: tempo
+            access: proxy
+            url: http://tempo.observability.svc.cluster.local:3100
+            jsonData:
+              tracesToLogsV2:
+                datasourceUid: loki
+                spanStartTimeShift: "-1h"
+                spanEndTimeShift: "1h"
+    ingress:
+      enabled: true
+      ingressClassName: public
+      # Host + TLS set per-env
+
+# ============================================================================
+# Loki — single binary
+# ============================================================================
+loki:
+  # Strip the "observability-test-" / "observability-prod-" release-name prefix
+  # from Loki's services so consumers (Alloy write endpoint, Grafana Loki
+  # datasource) can reference a stable DNS name across envs:
+  #   loki.observability.svc.cluster.local
+  #   loki-gateway.observability.svc.cluster.local
+  fullnameOverride: loki
+  deploymentMode: SingleBinary
+  loki:
+    auth_enabled: false
+    commonConfig: { replication_factor: 1 }
+    storage: { type: filesystem }
+    schemaConfig:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index: { prefix: index_, period: 24h }
+    limits_config:
+      retention_period: 336h
+      allow_structured_metadata: true
+      volume_enabled: true
+    # Without retention_enabled the limits_config.retention_period above is
+    # advisory only — Loki keeps every chunk forever. Single-binary mode runs
+    # the compactor target by default, so flipping the flag is enough.
+    compactor:
+      retention_enabled: true
+      retention_delete_delay: 2h
+      delete_request_store: filesystem
+  singleBinary:
+    replicas: 1
+  read: { replicas: 0 }
+  write: { replicas: 0 }
+  backend: { replicas: 0 }
+  chunksCache: { enabled: false }
+  resultsCache: { enabled: false }
+  monitoring:
+    selfMonitoring: { enabled: false }
+  # Top-level lokiCanary key (the chart moved it out of monitoring.lokiCanary;
+  # the monitoring.lokiCanary key is now ignored). Disable the canary daemon —
+  # it was spamming stdout with "<ts> pppppp..." lines that showed up in
+  # Grafana's Drilldown Logs as service_name=unknown_service.
+  lokiCanary:
+    enabled: false
+  test: { enabled: false }
+
+# ============================================================================
+# Tempo
+# ============================================================================
+tempo:
+  # Same treatment as Loki: stable DNS name across envs.
+  fullnameOverride: tempo
+  tempo:
+    retention: 168h
+    receivers:
+      otlp:
+        protocols:
+          grpc: { endpoint: "0.0.0.0:4317" }
+          http: { endpoint: "0.0.0.0:4318" }
+  serviceMonitor: { enabled: true }
+
+# ============================================================================
+# Grafana Alloy (DaemonSet)
+# ============================================================================
+alloy:
+  # Stable DNS name — apps send OTLP to alloy.observability.svc.cluster.local
+  fullnameOverride: alloy
+  controller: { type: daemonset }
+  alloy:
+    configMap:
+      create: false
+      name: alloy-config
+      key: config.alloy
+    mounts: { varlog: true }
+    extraPorts:
+      - { name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP }
+      - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
+
+# ============================================================================
+# Vault-backed secrets (ExternalSecret CRDs)
+# Per-env vaultPath overrides go in values-{test,prod}.yaml.
+# Per-app exporter secrets live in each app's chart, not here.
+# ============================================================================
+grafana-admin-secret:
+  externalSecret:
+    enabled: true
+    name: grafana-admin-credentials
+    namespace: observability
+    secretStoreKind: SecretStore
+    targetSecretName: grafana-admin-credentials
+    data:
+      - secretKey: admin-user
+        property: admin-user
+      - secretKey: admin-password
+        property: grafana-admin-password
+
+# Alertmanager sends mail directly via Postfix (in-cluster, no auth required)
+# — no SMTP credentials secret needed.

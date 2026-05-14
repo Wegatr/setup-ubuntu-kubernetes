@@ -1,0 +1,19 @@
+ingress:
+  enabled: true
+  className: public
+  # cert-manager ClusterIssuer for the TLS cert. Empty here — falls back to
+  # .Values.global.clusterIssuer (platform/values-common.yaml). Set explicitly
+  # to override the platform default for this Ingress only.
+  clusterIssuer: ""
+  # Free-form additional annotations (e.g. Traefik middleware refs).
+  # The cert-manager.io/cluster-issuer annotation is added automatically from
+  # `clusterIssuer` above — do NOT duplicate it here.
+  annotations: {}
+  host: ""
+  hosts: []
+  paths: []
+  serviceName: ""
+  servicePort: 80
+  tls:
+    enabled: true
+    secretName: ""

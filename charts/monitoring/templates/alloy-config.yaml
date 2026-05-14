@@ -1,0 +1,139 @@
+{{- /*
+Grafana Alloy configuration: tails pod logs, parses JSON (e.g. Pino-style structured
+logs from Node apps), and forwards to Loki. Also receives OTLP traces from instrumented
+apps and forwards to Tempo.
+
+This ConfigMap is referenced from apps/observability/values-*.yaml under the `alloy` sub-chart
+key: alloy.configMap.create=false, alloy.configMap.name=alloy-config.
+*/ -}}
+{{- if .Values.alloy.logsEnabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: {{ .Values.prometheusReleaseLabel }}
+data:
+  config.alloy: |
+    // --- Discovery: all pods on the node ---
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    discovery.relabel "pod_logs" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        target_label  = "app"
+      }
+      // service_name — required by Grafana's Drilldown Logs view to group by
+      // service. Use the Kubernetes namespace as the primary service boundary
+      // (one namespace per logical service, e.g. "mongodb", "argocd",
+      // "<your-app>"). Drill down within a service by pod/container labels
+      // inside the UI. Pod-label sources like app.kubernetes.io/name are too
+      // generic for multi-component charts (all subcomponents share
+      // name=app), so namespace is the cleaner grouping.
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "service_name"
+      }
+      // observability namespace is shipped to Loki too — Alloy → Loki is
+      // HTTP push, not stdout, so there's no log loop. Without these logs
+      // every alert that fires on Loki/Grafana/Tempo/exporter pods has
+      // an empty Loki link in the email body.
+    }
+
+    // --- Tail logs from pod stdout/stderr ---
+    loki.source.kubernetes "pods" {
+      targets    = discovery.relabel.pod_logs.output
+      forward_to = [loki.process.app_json.receiver]
+    }
+
+    // --- Parse Pino/JSON logs, extract labels ---
+    loki.process "app_json" {
+      forward_to = [loki.write.default.receiver]
+
+      // Try to parse each line as JSON. Non-JSON lines fall through unchanged.
+      stage.json {
+        expressions = {
+          level     = "level",
+          msg       = "msg",
+          req_id    = "requestId",
+          source    = "source",
+          log_type  = "type",
+          trace_id  = "trace_id",
+          span_id   = "span_id",
+        }
+      }
+
+      // Pino uses numeric levels (30=info, 40=warn, 50=error). Map to string label.
+      stage.template {
+        source   = "level_label"
+        template = `{{`{{- if eq .level "30" -}}info{{- else if eq .level "40" -}}warn{{- else if eq .level "50" -}}error{{- else if eq .level "60" -}}fatal{{- else if eq .level "20" -}}debug{{- else -}}{{ .level }}{{- end -}}`}}`
+      }
+
+      // Promote low-cardinality fields to Loki labels (fast filtering).
+      stage.labels {
+        values = {
+          level  = "level_label",
+          source = "",
+        }
+      }
+
+      // High-cardinality fields as structured metadata (Loki 3.x).
+      stage.structured_metadata {
+        values = {
+          requestId = "req_id",
+          logType   = "log_type",
+          traceId   = "trace_id",
+          spanId    = "span_id",
+        }
+      }
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://loki-gateway.{{ .Release.Namespace }}.svc.cluster.local/loki/api/v1/push"
+      }
+    }
+
+    {{- if .Values.alloy.tracesEnabled }}
+
+    // --- OTLP trace receiver ---
+    otelcol.receiver.otlp "default" {
+      grpc { endpoint = "0.0.0.0:4317" }
+      http { endpoint = "0.0.0.0:4318" }
+
+      output {
+        traces = [otelcol.processor.batch.default.input]
+      }
+    }
+
+    otelcol.processor.batch "default" {
+      output {
+        traces = [otelcol.exporter.otlp.tempo.input]
+      }
+    }
+
+    otelcol.exporter.otlp "tempo" {
+      client {
+        endpoint = "tempo.{{ .Release.Namespace }}.svc.cluster.local:4317"
+        tls { insecure = true }
+      }
+    }
+    {{- end }}
+{{- end }}

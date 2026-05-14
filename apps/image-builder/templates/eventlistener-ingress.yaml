@@ -1,0 +1,44 @@
+{{- if and .Values.eventListener.enabled .Values.eventListener.ingress.enabled }}
+{{- /*
+Public Ingress for the EventListener. The host is composed at chart render
+time from platform globals:
+    <subdomain>.<env>.<domain>     (e.g. build.dev.<your-domain>)
+
+cert-manager issues the TLS cert via the platform's global ClusterIssuer.
+Multiple path entries route /github, /bitbucket, /azuredevops all to the
+same EventListener Service (`el-image-builder` — Tekton's controller names
+it `el-` + EventListener name).
+*/ -}}
+{{- $host := printf "%s.%s.%s" .Values.eventListener.ingress.subdomain .Values.global.env .Values.global.domain }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: image-builder-eventlistener
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: eventlistener-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.global.clusterIssuer | quote }}
+spec:
+  ingressClassName: public
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: image-builder-eventlistener-tls
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          {{- range $provider := list "github" "bitbucket" "azuredevops" }}
+          {{- if index $.Values.eventListener.triggers $provider "enabled" }}
+          - path: /{{ $provider }}
+            pathType: Prefix
+            backend:
+              service:
+                name: el-image-builder
+                port:
+                  number: 8080
+          {{- end }}
+          {{- end }}
+{{- end }}

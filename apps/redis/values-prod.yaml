@@ -1,0 +1,17 @@
+redis:
+  master:
+    # Production environment storage
+    persistence:
+      size: 10Gi
+
+    # Production environment resources
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: 2
+        memory: 6Gi
+
+prometheus-redis-exporter:
+  redisAddress: redis://redis-prod-headless.redis.svc.cluster.local:6379

@@ -1,0 +1,126 @@
+# Shared values across DEV / TEST / PROD. Per-env Vault paths in
+# values-{dev,test,prod}.yaml.
+
+pipeline:
+  # MicroK8s built-in registry — accessible from inside the cluster at the
+  # service hostname below. Add `microk8s enable registry` on the cluster
+  # before first sync. Buildah pushes here via HTTP (--tls-verify=false in
+  # the buildah-build-push Task — MicroK8s registry doesn't terminate TLS).
+  registry: registry.container-registry.svc.cluster.local:5000
+  serviceAccountName: pipeline-sa
+
+# Workspace sizing. The `source` workspace holds the cloned source for the
+# duration of one PipelineRun (PVC-backed; auto-cleaned by Tekton's pruner).
+# The `trivy-db-cache` workspace persists across runs to avoid re-downloading
+# the vulnerability DB (~600MB).
+workspaces:
+  sourceSize: 10Gi
+  trivyDbCacheSize: 5Gi
+
+trivyDbCache:
+  enabled: true
+
+# EventListener config — exposed publicly so GitHub / Bitbucket / Azure DevOps
+# can call it on every push.
+eventListener:
+  enabled: true
+
+  ingress:
+    enabled: true
+    # Composed at chart render time as <subdomain>.<env>.<domain>
+    # (e.g. build.dev.<your-domain>) using platform globals + tpl.
+    subdomain: build
+
+  # Each provider has its own Trigger inside the same EventListener, with its
+  # own Interceptor (HMAC verification with a provider-specific secret) and
+  # TriggerBinding (payload → pipeline params).
+  triggers:
+    github:
+      enabled: true
+      # Branch regex applied by the github Interceptor's CEL filter. Only
+      # pushes to matching branches spawn a PipelineRun.
+      branchFilter: 'main|master'
+    bitbucket:
+      enabled: true
+      branchFilter: 'main|master'
+    azuredevops:
+      enabled: true
+      branchFilter: 'main|master'
+
+# ExternalSecret #1 — SSH deploy key for the source repo. The git-clone Task
+# mounts these two files (id_rsa + known_hosts) from the ssh-credentials
+# workspace. Add the corresponding public key as a deploy key in the Git
+# provider's repo settings.
+externalsecret-git-ssh:
+  externalSecret:
+    enabled: true
+    name: image-builder-git-ssh
+    namespace: image-builder
+    targetSecretName: image-builder-git-ssh
+    data:
+      - secretKey: id_rsa
+        property: id_rsa
+      - secretKey: known_hosts
+        property: known_hosts
+
+# ExternalSecret #2 — Per-provider webhook signing secrets. One Kubernetes
+# Secret with three keys; each Tekton Interceptor references one.
+#   github:      HMAC-SHA256 secret matching GitHub's webhook UI "Secret" field
+#                (Interceptor validates X-Hub-Signature-256).
+#   bitbucket:   HMAC-SHA256 secret for Bitbucket webhook "Secret" field
+#                (Interceptor validates X-Hub-Signature).
+#   azuredevops: Bearer-style shared secret matching Azure DevOps's
+#                X-Vss-Subscription-Auth header (Azure doesn't sign payloads;
+#                the CEL Interceptor compares a constant header value).
+externalsecret-webhooks:
+  externalSecret:
+    enabled: true
+    name: image-builder-webhook-secrets
+    namespace: image-builder
+    targetSecretName: image-builder-webhook-secrets
+    data:
+      - secretKey: github
+        property: github-webhook-secret
+      - secretKey: bitbucket
+        property: bitbucket-webhook-secret
+      - secretKey: azuredevops
+        property: azuredevops-webhook-secret
+
+# Monitoring chart — Pipeline alerting. The Tekton operator's own
+# ServiceMonitor lives in apps/tekton/.
+monitoring:
+  prometheusRules:
+    image-builder:
+      enabled: true
+      groups:
+        - name: image-builder
+          interval: 60s
+          rules:
+            - alert: PipelineRunFailed
+              expr: increase(tekton_pipelines_controller_pipelinerun_count{status="failed"}[10m]) > 0
+              for: 1m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Image-builder PipelineRun failed in last 10 minutes"
+                description: "Check `tkn pipelinerun list -n image-builder`."
+
+            - alert: PipelineRunRunningTooLong
+              expr: time() - max(tekton_pipelines_controller_running_pipelineruns_count > 0) > 1800
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Image-builder PipelineRun running > 30 minutes"
+                description: "Check for stuck Buildah/Trivy steps."
+
+            - alert: TrivyHighSeverityFinding
+              # Trivy results aren't exposed as Prometheus metrics by Tekton;
+              # this alert fires when a PipelineRun fails with the trivy-scan
+              # step's exit code. Real metric integration is Phase B.
+              expr: increase(tekton_pipelines_controller_pipelinerun_count{status="failed",pipeline="build-pipeline"}[10m]) > 0
+              for: 1m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Build pipeline failed — check trivy-scan task output for HIGH/CRITICAL CVEs"

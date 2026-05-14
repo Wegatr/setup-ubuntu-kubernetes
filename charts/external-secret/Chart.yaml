@@ -1,0 +1,5 @@
+apiVersion: v2
+name: external-secret
+version: 1.0.0
+description: Generic ExternalSecret helper chart for Vault integration
+type: application

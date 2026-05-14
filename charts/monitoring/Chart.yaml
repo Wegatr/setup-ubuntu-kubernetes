@@ -1,0 +1,5 @@
+apiVersion: v2
+name: monitoring
+version: 2.0.0
+description: Per-app monitoring resources (ServiceMonitor, PodMonitor, PrometheusRule, AlertmanagerConfig) plus the platform-level Alloy log shipper and cluster-wide alert rules. Consumed as a Helm dependency by any app that needs to be observed.
+type: application

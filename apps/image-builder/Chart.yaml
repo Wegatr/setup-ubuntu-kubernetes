@@ -1,0 +1,31 @@
+apiVersion: v2
+name: image-builder
+version: 1.0.0
+description: Tekton-based image build pipeline (git-clone → tag → buildah → trivy → gitleaks → summary) with multi-provider webhook triggers (GitHub, Bitbucket, Azure DevOps). Pushes to the MicroK8s built-in registry. See README.md.
+type: application
+
+dependencies:
+  # Pulls per-repo SSH deploy key from Vault into a Secret that the git-clone
+  # Task's ssh-credentials workspace mounts.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-git-ssh
+
+  # Pulls all per-provider webhook signing secrets from Vault into a single
+  # Secret with keys github/bitbucket/azuredevops. Each Tekton Interceptor
+  # references one key.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-webhooks
+
+  # Per-namespace SecretStore (visible as an ArgoCD-managed resource).
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # PrometheusRules + ServiceMonitor for the build pipeline.
+  - name: monitoring
+    version: 2.0.0
+    repository: file://../../charts/monitoring

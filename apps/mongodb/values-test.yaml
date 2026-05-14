@@ -1,0 +1,41 @@
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource).
+secret-store:
+
+# External Secrets configuration
+externalSecret:
+  enabled: true
+  name: mongodb-credentials
+  namespace: mongodb
+  secretStoreKind: SecretStore
+  targetSecretName: mongodb-credentials
+  vaultPath: test/app/mongodb
+  data:
+    - secretKey: mongodb-root-password
+      property: mongodb-root-password
+    - secretKey: mongodb-passwords
+      property: mongodb-password
+    - secretKey: mongodb-replica-set-key
+      property: mongodb-replica-set-key
+
+mongodb:
+  # Test environment storage
+  persistence:
+    size: 20Gi
+
+  # Test environment resources
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+
+# Per-env exporter ExternalSecret: same Vault path as core mongodb creds,
+# templated into a single mongodb-uri secret key consumed by the exporter.
+exporterSecret:
+  vaultPath: test/app/mongodb
+  template:
+    engineVersion: v2
+    data:
+      mongodb-uri: "mongodb://root:{{ `{{ .password }}` }}@mongodb-test-headless.mongodb.svc.cluster.local:27017/admin?authSource=admin"

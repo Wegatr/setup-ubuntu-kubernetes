@@ -1,0 +1,67 @@
+{{- /*
+Emit one AlertmanagerConfig CR per entry under .Values.alertmanagerConfigs.
+Routes alerts matching `matchers` to the listed email recipients.
+
+The Subject / text / html bodies all reference Go templates named
+"alert.subject" / "alert.text" / "alert.html" — those are defined globally in
+apps/observability/values-{env}.yaml under alertmanagerSpec.templateFiles and
+are available to every AlertmanagerConfig in the cluster.
+
+Recipient fallback chain:
+  $cfg.emails (explicit list per entry, optional)
+    → .Values.global.alertRecipients (platform default from platform/values-common.yaml)
+  If both are empty/absent the emitted AlertmanagerConfig has no emailConfigs
+  (alert is silently dropped for that route — flag with `enabled: false` if
+  that's not intended).
+
+Route matching:
+  - Omit `matchers` entirely to catch every alert (used by the
+    `platform-default` entry in apps/observability/values-common.yaml).
+  - The operator does NOT inject a namespace= matcher because
+    apps/observability/values-{env}.yaml sets
+    alertmanagerConfigMatcherStrategy.type: None.
+
+The `{{`{{ template ... }}`}}` escaping is mandatory: the AlertmanagerConfig
+spec stores these as literal strings that Alertmanager itself will template at
+fire time. Without the escape, Helm would try to evaluate them at render time
+and fail.
+*/ -}}
+{{- range $name, $cfg := .Values.alertmanagerConfigs }}
+{{- if $cfg.enabled }}
+{{- $emails := $cfg.emails | default $.Values.global.alertRecipients -}}
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: {{ $name }}
+  namespace: {{ default $.Release.Namespace $cfg.namespace }}
+  labels:
+    release: {{ $.Values.prometheusReleaseLabel }}
+spec:
+  route:
+    receiver: {{ $cfg.receiverName | default $name }}
+    {{- with $cfg.matchers }}
+    matchers: {{ toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $cfg.groupBy }}
+    groupBy: {{ toYaml . | nindent 6 }}
+    {{- end }}
+    groupWait: {{ $cfg.groupWait | default "30s" | quote }}
+    groupInterval: {{ $cfg.groupInterval | default "5m" | quote }}
+    repeatInterval: {{ $cfg.repeatInterval | default "4h" | quote }}
+  receivers:
+    - name: {{ $cfg.receiverName | default $name }}
+      {{- with $emails }}
+      emailConfigs:
+        {{- range $email := . }}
+        - to: {{ $email | quote }}
+          sendResolved: true
+          headers:
+            - key: Subject
+              value: '{{`{{ template "alert.subject" . }}`}}'
+          text: '{{`{{ template "alert.text" . }}`}}'
+          html: '{{`{{ template "alert.html" . }}`}}'
+        {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,31 @@
+{{- /*
+Emit one ServiceMonitor per entry under .Values.serviceMonitors. The values key
+becomes metadata.name. Each entry's `enabled` flag gates the CR.
+
+Defaults: namespace falls back to .Release.Namespace; consumers that need to
+emit a CR in a *different* namespace (apps/observability/ does this for the 5
+foreign-infra monitors) set .namespace explicitly.
+*/ -}}
+{{- range $name, $cfg := .Values.serviceMonitors }}
+{{- if $cfg.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $name }}
+  namespace: {{ default $.Release.Namespace $cfg.namespace }}
+  labels:
+    release: {{ $.Values.prometheusReleaseLabel }}
+spec:
+  {{- with $cfg.namespaces }}
+  namespaceSelector:
+    matchNames: {{ toYaml . | nindent 6 }}
+  {{- end }}
+  selector:
+    matchLabels: {{ toYaml $cfg.matchLabels | nindent 6 }}
+    {{- with $cfg.matchExpressions }}
+    matchExpressions: {{ toYaml . | nindent 6 }}
+    {{- end }}
+  endpoints: {{ toYaml $cfg.endpoints | nindent 4 }}
+{{- end }}
+{{- end }}

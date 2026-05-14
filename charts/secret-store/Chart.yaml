@@ -1,0 +1,6 @@
+apiVersion: v2
+name: secret-store
+description: Generic namespaced SecretStore (Vault backend). Deployed as a dependency of each app so its per-namespace Vault integration appears under that app in the ArgoCD UI.
+type: application
+version: 1.0.0
+appVersion: "1.0"

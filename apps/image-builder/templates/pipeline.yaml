@@ -1,0 +1,168 @@
+{{- /*
+build-pipeline — wires the six Tasks together. Flow:
+
+  git-clone
+       ↓
+  generate-image-tag  (parallel: starts as soon as git-clone is done)
+       ↓
+  credential-scan     (parallel with buildah; doesn't need the image)
+       ↓
+  buildah-build-push
+       ↓
+  trivy-scan
+       ↓
+  logging-summary     (runs last; aggregates everything into JSON)
+
+git-clone runs first. generate-image-tag, credential-scan, and the image
+build can all run in parallel after the clone — Tekton schedules whichever
+have their `runAfter` satisfied. trivy-scan waits for the build; the summary
+waits for everything.
+
+Parameters that PipelineRun callers provide (manual or webhook-triggered):
+  git-url, git-revision, image-name, image-version, [registry override]
+*/ -}}
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-pipeline
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-builder
+    app.kubernetes.io/component: pipeline
+spec:
+  description: >-
+    Build, scan, and push a container image. Wires git-clone, generate tag,
+    buildah build+push, trivy scan, credential scan, and a summary task.
+  params:
+    - name: git-url
+      description: SSH git URL of the source repo.
+      type: string
+    - name: git-revision
+      description: Branch / tag / commit SHA to build.
+      type: string
+      default: main
+    - name: image-name
+      description: Image name (without registry prefix and without tag).
+      type: string
+    - name: image-version
+      description: Semver base for the tag (e.g. "1.0.0").
+      type: string
+      default: "0.0.0"
+    - name: registry
+      description: Registry hostname:port.
+      type: string
+      default: {{ .Values.pipeline.registry | quote }}
+    - name: containerfile
+      description: Path to the Containerfile inside the source repo.
+      type: string
+      default: Containerfile
+  workspaces:
+    - name: source
+      description: Shared between all tasks; cloned source lives here.
+    - name: ssh-credentials
+      description: SSH deploy key for git-clone.
+    - name: trivy-db-cache
+      description: Persistent Trivy vulnerability DB cache.
+  tasks:
+    - name: clone
+      taskRef:
+        name: git-clone
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: ssh-credentials
+          workspace: ssh-credentials
+
+    - name: tag
+      taskRef:
+        name: generate-image-tag
+      runAfter: [clone]
+      params:
+        - name: version
+          value: $(params.image-version)
+
+    - name: gitleaks
+      taskRef:
+        name: credential-scan
+      runAfter: [clone]
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: build
+      taskRef:
+        name: buildah-build-push
+      runAfter: [tag, gitleaks]
+      params:
+        - name: image-name
+          value: $(params.image-name)
+        - name: image-tag
+          value: $(tasks.tag.results.image-tag)
+        - name: registry
+          value: $(params.registry)
+        - name: containerfile
+          value: $(params.containerfile)
+        - name: git-url
+          value: $(tasks.clone.results.url)
+        - name: git-revision
+          value: $(tasks.clone.results.commit)
+        - name: build-timestamp
+          value: $(tasks.tag.results.build-timestamp)
+        - name: version
+          value: $(params.image-version)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: trivy
+      taskRef:
+        name: trivy-scan
+      runAfter: [build]
+      params:
+        - name: image-reference
+          value: $(tasks.build.results.image-reference)
+        - name: image-digest
+          value: $(tasks.build.results.image-digest)
+        - name: registry
+          value: $(params.registry)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: trivy-db-cache
+          workspace: trivy-db-cache
+
+    - name: summary
+      taskRef:
+        name: logging-summary
+      runAfter: [trivy]
+      params:
+        - name: git-url
+          value: $(tasks.clone.results.url)
+        - name: git-revision
+          value: $(tasks.clone.results.commit)
+        - name: image-reference
+          value: $(tasks.build.results.image-reference)
+        - name: image-digest
+          value: $(tasks.build.results.image-digest)
+        - name: image-tag
+          value: $(tasks.tag.results.image-tag)
+        - name: build-timestamp
+          value: $(tasks.tag.results.build-timestamp)
+      workspaces:
+        - name: source
+          workspace: source
+  results:
+    - name: image-reference
+      description: Final pushed image reference.
+      value: $(tasks.build.results.image-reference)
+    - name: image-digest
+      description: Final pushed image digest.
+      value: $(tasks.build.results.image-digest)
+    - name: image-tag
+      description: Tag used for this build.
+      value: $(tasks.tag.results.image-tag)

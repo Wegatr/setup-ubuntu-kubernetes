@@ -1,0 +1,18 @@
+apiVersion: v2
+name: postfix
+version: 1.0.0
+description: Send-only SMTP for cluster-internal email delivery
+type: application
+dependencies:
+  - name: mail
+    version: 4.4.0
+    repository: https://bokysan.github.io/docker-postfix/
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+  - name: monitoring
+    version: 2.0.0
+    repository: file://../../charts/monitoring

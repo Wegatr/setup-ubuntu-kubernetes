@@ -1,0 +1,26 @@
+{{- if .Values.middleware.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "middleware.fullname" . }}
+  labels:
+    {{- include "middleware.labels" . | nindent 4 }}
+spec:
+  {{- if eq .Values.middleware.type "basicAuth" }}
+  basicAuth:
+    secret: {{ .Values.middleware.basicAuth.secretName }}
+  {{- else if eq .Values.middleware.type "stripPrefix" }}
+  stripPrefix:
+    prefixes:
+      {{- toYaml .Values.middleware.stripPrefix.prefixes | nindent 6 }}
+  {{- else if eq .Values.middleware.type "redirectScheme" }}
+  redirectScheme:
+    scheme: {{ .Values.middleware.redirectScheme.scheme | default "https" }}
+    permanent: {{ .Values.middleware.redirectScheme.permanent | default true }}
+  {{- else if eq .Values.middleware.type "redirectRegex" }}
+  redirectRegex:
+    regex: {{ .Values.middleware.redirectRegex.regex | quote }}
+    replacement: {{ .Values.middleware.redirectRegex.replacement | quote }}
+    permanent: {{ .Values.middleware.redirectRegex.permanent | default true }}
+  {{- end }}
+{{- end }}

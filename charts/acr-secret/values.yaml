@@ -1,0 +1,9 @@
+acrSecret:
+  enabled: true
+  name: ""
+  namespace: ""
+  secretStoreName: vault-backend
+  secretStoreKind: SecretStore
+  targetSecretName: ""
+  vaultPath: ""
+  property: acr-docker-config

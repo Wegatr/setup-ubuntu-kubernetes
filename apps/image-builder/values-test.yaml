@@ -1,0 +1,12 @@
+# TEST-specific image-builder config.
+#
+# Phase A: image-builder is NOT included in argocd/test/apps/applicationset.yaml,
+# so this chart is never deployed in TEST. The file exists for symmetry — if
+# you later flip image-builder on in TEST (Phase B), point the Vault path here.
+externalsecret-git-ssh:
+  externalSecret:
+    vaultPath: test/app/image-builder
+
+externalsecret-webhooks:
+  externalSecret:
+    vaultPath: test/app/image-builder
