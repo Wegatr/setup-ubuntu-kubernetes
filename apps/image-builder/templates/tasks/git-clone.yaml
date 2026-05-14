@@ -76,7 +76,15 @@ spec:
         export HOME=/tmp
         git config --global credential.helper "store --file=/tmp/git-credentials"
 
-        TARGET="/workspace/source$( [ -n "$(params.subdirectory)" ] && echo /$(params.subdirectory) )"
+        # Compose TARGET. Plain if/else avoids the `set -e` trap that fires
+        # when a test inside `$( ... )` returns 1 (e.g. when subdirectory is
+        # empty) — the failing exit status bubbles up to the assignment line
+        # and kills the script before any echo runs.
+        if [ -n "$(params.subdirectory)" ]; then
+          TARGET="/workspace/source/$(params.subdirectory)"
+        else
+          TARGET="/workspace/source"
+        fi
         mkdir -p "$TARGET"
         cd "$TARGET"
 
@@ -86,6 +94,7 @@ spec:
           DEPTH_FLAG=""
         fi
 
+        echo "Cloning $(params.url)@$(params.revision) into $TARGET (depth=$(params.depth))"
         git init
         git remote add origin "$(params.url)"
         # shellcheck disable=SC2086
