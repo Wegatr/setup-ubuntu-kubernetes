@@ -103,6 +103,7 @@ ADDONS=(
     "helm3"            # Helm package manager (microk8s.helm3)
     "cert-manager"     # Automatic TLS certificate management
     "ingress"          # Traefik-based ingress controller
+    "metrics-server"   # Resource metrics for `kubectl top` + HPA
 )
 
 # Upstream DNS resolvers CoreDNS uses for non-cluster lookups.
