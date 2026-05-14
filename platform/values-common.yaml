@@ -40,7 +40,11 @@ global:
   storageClass: microk8s-hostpath
 
   # cert-manager ClusterIssuer used by every public Ingress for LE certs.
-  clusterIssuer: letsencrypt-ci
+  # MUST match the name created by setup-kubernetes (CLUSTER_ISSUER_NAME in
+  # configs/config.<env>, defaults to `letsencrypt-prod`). Mismatch causes
+  # every GitOps-deployed Certificate to sit in "ClusterIssuer not found"
+  # Pending forever.
+  clusterIssuer: letsencrypt-prod
 
   # Name of the per-namespace ESO SecretStore that every app's ExternalSecret
   # references. The actual SecretStore is rendered by the local `secret-store`
