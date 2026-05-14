@@ -1,7 +1,15 @@
 # Setup Ubuntu Kubernetes
 
-Automated, idempotent setup of a **MicroK8s** Kubernetes cluster on Ubuntu with
-optional infrastructure applications (Dashboard, ArgoCD, Vault).
+Two halves of a complete Kubernetes platform, in one repo:
+
+1. **Cluster installer** (`setup-kubernetes/`) — automated, idempotent setup of a
+   **MicroK8s 1.35** cluster on Ubuntu, plus the three Helm-managed
+   "control-plane" apps: Headlamp dashboard, ArgoCD, and HashiCorp Vault.
+2. **GitOps platform** (`apps/`, `argocd/`, `charts/`, `platform/`) — the
+   ArgoCD-managed application tree. Once Argo is up, point it at this repo
+   and it deploys the per-env platform: CoreDNS rewrites, MongoDB, PostgreSQL,
+   Redis, Postfix, Seq, DBGate, observability (Prometheus / Grafana / Loki /
+   Tempo / Alloy), Tekton, and the image-builder pipeline.
 
 All examples below use `<env>` as a placeholder — replace with one of
 `dev`, `test`, or `prod` to match the config file you're using.
@@ -12,25 +20,51 @@ All examples below use `<env>` as a placeholder — replace with one of
 .
 ├── README.md             You are here.
 ├── CLAUDE.md             Notes for Claude Code sessions in this repo.
-└── setup-kubernetes/     All scripts, manifests, and per-env configs.
-    ├── setup-kubernetes.sh       Main script — install, deploy, maintain.
-    ├── reset-cluster.sh          Robust cluster wipe (preserves data mount).
-    ├── common-kubernetes.sh      Shared function library.
-    ├── manage-secrets.sh         Backup/restore credentials (GPG encrypted).
-    ├── manage-secrets.config     Files included in the secrets backup.
-    ├── config.example            Documented config template (checked in).
-    ├── configs/                  Per-env configs `config.<env>` (gitignored).
-    └── manifests/
-        ├── kube/                 Headlamp (Dashboard) Helm values + Ingress.
-        ├── argocd/               ArgoCD Helm values (Ingress in values.yaml).
-        └── vault/                Vault Helm values + Traefik IngressRoute,
-                                  ServersTransport, cert-manager Certificate.
+│
+├── setup-kubernetes/     Cluster installer — shell scripts + per-env configs.
+│   ├── setup-kubernetes.sh       Main script — install, deploy, maintain.
+│   ├── reset-cluster.sh          Robust cluster wipe (preserves data mount).
+│   ├── common-kubernetes.sh      Shared function library.
+│   ├── manage-secrets.sh         Backup/restore credentials (GPG encrypted).
+│   ├── manage-secrets.config     Files included in the secrets backup.
+│   ├── config.example            Documented config template (checked in).
+│   ├── configs/                  Per-env configs `config.<env>` (gitignored).
+│   └── manifests/
+│       ├── kube/                 Headlamp (Dashboard) Helm values + Ingress.
+│       ├── argocd/               ArgoCD Helm values (Ingress in values.yaml).
+│       └── vault/                Vault Helm values + Traefik IngressRoute,
+│                                 ServersTransport, cert-manager Certificate.
+│
+├── platform/             Centralized platform-wide values consumed by every
+│                         chart via Helm's `global:` convention. Edit one file
+│                         to change the domain, alert recipients, storage
+│                         class, ClusterIssuer, etc.
+│
+├── charts/               Reusable Helm library charts (chart-of-charts):
+│                         deployment, ingress, middleware, pvc, rbac,
+│                         configmap, cronjob, acr-secret, external-secret,
+│                         secret-store, monitoring.
+│
+├── apps/                 Per-app umbrella Helm charts (one dir per app):
+│                         coredns, mongodb, postgresql, redis, postfix, seq,
+│                         dbgate, observability, tekton, image-builder.
+│
+└── argocd/               Per-env GitOps bootstrap:
+    ├── dev/
+    │   ├── root-app.yaml         App-of-Apps entry point (kubectl apply once).
+    │   └── apps/
+    │       └── applicationset.yaml   Generates one Application per app.
+    ├── test/  (same shape)
+    └── prod/  (same shape)
 ```
 
-All scripts live inside `setup-kubernetes/` and compute their own `SCRIPT_DIR`,
-so you run them from inside that directory. The repo root stays clean.
+The scripts inside `setup-kubernetes/` compute their own `SCRIPT_DIR`, so you
+run them from inside that directory. The repo root stays clean for the GitOps
+tree.
 
 ## Quick start
+
+### Phase 1 — Install the cluster
 
 ```bash
 cd setup-kubernetes/
@@ -54,6 +88,50 @@ sudo ./setup-kubernetes.sh --<env> --deploy-all
 # 5. Check everything is running (expect 32/32 OK)
 sudo ./setup-kubernetes.sh --<env> --check
 ```
+
+At this point you have a running MicroK8s cluster with Headlamp + ArgoCD + Vault
+reachable at `kube/argo/vault.<env>.<DOMAIN_SUFFIX>`. ArgoCD is empty —
+no Applications yet.
+
+### Phase 2 — Bootstrap the GitOps platform
+
+ArgoCD reads the GitOps tree (`apps/`, `argocd/<env>/`, `charts/`, `platform/`)
+from this very repo. To wire it up:
+
+```bash
+# 1. Replace the placeholder repoURL with the real Git remote in every
+#    ArgoCD manifest. Run from the repo root.
+REAL_REPO=https://github.com/<your-account>/setup-ubuntu-kubernetes.git
+REAL_BRANCH=main
+find argocd -name '*.yaml' -exec \
+  sed -i "s|https://to-your-repo-folder|$REAL_REPO|g; s|targetRevision: master|targetRevision: $REAL_BRANCH|g" {} \;
+git add argocd && git commit -m "argocd: point at the real Git remote" && git push
+
+# 2. Apply the per-env root-app. ArgoCD picks it up and creates the
+#    ApplicationSet, which in turn creates one Application per app under
+#    apps/.
+microk8s kubectl apply -f argocd/<env>/root-app.yaml
+
+# 3. Watch the apps sync (sync waves: 3=tekton, 5=coredns, 10=mongodb+postgresql,
+#    20=postfix+redis+seq, 25=image-builder, 30=dbgate+observability)
+microk8s kubectl -n argocd get applications -w
+```
+
+### Phase 3 — Vault data + ESO bootstrap
+
+For ESO-backed apps to pull their secrets, two more things must happen
+**outside** this repo (the user's sibling `setup-gitops` workflow):
+
+1. **Vault data** under `<env>/app/<name>` for every app that has an
+   ExternalSecret — mongodb, postgresql, postfix, seq, dbgate, observability,
+   image-builder. See the per-app `values-{common,env}.yaml.externalSecret`
+   blocks for the required Vault keys.
+2. **Vault role** — every app namespace must be in
+   `bound_service_account_namespaces` on Vault's `external-secrets` role.
+
+If you're starting from scratch and haven't bootstrapped Vault yet, the
+`setup-kubernetes.sh --deploy-vault` step gives you the unseal keys + root
+token; use those to populate the KV store and configure the auth role.
 
 ## Configuration
 
@@ -102,9 +180,10 @@ STORAGE_DEVICE="/dev/sdb1"
 STORAGE_DIRECTORY="/mnt/data/kubernetes-storage"
 ```
 
-### Infrastructure apps
+### Infrastructure apps (installer-managed)
 
-Three apps can be deployed on top of MicroK8s. Each is optional and controlled
+Three apps can be deployed on top of MicroK8s by the installer itself
+(separate from the GitOps platform). Each is optional and controlled
 by an `ENABLE_*` flag in the config:
 
 | App | Config flag | Hostname | Description |
@@ -248,6 +327,103 @@ reinstall/redeploy from scratch:
 ```bash
 sudo ./setup-kubernetes.sh --<env> --deploy-kube --force
 ```
+
+## GitOps platform (`apps/` + `argocd/` + `charts/` + `platform/`)
+
+Once ArgoCD is up (Phase 1+2 above), the GitOps tree drives every per-env
+platform deployment. ArgoCD reads from this repo continuously and reconciles
+the cluster state against the manifests under `apps/`.
+
+### `platform/` — central knobs
+
+One file per env plus a common one. Anything that varies cluster-wide but
+not per-app lives here under the `global:` key (Helm's built-in convention
+propagates `global:` to every subchart automatically).
+
+```yaml
+# platform/values-common.yaml
+global:
+  domain: <your-domain>           # used in every Ingress host, Vault URL, smtp_from
+  timezone: Europe/Amsterdam      # consumed by mongodb / postgresql via Bitnami tpl
+  storageClass: microk8s-hostpath # PVC default for every app
+  clusterIssuer: letsencrypt-ci   # cert-manager issuer for every Ingress
+  secretStoreName: vault-backend  # ESO SecretStore name used by every ExternalSecret
+  alertRecipients:                # Alertmanager default fallback receiver
+    - <operator-email>
+```
+
+```yaml
+# platform/values-dev.yaml
+global:
+  env: dev
+  vaultUrl: https://vault.dev.<your-domain>:8200
+```
+
+To swap the platform domain, edit one line in `platform/values-common.yaml`,
+commit, push — ArgoCD reconciles. Same for the alert mailbox, timezone, etc.
+
+### `charts/` — reusable library charts
+
+Eleven library charts that other apps pull in as Helm dependencies:
+
+| Chart | Emits |
+|---|---|
+| `deployment` | Deployment + Service (env vars `tpl`'d at render time) |
+| `ingress` | Ingress with auto-injected `cert-manager.io/cluster-issuer` and `tpl`'d host / serviceName / tls.secretName |
+| `middleware` | Traefik `Middleware` CRD (BasicAuth, rate-limit, …) |
+| `pvc` | PVC defaulting to `global.storageClass` |
+| `rbac` | ServiceAccount + Role + RoleBinding scaffold |
+| `configmap` | Generic ConfigMap |
+| `cronjob` | CronJob scaffold |
+| `acr-secret` | dockerconfigjson Secret for Azure Container Registry |
+| `external-secret` | ESO ExternalSecret defaulting to `global.secretStoreName` |
+| `secret-store` | Per-namespace Vault SecretStore + ServiceAccount, reads `global.vaultUrl` |
+| `monitoring` | ServiceMonitor / PodMonitor / PrometheusRule / AlertmanagerConfig from values maps; Alloy DaemonSet config + cluster-level rules |
+
+### `apps/` — umbrella charts (one dir per app)
+
+| App | Sync wave | Purpose |
+|---|---|---|
+| `tekton` | 3 | Tekton Pipelines + Triggers operator install (vendored upstream YAML — see `apps/tekton/README.md`) |
+| `coredns` | 5 | DNS rewrites for cluster-internal Vault access (host-DNS → ClusterIP) |
+| `mongodb` | 10 | Bitnami mongodb (3-node ReplicaSet) + prometheus-mongodb-exporter |
+| `postgresql` | 10 | Bitnami postgresql (standalone) + built-in metrics exporter |
+| `postfix` | 20 | Send-only SMTP relay (bokysan chart) with DKIM/SPF/DMARC |
+| `redis` | 20 | Bitnami redis (standalone, AOF on, no auth) + redis exporter |
+| `seq` | 20 | Datalust Seq structured-log UI |
+| `image-builder` | 25 | Tekton-based image build pipeline with multi-provider webhooks. See [`apps/image-builder/README.md`](apps/image-builder/README.md) |
+| `dbgate` | 30 | Unified DB UI for Mongo + Redis + Postgres |
+| `observability` | 30 | kube-prometheus-stack + Loki + Tempo + Alloy + Alertmanager |
+
+Each app's `Chart.yaml` declares deps on the library charts it needs;
+`values-common.yaml` holds env-independent settings, `values-{dev,test,prod}.yaml`
+hold per-env overrides.
+
+### `argocd/<env>/` — bootstrap entry point per env
+
+- `root-app.yaml` — single `Application` resource that points at the
+  `argocd/<env>/apps/` directory. Apply once with `kubectl apply -f`.
+- `apps/applicationset.yaml` — `ApplicationSet` with a list generator that
+  enumerates every app + its sync wave, namespace, etc. Generates one
+  `Application` per entry. Uses the `goTemplate: true` syntax + a
+  `templatePatch` for per-app conditionals (e.g. observability gets
+  `ServerSideApply=true` and `ignoreDifferences` for kube-prometheus-stack
+  StatefulSet drift).
+
+The `sources:` array uses ArgoCD's multi-source feature with a `$values` ref
+so every app's chart automatically loads `platform/values-common.yaml` +
+`platform/values-<env>.yaml` *before* its own values files — a single source
+of truth for platform constants, no copy-paste.
+
+### Modifying the GitOps platform
+
+- **Change the domain / operator mailbox / storage class** —
+  edit `platform/values-common.yaml`, commit, push.
+- **Change a per-env Vault URL** — `platform/values-<env>.yaml`.
+- **Add a new app** — drop a new `apps/<name>/` dir following the existing
+  pattern, then append one entry to each
+  `argocd/<env>/apps/applicationset.yaml`'s element list.
+- **Tune an existing app** — edit its `apps/<name>/values-{common,env}.yaml`.
 
 ## Credentials
 
