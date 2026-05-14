@@ -43,7 +43,12 @@ readonly TMP_DIR="$(mktemp -d -t argo-manage-XXXXXX)"
 readonly BACKUP_DIR="$REPO_ROOT/argocd/.backups"
 
 readonly SUPPORTED_ENVS=(dev test prod)
-readonly REPO_PLACEHOLDER='https://to-your-repo-folder'
+# Tokens that indicate the GitOps tree still ships the placeholder repoURL.
+# Match any of these (extended regex). The repo has evolved through two
+# placeholder shapes — the legacy `https://to-your-repo-folder` and the
+# current `https://github.com/<github-account>/<github-repo>.git` — so we
+# look for either, plus any leftover angle-bracket marker.
+readonly REPO_PLACEHOLDER_REGEX='to-your-repo-folder|<github-account>|<github-repo>'
 readonly BRANCH_PLACEHOLDER='master'
 
 # ----------------------------------------------------------------------------
@@ -277,9 +282,32 @@ require_cmd() {
   fi
 }
 
+# setup_kubectl_fallback — on hosts where the user runs `kubectl` via a
+# shell alias (e.g. `alias kubectl='microk8s.kubectl'` in ~/.bashrc), the
+# standalone binary isn't on PATH and `command -v kubectl` fails inside this
+# script. Detect that case and define a `kubectl` shell function that fans
+# the call out to `microk8s kubectl`. The function shadows the (absent)
+# binary for the rest of the run, so every existing `kubectl …` call (and
+# the `require_cmd kubectl` probe below) works unchanged.
+#
+# Idempotent: no-op if a real `kubectl` binary is already on PATH.
+setup_kubectl_fallback() {
+  if command -v kubectl >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v microk8s >/dev/null 2>&1 && microk8s kubectl version --client --request-timeout=3s >/dev/null 2>&1; then
+    kubectl() { microk8s kubectl "$@"; }
+    export -f kubectl
+    log_info "Using 'microk8s kubectl' (no standalone kubectl on PATH)."
+    return 0
+  fi
+  return 1
+}
+
 check_prerequisites() {
+  setup_kubectl_fallback || true
   local missing=0
-  require_cmd kubectl "Install: snap install kubectl --classic   OR   apt install kubectl" || ((missing++))
+  require_cmd kubectl "Install: snap install kubectl --classic   OR   apt install kubectl   OR   ensure 'microk8s' is on PATH" || ((missing++))
   require_cmd yq      "Install: snap install yq    OR    wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && chmod +x /usr/local/bin/yq" || ((missing++))
   require_cmd jq      "Install: apt install jq    OR    snap install jq" || ((missing++))
   (( missing > 0 )) && return 1
@@ -357,7 +385,7 @@ action_bootstrap() {
   fi
 
   # Detect placeholder + offer to substitute.
-  if grep -q "$REPO_PLACEHOLDER" "$(root_app_file)" 2>/dev/null; then
+  if grep -Eq "$REPO_PLACEHOLDER_REGEX" "$(root_app_file)" 2>/dev/null; then
     log_warn "root-app.yaml still contains the repoURL placeholder."
     log_warn "ArgoCD won't be able to pull manifests until that's replaced."
     if confirm "Substitute repoURL + branch now (across argocd/$ENV/)?"; then
@@ -378,14 +406,23 @@ action_bootstrap() {
   if kubectl apply -f "$(root_app_file)"; then
     log_success "Bootstrap applied."
     echo
-    log_info "Waiting up to 30s for ArgoCD to reconcile the root-app..."
-    local i
+    # Wait up to 30s for the AppSet controller to materialize the per-env
+    # ApplicationSet. Break out as soon as it appears — previously this loop
+    # just slept the full window regardless of state.
+    log_info "Waiting up to 30s for ApplicationSet 'platform-apps-$ENV' to appear..."
+    local i appset_ready=0
     for i in {1..30}; do
-      if is_root_app_applied; then
-        sleep 1
+      if kubectl -n argocd get applicationset "platform-apps-$ENV" >/dev/null 2>&1; then
+        appset_ready=1
+        break
       fi
       sleep 1
     done
+    if (( appset_ready )); then
+      log_success "ApplicationSet present after ${i}s."
+    else
+      log_warn "ApplicationSet did not appear within 30s — root-app may still be syncing."
+    fi
     # Show downstream resources the root-app created.
     log_info "ApplicationSets in argocd ns:"
     kubectl -n argocd get applicationsets 2>/dev/null | sed 's/^/  /' || log_warn "  (none yet — ApplicationSet controller may need a few more seconds)"
@@ -436,10 +473,19 @@ action_set_repo_url() {
 
   if confirm "Proceed with substitution?"; then
     local f
-    for f in $(find "$(env_dir)" -name '*.yaml'); do
+    # Use NUL-terminated find output so paths with spaces are safe; and
+    # restrict each sed to lines matching repoURL:/targetRevision: so we
+    # never touch unrelated YAML by accident. The branch substitution uses
+    # a word-boundary match so it catches both the bare form
+    # (`targetRevision: master`) and the YAML-anchor form used by the
+    # ApplicationSet template (`targetRevision: &branch master`).
+    while IFS= read -r -d '' f; do
       cp -p "$f" "$BACKUP_DIR/$(basename "$f").$(date +%s).bak"
-      sed -i "s|$current_repo|$new_repo|g; s|targetRevision: $current_branch|targetRevision: $new_branch|g" "$f"
-    done
+      sed -i \
+        -e "/repoURL:/ s|$current_repo|$new_repo|g" \
+        -e "/targetRevision:/ s|\\b$current_branch\\b|$new_branch|g" \
+        "$f"
+    done < <(find "$(env_dir)" -name '*.yaml' -print0)
     log_success "Files updated. Backups in $BACKUP_DIR/"
     echo
     log_info "Next step: commit + push so ArgoCD picks them up."
@@ -459,12 +505,16 @@ action_set_repo_url() {
 # Apps management — read the AppSet's element list, present each app
 # ----------------------------------------------------------------------------
 
-# Output: one line per app: <name>|<syncWave>|<namespace>|<enabled>|<status>
+# Output: one line per app: <name>|<syncWave>|<namespace>|<enabled>
+# mikefarah/yq's string interpolation (`"\(.x // "-")"`) errors on the `"-"`
+# default with "strings cannot be subtracted". Use the array + join("|") form,
+# which yq parses correctly. Missing fields become empty strings in the
+# pipe-separated output (handled by `[[ -z $name ]] && continue` in callers).
 list_apps() {
   if [[ ! -f $(appset_file) ]]; then
     return 1
   fi
-  yq -r '.spec.generators[0].list.elements[] | "\(.name)|\(.syncWave // "-")|\(.namespace // "-")|\(.enabled // true)"' "$(appset_file)" 2>/dev/null
+  yq -r '.spec.generators[0].list.elements[] | [.name, .syncWave, .namespace, (.enabled // true)] | join("|")' "$(appset_file)" 2>/dev/null
 }
 
 # query live ArgoCD status for an Application: returns "<sync>|<health>"
@@ -587,10 +637,14 @@ action_per_app() {
 # $1 = app name, $2 = true|false
 toggle_app_in_appset() {
   local app="$1" new_state="$2"
-  local file
+  local file backup
   file=$(appset_file)
+  # Capture the backup path once — the diff at the end needs to read the
+  # SAME file we just wrote, not a backup with a fresh `date +%s` (which
+  # would be a non-existent path and silently produce an empty diff).
+  backup="$BACKUP_DIR/applicationset.yaml.$(date +%s).bak"
 
-  cp -p "$file" "$BACKUP_DIR/applicationset.yaml.$(date +%s).bak"
+  cp -p "$file" "$backup"
 
   if [[ $new_state == true ]]; then
     # Remove the `enabled: false` field (default is enabled).
@@ -604,7 +658,7 @@ toggle_app_in_appset() {
 
   echo
   log_info "Diff:"
-  diff -u "$BACKUP_DIR/applicationset.yaml.$(date +%s).bak" "$file" 2>/dev/null | sed -n '1,40p' | sed 's/^/    /' || true
+  diff -u "$backup" "$file" 2>/dev/null | sed -n '1,40p' | sed 's/^/    /' || true
 
   echo
   if confirm "Commit + push the change now?"; then
@@ -622,13 +676,19 @@ toggle_app_in_appset() {
 pause_app() {
   local app="$1" pause="$2"
   if [[ $pause == true ]]; then
-    kubectl -n argocd annotate application "$app-$ENV" \
-      argocd.argoproj.io/skip-reconcile=true --overwrite
-    log_success "Annotated $app-$ENV with skip-reconcile=true"
+    if kubectl -n argocd annotate application "$app-$ENV" \
+        argocd.argoproj.io/skip-reconcile=true --overwrite; then
+      log_success "Annotated $app-$ENV with skip-reconcile=true"
+    else
+      log_error "Failed to annotate $app-$ENV (does the Application exist?)"
+    fi
   else
-    kubectl -n argocd annotate application "$app-$ENV" \
-      argocd.argoproj.io/skip-reconcile- --overwrite
-    log_success "Removed skip-reconcile annotation from $app-$ENV"
+    if kubectl -n argocd annotate application "$app-$ENV" \
+        argocd.argoproj.io/skip-reconcile- --overwrite; then
+      log_success "Removed skip-reconcile annotation from $app-$ENV"
+    else
+      log_error "Failed to remove annotation on $app-$ENV (does the Application exist?)"
+    fi
   fi
   pause_for_key
 }
@@ -637,9 +697,12 @@ force_sync_app() {
   local app="$1"
   log_info "Triggering sync for $app-$ENV ..."
   # Set sync operation via annotation (works without argocd CLI login).
-  kubectl -n argocd patch application "$app-$ENV" --type merge -p \
-    '{"operation":{"initiatedBy":{"username":"argo-manage.sh"},"sync":{"revision":"HEAD"}}}'
-  log_success "Sync triggered."
+  if kubectl -n argocd patch application "$app-$ENV" --type merge -p \
+      '{"operation":{"initiatedBy":{"username":"argo-manage.sh"},"sync":{"revision":"HEAD"}}}'; then
+    log_success "Sync triggered."
+  else
+    log_error "kubectl patch failed — sync NOT triggered."
+  fi
   pause_for_key
 }
 
@@ -647,9 +710,12 @@ refresh_app() {
   local app="$1" mode="$2"
   local value="normal"
   [[ $mode == hard ]] && value="hard"
-  kubectl -n argocd annotate application "$app-$ENV" \
-    argocd.argoproj.io/refresh="$value" --overwrite
-  log_success "Triggered $mode refresh for $app-$ENV."
+  if kubectl -n argocd annotate application "$app-$ENV" \
+      argocd.argoproj.io/refresh="$value" --overwrite; then
+    log_success "Triggered $mode refresh for $app-$ENV."
+  else
+    log_error "kubectl annotate failed — refresh NOT triggered."
+  fi
   pause_for_key
 }
 
@@ -808,9 +874,12 @@ action_uninstall_one_app() {
   log_warn "About to: kubectl -n argocd delete application $app-$ENV"
   log_warn "This will prune the resources in namespace if prune=true (default)."
   if confirm "Proceed?"; then
-    kubectl -n argocd delete application "$app-$ENV"
-    log_success "Deleted $app-$ENV."
-    log_warn "ApplicationSet will recreate it on next reconcile. To make this durable, also disable the app in the AppSet (Apps → $app → Disable)."
+    if kubectl -n argocd delete application "$app-$ENV"; then
+      log_success "Deleted $app-$ENV."
+      log_warn "ApplicationSet will recreate it on next reconcile. To make this durable, also disable the app in the AppSet (Apps → $app → Disable)."
+    else
+      log_error "kubectl delete failed — Application may still be present."
+    fi
   fi
   pause_for_key
 }
