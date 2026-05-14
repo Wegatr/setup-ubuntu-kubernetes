@@ -176,12 +176,20 @@ follow that pattern.
   registry at `zot.dev.<DOMAIN_SUFFIX>`. The ApplicationSet entry exists
   ONLY in `argocd/dev/apps/applicationset.yaml` (sync wave 7) — test/prod
   do not generate this Application. Image storage on the platform default
-  StorageClass (50Gi PVC). htpasswd auth (two users — `push-user` for
-  image-builder, `pull-user` for consumers) is materialized from Vault by
-  ESO. The chart is a chart-of-charts: deployment + ingress + pvc +
-  configmap + external-secret + secret-store + monitoring deps; no custom
-  templates. Image pin is `ghcr.io/project-zot/zot-linux-amd64:v2.1.16`
-  matching `Chart.yaml`'s `appVersion`. Don't switch to the upstream
+  StorageClass (50Gi PVC). htpasswd auth with **three users** is
+  materialized from Vault by ESO:
+  - `admin` — Zot's `accessControl.adminPolicy` (cross-repo admin: read +
+    create + update + delete spanning every repository, plus the UI
+    Settings / GC / Browse-all panels). For interactive ops via the web UI.
+  - `push-user` — read + create + update + delete on every repo. Consumed
+    by image-builder's buildah-build-push task (envFromSecret).
+  - `pull-user` — read-only on every repo. Consumed by every workload
+    namespace's imagePullSecret (via charts/acr-secret/).
+  `defaultPolicy` + `anonymousPolicy` are both `[]` (no anonymous access).
+  The chart is a chart-of-charts: deployment + ingress + pvc + configmap +
+  external-secret + secret-store + monitoring deps; no custom templates.
+  Image pin is `ghcr.io/project-zot/zot-linux-amd64:v2.1.16` matching
+  `Chart.yaml`'s `appVersion`. Don't switch to the upstream
   `project-zot/helm-charts/zot` chart — our wrapper is consistent with the
   rest of the platform's library-chart pattern.
 - **MicroK8s built-in `registry` addon is disabled**: the snap's HTTP-only

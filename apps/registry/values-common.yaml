@@ -120,9 +120,13 @@ ingress:
 
 # ----- Zot config.json (mounted into the pod) -------------------------------
 # Access-control policy:
-#   - push-user has read+write on ALL repositories.
-#   - pull-user has read-only on ALL repositories.
-#   - Anonymous access disabled (defaultPolicy: []).
+#   - admin     → accessControl.adminPolicy (read+create+update+delete across
+#                 ALL repositories + UI "settings", GC, browse-all). Use this
+#                 for interactive ops via the Zot web UI.
+#   - push-user → read+create+update+delete on every repo (consumed by
+#                 image-builder's buildah-build-push).
+#   - pull-user → read-only on every repo (consumed by imagePullSecrets).
+#   - Anonymous access disabled (defaultPolicy + anonymousPolicy both []).
 # Prometheus metrics extension enabled on /metrics (scraped by the
 # ServiceMonitor below). Default storage: filesystem at /var/lib/registry
 # (bound to the PVC above).
@@ -149,6 +153,10 @@ configmap:
               }
             },
             "accessControl": {
+              "adminPolicy": {
+                "users": ["admin"],
+                "actions": ["read", "create", "update", "delete"]
+              },
               "repositories": {
                 "**": {
                   "policies": [
