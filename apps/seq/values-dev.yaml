@@ -40,7 +40,7 @@ seq:
   ingress:
     className: public
     annotations:
-      cert-manager.io/cluster-issuer: letsencrypt-ci
+      cert-manager.io/cluster-issuer: letsencrypt-prod
     tls:
       - secretName: seq-dev-tls
         hosts:
