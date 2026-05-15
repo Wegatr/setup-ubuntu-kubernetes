@@ -240,7 +240,7 @@ auto-update on each install.
   (the `-full` variant is chosen deliberately — `--read-only=false` lets
   operators kick off manual PipelineRuns from the browser; the trimmed
   `release.yaml` would hide the Run button). htpasswd blob materialized
-  from Vault path `secret/<env>/app/tekton-dashboard/auth` (single key
+  from Vault path `secret/<env>/app/tekton/auth` (single key
   `auth`, full htpasswd line `admin:$2y$...`). Dashboard adds a
   Deployment + ClusterRole/Binding cluster-wide read on Tekton CRs +
   Pod read for logs; doesn't touch operator CRs.

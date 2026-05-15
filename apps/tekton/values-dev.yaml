@@ -9,7 +9,7 @@ secret-store:
 externalsecret-auth:
   externalSecret:
     enabled: true
-    vaultPath: dev/app/tekton-dashboard
+    vaultPath: dev/app/tekton
 
 basicauth:
   middleware:

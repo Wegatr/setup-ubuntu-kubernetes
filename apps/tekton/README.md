@@ -122,7 +122,7 @@ with `dashboard.enabled=true`. Skip on TEST/PROD.
    ```
 
 3. **Vault UI** at `https://vault.dev.<DOMAIN_SUFFIX>:8200/ui/`:
-   - Navigate to `secret/dev/app/tekton-dashboard` (KV-v2)
+   - Navigate to `secret/dev/app/tekton` (KV-v2)
    - Create new version → key `auth`, value = the full htpasswd line.
    - Save.
 
