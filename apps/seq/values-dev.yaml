@@ -41,6 +41,10 @@ seq:
     className: public
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
+      # Outer SSO gate via apps/login. Seq has no built-in auth in our
+      # config (anonymous read), so this is the ONLY gate — actually
+      # better than dual-auth for once.
+      traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
     tls:
       - secretName: seq-dev-tls
         hosts:

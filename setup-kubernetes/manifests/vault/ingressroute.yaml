@@ -9,6 +9,14 @@ spec:
   routes:
     - match: Host(`__VAULT_HOST__`)
       kind: Rule
+      # Outer SSO gate via apps/login (oauth2-proxy + forwardAuth).
+      # Vault's HTTP API itself uses token auth — this gate only
+      # protects the browser UI from drive-by access. ESO reads Vault
+      # via the cluster-internal Service + Kubernetes auth method,
+      # NOT via this IngressRoute, so secrets pipeline is unaffected.
+      middlewares:
+        - name: forwardauth
+          namespace: login
       services:
         - name: vault
           port: 8200

@@ -14,6 +14,15 @@ server:
     ingressClassName: public
     annotations:
       cert-manager.io/cluster-issuer: __CLUSTER_ISSUER__
+      # Outer SSO gate via apps/login (oauth2-proxy + Traefik forwardAuth).
+      # Cross-namespace Middleware ref: <namespace>-<name>@kubernetescrd.
+      # When apps/login isn't yet synced, Traefik fail-opens — bootstrap
+      # works on a fresh cluster. Once login-dev is Ready, this gate kicks
+      # in and unauth users get 302'd to login.<env>.<domain>.
+      # ArgoCD STILL prompts for its own admin login after the gate
+      # (dual-auth, Phase 1). Phase 2 would wire ArgoCD's OIDC config to
+      # accept oauth2-proxy headers and skip its internal login.
+      traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
     hosts:
       - __ARGOCD_HOST__
     tls:

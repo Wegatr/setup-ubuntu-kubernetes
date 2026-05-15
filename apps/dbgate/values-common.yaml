@@ -55,7 +55,12 @@ ingress:
     enabled: true
     className: public
     annotations:
-      traefik.ingress.kubernetes.io/router.middlewares: dbgate-basic-auth@kubernetescrd
+      # Auth gate moved to apps/login (oauth2-proxy + apex cookie). The
+      # in-tree `dbgate-basic-auth` Middleware + its ExternalSecret are
+      # now orphaned (still rendered, not referenced) — safe to drop in
+      # a follow-up cleanup commit. dbgate itself has no built-in auth,
+      # so this annotation IS the gate (no dual-auth).
+      traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
     host: 'gate.{{ .Values.global.env }}.{{ .Values.global.domain }}'
     paths:
       - path: /

@@ -179,6 +179,10 @@ kube-prometheus-stack:
     ingress:
       annotations:
         cert-manager.io/cluster-issuer: "{{ .Values.global.clusterIssuer }}"
+        # Outer SSO gate via apps/login. Grafana keeps its own admin
+        # login after the gate (dual-auth). Phase 2 could wire Grafana
+        # OAuth via headers from oauth2-proxy.
+        traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
       hosts:
         - grafana.dev.digitaplatform.com
       tls:

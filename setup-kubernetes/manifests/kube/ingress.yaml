@@ -5,6 +5,10 @@ metadata:
   namespace: kubernetes-dashboard
   annotations:
     cert-manager.io/cluster-issuer: __CLUSTER_ISSUER__
+    # Outer SSO gate via apps/login. Headlamp still asks for its own
+    # bearer token after the gate (dual-auth, Phase 1). Phase 2 could
+    # wire Headlamp's --header-auth-mode against oauth2-proxy headers.
+    traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
 spec:
   ingressClassName: public
   tls:
