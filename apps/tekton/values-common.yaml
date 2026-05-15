@@ -14,13 +14,13 @@ release:
 # ----- Tekton Dashboard (DEV-only) -----------------------------------------
 # Gated by .Values.dashboard.enabled. Defaults to false here; values-dev.yaml
 # flips to true. TEST/PROD leave the default → dashboard resources don't
-# render, lib-chart deps (ingress/middleware/secret-store/external-secret)
+# render, lib-chart deps (ingress/oauth-proxy/secret-store/external-secret)
 # also produce nothing because their own enabled flags are off below.
 #
-# Dashboard lives at https://tekton.dev.<DOMAIN_SUFFIX>/ behind Traefik
-# basic-auth. htpasswd comes from Vault path
-# secret/<env>/app/tekton-dashboard/auth (single key `auth`, full
-# htpasswd line generated with `htpasswd -nbB admin '<password>'`).
+# Dashboard lives at https://tekton.<env>.<DOMAIN_SUFFIX>/ behind an
+# oauth2-proxy reverse-proxy. Auth = htpasswd (single admin) + signed
+# session cookie (7d expiry, 24h refresh). Both secrets come from Vault
+# path secret/<env>/app/tekton, keys `htpasswd` and `cookie-secret`.
 dashboard:
   enabled: false   # values-dev.yaml overrides to true
 
@@ -28,6 +28,13 @@ secret-store:
   enabled: false   # values-dev.yaml overrides
   name: vault-backend
 
+# ExternalSecret materializes a K8s Secret with TWO keys:
+#   - htpasswd        full htpasswd line, e.g. `admin:$2y$05$...`
+#                     generate with: htpasswd -nbB admin '<plaintext>'
+#   - cookie-secret   32-byte string used for AES-256 cookie encryption
+#                     generate with: openssl rand -base64 32 | head -c 32
+# Both keys must exist at Vault path secret/<env>/app/tekton — operator
+# creates them via Vault UI (DEV bootstrap, see README.md).
 externalsecret-auth:
   externalSecret:
     enabled: false  # values-dev.yaml overrides
@@ -35,32 +42,43 @@ externalsecret-auth:
     namespace: tekton
     targetSecretName: tekton-dashboard-auth
     data:
-      - secretKey: users
-        property: auth
+      - secretKey: htpasswd
+        property: htpasswd
+      - secretKey: cookie-secret
+        property: cookie-secret
 
-basicauth:
-  fullnameOverride: basic-auth
-  middleware:
-    enabled: false  # values-dev.yaml overrides
-    type: basicAuth
-    basicAuth:
-      secretName: tekton-dashboard-auth
+# oauth2-proxy v7 reverse-proxy in front of the Tekton Dashboard Service.
+# Cookie name is namespace-scoped so a future oauth2-proxy instance for
+# another app (e.g. ArgoCD) doesn't collide on the same parent domain.
+oauth-proxy:
+  oauth2proxy:
+    enabled: false   # values-dev.yaml overrides
+    # Proxies to the Tekton Dashboard Service emitted by the vendored
+    # release-dashboard.yaml (service name `tekton-dashboard`, port 9097).
+    upstream: 'http://tekton-dashboard.{{ .Release.Namespace }}.svc.cluster.local:9097'
+    hostname: 'tekton.{{ .Values.global.env }}.{{ .Values.global.domain }}'
+    authSecretName: tekton-dashboard-auth
+    cookieName: _tekton_session
+    cookieExpire: 168h
+    cookieRefresh: 24h
 
 ingress:
   ingress:
     enabled: false  # values-dev.yaml overrides
     className: public
     annotations:
-      # Traefik Middleware ref: <ns>-<middleware-name>@kubernetescrd
-      traefik.ingress.kubernetes.io/router.middlewares: tekton-basic-auth@kubernetescrd
+      # No middleware annotation any more — oauth2-proxy IS the gate; Traefik
+      # forwards directly to it.
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    host: 'tekton.dev.{{ .Values.global.domain }}'
+    host: 'tekton.{{ .Values.global.env }}.{{ .Values.global.domain }}'
     paths:
       - path: /
         pathType: Prefix
-        # Service from upstream release-dashboard.yaml — port 9097, name tekton-dashboard.
-        serviceName: tekton-dashboard
-        servicePort: 9097
+        # Service emitted by the oauth-proxy lib chart. Naming convention is
+        # `{{ Release.Name }}-{{ chart-or-alias }}` → `tekton-oauth-proxy`
+        # in this release.
+        serviceName: tekton-oauth-proxy
+        servicePort: 4180
     tls:
       enabled: true
       secretName: tekton-dashboard-tls

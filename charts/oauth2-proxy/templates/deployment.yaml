@@ -1,0 +1,147 @@
+{{- if .Values.oauth2proxy.enabled }}
+{{- /*
+oauth2-proxy v7 reverse-proxy in front of an upstream Service.
+
+WHY THIS ISN'T A FORWARDAUTH SETUP:
+  Traefik forwardAuth requires two routes per host (one for /oauth2/* to
+  oauth2-proxy, one for /* to the protected app with the forwardAuth
+  Middleware attached) and a redirect dance for the login form. For
+  single-upstream-per-instance use cases (one Dashboard, one ArgoCD, one
+  Headlamp), running oauth2-proxy as the actual reverse-proxy is simpler:
+  a single Ingress route → oauth2-proxy → upstream. WebSocket upgrades
+  pass through cleanly because oauth2-proxy v7 has built-in WS handling.
+
+WHY PROVIDER FLAGS ARE PRESENT EVEN THOUGH WE USE HTPASSWD-ONLY:
+  oauth2-proxy's CLI validation requires --provider, --client-id, and
+  --client-secret to be set regardless of which auth backends are active.
+  With --display-htpasswd-form=true and --skip-provider-button=true, the
+  HTML login form is the only entry point users see — the OIDC provider
+  config is never reached at runtime. The placeholder OIDC values are
+  harmless dummy strings.
+
+SECRET RESTART TRIGGER:
+  The pod mounts /secrets from a K8s Secret. oauth2-proxy reads htpasswd
+  and cookie-secret from disk at startup, NOT continuously. When ESO
+  rotates the materialized Secret (password change, cookie-secret rotation),
+  the running pod still uses the old values. The checksum annotation on
+  pod template re-rolls the Deployment whenever the secret NAME changes;
+  for content-only changes the operator must `kubectl rollout restart`.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "oauth2-proxy.fullname" . }}
+  labels:
+    {{- include "oauth2-proxy.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.oauth2proxy.replicas }}
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      {{- include "oauth2-proxy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "oauth2-proxy.selectorLabels" . | nindent 8 }}
+        {{- with .Values.oauth2proxy.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/auth-secret-name: {{ .Values.oauth2proxy.authSecretName | sha256sum | trunc 8 }}
+        {{- with .Values.oauth2proxy.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "oauth2-proxy.serviceAccountName" . }}
+      {{- with .Values.oauth2proxy.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.oauth2proxy.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.oauth2proxy.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: oauth2-proxy
+          image: "{{ .Values.oauth2proxy.image.repository }}:{{ .Values.oauth2proxy.image.tag }}"
+          imagePullPolicy: {{ .Values.oauth2proxy.image.pullPolicy }}
+          args:
+            - --http-address=0.0.0.0:4180
+            - --reverse-proxy=true
+            - --upstream={{ tpl .Values.oauth2proxy.upstream $ | quote }}
+            - --pass-host-header=true
+            - --pass-access-token=false
+            - --pass-authorization-header=false
+            - --pass-user-headers=true
+            - --set-xauthrequest=true
+            - --email-domain=*
+            # htpasswd-only auth — no OIDC roundtrip in the user-facing flow.
+            - --htpasswd-file=/secrets/htpasswd
+            - --display-htpasswd-form=true
+            - --skip-provider-button=true
+            # CLI-validation placeholders (see WHY comment above). Never used.
+            - --provider=oidc
+            - --client-id=noop
+            - --client-secret=noop
+            - --oidc-issuer-url=https://noop.invalid
+            - --skip-oidc-discovery=true
+            - --oidc-jwks-url=https://noop.invalid/jwks
+            # Cookie + session.
+            - --cookie-name={{ .Values.oauth2proxy.cookieName }}
+            - --cookie-secret-file=/secrets/cookie-secret
+            - --cookie-secure=true
+            - --cookie-httponly=true
+            - --cookie-samesite=lax
+            - --cookie-expire={{ .Values.oauth2proxy.cookieExpire }}
+            - --cookie-refresh={{ .Values.oauth2proxy.cookieRefresh }}
+            - --cookie-domain={{ tpl .Values.oauth2proxy.hostname $ }}
+            - --whitelist-domain={{ tpl .Values.oauth2proxy.hostname $ }}
+            - --redirect-url=https://{{ tpl .Values.oauth2proxy.hostname $ }}/oauth2/callback
+            # Long upstream timeout for Tekton Dashboard's WS log-tail streams.
+            - --upstream-timeout=600s
+            {{- with .Values.oauth2proxy.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 4180
+              protocol: TCP
+          volumeMounts:
+            - name: auth
+              mountPath: /secrets
+              readOnly: true
+          {{- with .Values.oauth2proxy.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.oauth2proxy.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.oauth2proxy.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: auth
+          secret:
+            secretName: {{ .Values.oauth2proxy.authSecretName }}
+            items:
+              - key: htpasswd
+                path: htpasswd
+                mode: 0400
+              - key: cookie-secret
+                path: cookie-secret
+                mode: 0400
+{{- end }}

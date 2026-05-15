@@ -1,0 +1,17 @@
+{{- if .Values.oauth2proxy.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "oauth2-proxy.fullname" . }}
+  labels:
+    {{- include "oauth2-proxy.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.oauth2proxy.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.oauth2proxy.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "oauth2-proxy.selectorLabels" . | nindent 4 }}
+{{- end }}

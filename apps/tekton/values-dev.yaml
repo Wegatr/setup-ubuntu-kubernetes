@@ -11,8 +11,8 @@ externalsecret-auth:
     enabled: true
     vaultPath: dev/app/tekton
 
-basicauth:
-  middleware:
+oauth-proxy:
+  oauth2proxy:
     enabled: true
 
 ingress:

@@ -10,6 +10,12 @@ description: |
   Dashboard is gated by `.Values.dashboard.enabled` (DEV: true, TEST/PROD:
   false). When disabled, none of the dashboard resources render — only
   the operator + Triggers + Interceptors install.
+
+  Dashboard auth: oauth2-proxy reverse-proxy in front of the Dashboard
+  Service. htpasswd backend (single admin user) + signed session cookie.
+  Replaces the previous Traefik basic-auth Middleware which mis-served
+  Dashboard's WebSocket-driven log-tail (browsers don't propagate the
+  Authorization header on WS upgrades → repeated auth prompts).
 type: application
 
 dependencies:
@@ -22,17 +28,20 @@ dependencies:
     repository: file://../../charts/monitoring
 
   # ----- Dashboard-related deps (only effective when dashboard.enabled) -----
-  # Public Ingress at tekton.dev.<DOMAIN_SUFFIX>. cert-manager LE cert.
+  # Public Ingress at tekton.dev.<DOMAIN_SUFFIX>. cert-manager LE cert. The
+  # Ingress backend points at the oauth2-proxy Service (NOT the Dashboard
+  # Service directly) — oauth2-proxy gates traffic with a cookie session
+  # and upstreams cleanly to the in-cluster Dashboard.
   - name: ingress
     version: 1.0.0
     repository: file://../../charts/ingress
 
-  # Traefik basic-auth Middleware that gates the Dashboard Ingress. htpasswd
-  # blob from Vault (same pattern as apps/dbgate).
-  - name: middleware
+  # oauth2-proxy reverse-proxy. Cookie session auth backed by an htpasswd
+  # file. Replaces the previous basic-auth Middleware (SPA + WS unfriendly).
+  - name: oauth2-proxy
     version: 1.0.0
-    repository: file://../../charts/middleware
-    alias: basicauth
+    repository: file://../../charts/oauth2-proxy
+    alias: oauth-proxy
 
   # Per-namespace ESO SecretStore (tekton NS must be in Vault's
   # external-secrets role bound_service_account_namespaces — one-time UI step).
@@ -40,7 +49,9 @@ dependencies:
     version: 1.0.0
     repository: file://../../charts/secret-store
 
-  # ExternalSecret pulling the htpasswd blob from Vault.
+  # ExternalSecret pulling htpasswd + cookie-secret from Vault. Materializes
+  # a K8s Secret with two keys (`htpasswd`, `cookie-secret`) which oauth2-proxy
+  # mounts at /secrets/.
   - name: external-secret
     version: 1.0.0
     repository: file://../../charts/external-secret

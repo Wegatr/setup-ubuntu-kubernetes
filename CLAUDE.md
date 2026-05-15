@@ -231,19 +231,39 @@ auto-update on each install.
   DEV's values-dev.yaml flips it to `true`; TEST/PROD leave the
   values-common.yaml default `false`, so none of the dashboard resources
   render there (single template gate on the vendored YAML + per-env
-  `enabled: false` on each lib-chart dep block — ingress / middleware /
+  `enabled: false` on each lib-chart dep block — ingress / oauth-proxy /
   secret-store / externalsecret-auth).
 
-  Deployed at `https://tekton.dev.<DOMAIN_SUFFIX>/` behind a Traefik
-  basic-auth Middleware (same dbgate-style pattern). Vendored upstream
-  `release-full.yaml` in `apps/tekton/templates/release-dashboard.yaml`
-  (the `-full` variant is chosen deliberately — `--read-only=false` lets
-  operators kick off manual PipelineRuns from the browser; the trimmed
-  `release.yaml` would hide the Run button). htpasswd blob materialized
-  from Vault path `secret/<env>/app/tekton/auth` (single key
-  `auth`, full htpasswd line `admin:$2y$...`). Dashboard adds a
-  Deployment + ClusterRole/Binding cluster-wide read on Tekton CRs +
-  Pod read for logs; doesn't touch operator CRs.
+  Deployed at `https://tekton.<env>.<DOMAIN_SUFFIX>/` behind an
+  **oauth2-proxy v7 reverse-proxy** (chart at `charts/oauth2-proxy/`,
+  aliased `oauth-proxy` in `apps/tekton/Chart.yaml`). Cookie session auth,
+  htpasswd backend (single admin user). Replaces the earlier Traefik
+  `basicAuth` Middleware which mis-served Dashboard's WebSocket log-tail
+  — browsers don't carry the `Authorization: Basic` header on WS
+  upgrades, so the first WS handshake returned 401 and re-prompted the
+  basic-auth dialog after every navigation.
+
+  Architecture: single Ingress → `tekton-oauth-proxy` Service:4180 →
+  upstream `tekton-dashboard` Service:9097. oauth2-proxy serves an HTML
+  login form (not a browser dialog) at `/oauth2/sign_in`, issues a
+  signed `_tekton_session` cookie (7d expiry, 24h refresh) on success,
+  and passes cookies through on WS upgrades. The provider/client-id/
+  client-secret flags are placeholder strings — required by oauth2-proxy
+  CLI validation but never reached because `--display-htpasswd-form=true
+  --skip-provider-button=true` makes the htpasswd form the only auth path.
+
+  Two Vault keys materialized by the `externalsecret-auth` dep into the
+  K8s Secret `tekton-dashboard-auth`:
+    - `htpasswd`       full htpasswd line, single admin user
+    - `cookie-secret`  32-char random string (AES-256 cookie encryption)
+  Vault path: `secret/<env>/app/tekton`. oauth2-proxy mounts both at
+  `/secrets/{htpasswd,cookie-secret}` (read at startup; rotate by
+  `kubectl rollout restart deploy/tekton-oauth-proxy` after a Vault edit).
+
+  Vendored upstream `release-full.yaml` in `apps/tekton/templates/
+  release-dashboard.yaml` — the `-full` variant deliberately ships
+  `--read-only=false` so operators can kick off manual PipelineRuns from
+  the browser; the trimmed `release.yaml` hides the Run button.
 - **PipelineRun retention**: every webhook-spawned PipelineRun carries
   `spec.ttlSecondsAfterFinished: 604800` (7 days), set in
   `apps/image-builder/templates/triggertemplate.yaml`. Manual PRs from

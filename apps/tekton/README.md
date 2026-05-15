@@ -11,9 +11,40 @@ interceptors, dashboard).
 The Dashboard adds a Pipeline-DAG view, PipelineRun list with drill-in,
 step-by-step live-tail logs, a manual "Create PipelineRun" form, and
 inline TaskRun results (e.g. trivy CVE counts). Lives at
-`https://tekton.dev.<DOMAIN_SUFFIX>/` behind a Traefik basic-auth Middleware.
+`https://tekton.dev.<DOMAIN_SUFFIX>/` behind an **oauth2-proxy v7
+reverse-proxy** with cookie-based session auth (htpasswd backend).
 DEV-only: TEST/PROD don't run image-builder so they don't need it; the
 `dashboard.enabled` toggle defaults to `false` in values-common.yaml.
+
+## Why oauth2-proxy and not Traefik basic-auth
+
+The first iteration of this chart gated the Dashboard with a Traefik
+`basicAuth` Middleware. Functional but a poor fit for an SPA:
+
+- Browsers cache basic-auth credentials per `(origin, realm)`, but the
+  cache invalidates on 401 responses from sub-resources — Dashboard's
+  React app fires dozens of XHR/Fetch requests on every navigation and
+  ANY 401 along the way re-prompts the dialog.
+- **WebSocket upgrades do not propagate the `Authorization` header.**
+  Dashboard streams live step logs over WS; the first WS handshake
+  returns 401, the browser re-prompts.
+- Result: users see the basic-auth dialog repeatedly after the first
+  login. Annoying enough to abandon basic-auth for any SPA-class UI.
+
+oauth2-proxy solves both:
+
+- The login is an **HTML form** posted to `/oauth2/sign_in`; no browser
+  dialog at all. On success, oauth2-proxy issues a signed `_tekton_session`
+  cookie (7d expiry, 24h refresh).
+- Cookies **are** sent on same-origin WebSocket handshakes, so live
+  log-tail works without re-auth.
+- The same library chart (`charts/oauth2-proxy/`) can be reused later
+  to gate ArgoCD, Headlamp, dbgate — anywhere basic-auth bites today.
+
+This chart runs oauth2-proxy in **reverse-proxy mode**, not Traefik
+`forwardAuth`. Single Ingress → oauth2-proxy:4180 → upstream
+`tekton-dashboard:9097`. WS upgrades pass cleanly through oauth2-proxy
+v7's built-in handler.
 
 ## One-time setup (per cluster)
 
@@ -84,18 +115,7 @@ DEV-only: TEST/PROD don't run image-builder so they don't need it; the
    between v0.30 and v1.10. Both URLs returned 200 for years; the GCS one
    now 404s for newer versions.
 
-2. **Helm-template** the chart to verify the vendored YAML renders cleanly:
-
-   ```bash
-   helm dependency build apps/tekton
-   helm template tekton apps/tekton \
-     -f platform/values-common.yaml \
-     -f platform/values-dev.yaml \
-     -f apps/tekton/values-common.yaml \
-     -f apps/tekton/values-dev.yaml | head -100
-   ```
-
-3. **Commit + push.** ArgoCD's `tekton-dev` Application syncs at wave 3,
+2. **Commit + push.** ArgoCD's `tekton-dev` Application syncs at wave 3,
    applying the operator manifests, then wave 25 brings up `image-builder`.
 
 ## Verify install
@@ -121,28 +141,62 @@ with `dashboard.enabled=true`. Skip on TEST/PROD.
    # → admin:$2y$05$abcdef...   (paste this whole line into Vault below)
    ```
 
-3. **Vault UI** at `https://vault.dev.<DOMAIN_SUFFIX>:8200/ui/`:
-   - Navigate to `secret/dev/app/tekton` (KV-v2)
-   - Create new version → key `auth`, value = the full htpasswd line.
+3. **Generate cookie-secret** (32 raw bytes, base64-trimmed to length 32):
+   ```bash
+   COOKIE=$(openssl rand -base64 32 | head -c 32)
+   echo "Cookie secret (paste into Vault, no need to save elsewhere): $COOKIE"
+   ```
+
+4. **Vault UI** at `https://vault.dev.<DOMAIN_SUFFIX>:8200/ui/`:
+   - Navigate to `secret/dev/app/tekton` (KV-v2).
+   - Create new version with **two keys**:
+     - `htpasswd` → the full htpasswd line from step 2.
+     - `cookie-secret` → the 32-char string from step 3.
    - Save.
+   - If the previous `auth` key is present from an older basic-auth
+     install, you can delete it now — the new schema does not reference it.
 
-4. **Vault role**: same UI → `Access → Auth Methods → kubernetes/ →
-   Roles → external-secrets → Edit` → append `tekton` to
-   `bound_service_account_namespaces`. Save.
+5. **Vault role**: same UI → `Access → Auth Methods → kubernetes/ →
+   Roles → external-secrets → Edit` → ensure `tekton` is in
+   `bound_service_account_namespaces`. Save. (Already done if the
+   previous basic-auth setup ran here; first-time setups need it.)
 
-5. **Per-host `configs/secrets.dev`** — set `TEKTON_DASHBOARD_AUTH=...`
-   (whole htpasswd line) so a future `--seed-vault` doesn't drop the
-   key. (Gitignored per host. Schema row already in `secrets.example`.)
+6. **Per-host `configs/secrets.dev`** — set both
+   `TEKTON_AUTH_HTPASSWD=...` and `TEKTON_AUTH_COOKIE_SECRET=...` so a
+   future `setup-kubernetes.sh --dev --seed-vault` doesn't drop the keys.
+   (Gitignored per host. Schema rows already in `secrets.example`.)
 
 After ArgoCD syncs:
-- Browser to `https://tekton.dev.<DOMAIN_SUFFIX>/` → basic-auth dialog →
-  `admin` + the plaintext password from step 2 → DAG view loads.
-- Forgot the password: regenerate, paste new htpasswd into Vault entry,
-  force-resync the ExternalSecret:
+- Browser to `https://tekton.dev.<DOMAIN_SUFFIX>/` → oauth2-proxy login
+  form (NOT a basic-auth dialog) → `admin` + the plaintext password from
+  step 2 → cookie set → DAG view loads.
+- Forgot the password: regenerate htpasswd (step 2), update Vault entry,
+  force-resync the ExternalSecret, then restart oauth2-proxy so it
+  re-reads the file:
   ```bash
   microk8s kubectl -n tekton annotate externalsecret \
     tekton-dashboard-auth force-sync="$(date +%s)" --overwrite
+  microk8s kubectl -n tekton rollout restart deploy/tekton-oauth-proxy
   ```
+- Rotate cookie-secret (invalidates ALL existing sessions): same
+  procedure, replace `cookie-secret` key in Vault, force-resync, rollout
+  restart.
+
+## Migration from basic-auth (one-time, only if you ran the basic-auth version)
+
+If your cluster currently runs the previous basic-auth iteration of this
+chart, do the migration steps below before pulling this commit, so the
+ArgoCD sync after pull lands on a working state:
+
+1. Generate cookie-secret as in step 3 above.
+2. In Vault UI, edit `secret/dev/app/tekton`: add `htpasswd` (copy the
+   value from the existing `auth` key) and `cookie-secret` (new). Save.
+3. Update `setup-kubernetes/configs/secrets.dev` per step 6.
+4. Pull this commit. ArgoCD reconciles: removes the Traefik basicAuth
+   Middleware, deploys oauth2-proxy, refreshes the K8s Secret with the
+   two new keys, swings the Ingress backend to oauth2-proxy:4180.
+5. Visit Dashboard URL — expect the new HTML login form.
+6. (Optional) Delete the now-unused `auth` key from the Vault entry.
 
 ## MicroK8s notes
 

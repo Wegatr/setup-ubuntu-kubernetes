@@ -1,0 +1,91 @@
+# Defaults for the oauth2-proxy reverse-proxy library chart.
+# Consumer charts override the four required fields:
+#   - upstream         cluster-internal URL of the protected app
+#   - hostname         public FQDN this proxy is exposed on (cookie + redirect scoping)
+#   - authSecretName   K8s Secret with `htpasswd` + `cookie-secret` keys
+# and may pin `image.tag` to a different oauth2-proxy version.
+
+oauth2proxy:
+  # Flip to true in the consuming env's values-<env>.yaml.
+  enabled: false
+
+  image:
+    repository: quay.io/oauth2-proxy/oauth2-proxy
+    # oauth2-proxy v7.x is the current stable line. Bump explicitly per consumer
+    # chart if a newer patch is needed; this default tracks the most recent
+    # release at chart-write time.
+    tag: v7.15.2
+    pullPolicy: IfNotPresent
+
+  replicas: 1
+
+  # --- REQUIRED OVERRIDES BY CONSUMER ----------------------------------------
+  # Cluster-internal URL of the application oauth2-proxy reverse-proxies to.
+  # Use the in-cluster Service DNS name. Helm `tpl` is applied so you can
+  # interpolate platform globals (e.g. http://x.{{ .Release.Namespace }}.svc:80).
+  upstream: ""
+
+  # Public FQDN this proxy serves. Cookie domain + OAuth callback URL derive
+  # from this value. Helm `tpl` applied — typical:
+  #   hostname: 'app.{{ .Values.global.env }}.{{ .Values.global.domain }}'
+  hostname: ""
+
+  # K8s Secret holding two keys:
+  #   - htpasswd       full htpasswd line(s): `user:$2y$...`
+  #   - cookie-secret  random 32-byte string for AES-256 session encryption
+  # Typically materialized by an ExternalSecret reading the same two keys from
+  # a Vault KV-v2 entry.
+  authSecretName: ""
+  # ---------------------------------------------------------------------------
+
+  # Browser cookie name. Use the `__Host-` prefix to forbid sub-domain access +
+  # require Secure flag (browser enforces this — extra defense in depth).
+  cookieName: "_oauth2_proxy"
+
+  # Session lifetime — user stays logged in for this duration after successful
+  # htpasswd auth. Refresh happens silently every `cookieRefresh`.
+  cookieExpire: "168h"   # 7 days
+  cookieRefresh: "24h"
+
+  service:
+    type: ClusterIP
+    port: 4180
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+  # Pod-level customization passthroughs.
+  podLabels: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # Pin pod identity to a dedicated SA to keep RBAC scoping clean. Created by
+  # this chart when serviceAccount.create=true; otherwise consumer pre-creates.
+  serviceAccount:
+    create: true
+    name: ""   # defaults to {{ include "oauth2-proxy.fullname" }}
+
+  # Health probe paths — oauth2-proxy serves /ping unauthenticated.
+  livenessProbe:
+    httpGet:
+      path: /ping
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /ping
+      port: http
+    initialDelaySeconds: 3
+    periodSeconds: 5
+
+  # Extra CLI flags forwarded to the oauth2-proxy binary AFTER the chart's
+  # canonical args list. Use for one-off overrides (e.g. --skip-auth-regex,
+  # --oidc-extra-audiences) without modifying the chart template.
+  extraArgs: []
