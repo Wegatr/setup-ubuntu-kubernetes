@@ -1,7 +1,15 @@
 apiVersion: v2
 name: tekton
 version: 1.0.0
-description: Tekton Pipelines + Tekton Triggers — installs the operators and CRDs that apps/image-builder/ depends on. See README.md for the install path (upstream release YAML is the source of truth; community Helm charts lag releases).
+description: |
+  Tekton Pipelines + Triggers + Dashboard — installs the operators, CRDs,
+  and (DEV-only) the web UI that apps/image-builder depends on.
+  Vendored upstream release YAML in templates/release-*.yaml; community
+  Helm charts lag the release cadence.
+
+  Dashboard is gated by `.Values.dashboard.enabled` (DEV: true, TEST/PROD:
+  false). When disabled, none of the dashboard resources render — only
+  the operator + Triggers + Interceptors install.
 type: application
 
 dependencies:
@@ -12,3 +20,28 @@ dependencies:
   - name: monitoring
     version: 2.0.0
     repository: file://../../charts/monitoring
+
+  # ----- Dashboard-related deps (only effective when dashboard.enabled) -----
+  # Public Ingress at tkn.dev.<DOMAIN_SUFFIX>. cert-manager LE cert.
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+
+  # Traefik basic-auth Middleware that gates the Dashboard Ingress. htpasswd
+  # blob from Vault (same pattern as apps/dbgate).
+  - name: middleware
+    version: 1.0.0
+    repository: file://../../charts/middleware
+    alias: basicauth
+
+  # Per-namespace ESO SecretStore (tekton-pipelines NS must be in Vault's
+  # external-secrets role bound_service_account_namespaces — one-time UI step).
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # ExternalSecret pulling the htpasswd blob from Vault.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-auth

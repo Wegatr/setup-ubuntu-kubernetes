@@ -389,7 +389,7 @@ Eleven library charts that other apps pull in as Helm dependencies:
 | App | Sync wave | Purpose |
 |---|---|---|
 | `external-secrets` | 1 | ESO controller + the 2 vendored CRDs (ExternalSecret + SecretStore) we use |
-| `tekton` | 3 | Tekton Pipelines + Triggers operator install (vendored upstream YAML — see `apps/tekton/README.md`) |
+| `tekton` | 3 | Tekton Pipelines + Triggers operator install + (DEV-only) Tekton Dashboard UI at `tkn.dev.<DOMAIN_SUFFIX>`. Single chart, single ArgoCD Application — Dashboard gated by `.Values.dashboard.enabled`. See `apps/tekton/README.md`. |
 | `coredns` | 5 | DNS rewrites for cluster-internal Vault access (host-DNS → ClusterIP) |
 | `registry` | 7 | **DEV-only.** Zot OCI registry at `zot.dev.<DOMAIN_SUFFIX>` — single platform-wide private image registry; TEST + PROD pull from this over the public internet. |
 | `mongodb` | 10 | Bitnami mongodb (3-node ReplicaSet) + prometheus-mongodb-exporter |

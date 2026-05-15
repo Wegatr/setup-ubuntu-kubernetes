@@ -40,6 +40,12 @@ spec:
           app.kubernetes.io/name: image-builder
           tekton.dev/pipeline: build-pipeline
       spec:
+        # Auto-prune the PipelineRun + its child TaskRuns + pods 7 days
+        # after the run finishes (K8s built-in TTL controller). Prevents
+        # the cluster from accumulating runs indefinitely. To raise/lower:
+        # change the value (in seconds) or adopt a TektonPruner CRD with
+        # per-status retention in a future iteration.
+        ttlSecondsAfterFinished: 604800
         pipelineRef:
           name: build-pipeline
         taskRunTemplate:

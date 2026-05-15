@@ -37,6 +37,16 @@ spec:
       description: Registry hostname.
       type: string
       default: {{ tpl .Values.pipeline.registry . | quote }}
+  results:
+    # Surfaced in Tekton Dashboard's PipelineRun detail panel + visible at
+    # the PR list level. Lets you see "HIGH: 1, CRITICAL: 0" at a glance
+    # without drilling into the trivy step log.
+    - name: cve-critical
+      description: Count of CRITICAL severity vulnerabilities found (after --ignore-unfixed filter).
+    - name: cve-high
+      description: Count of HIGH severity vulnerabilities found (after --ignore-unfixed filter).
+    - name: cve-summary
+      description: One-line human-readable summary, e.g. "CRITICAL=0 HIGH=1".
   steps:
     - name: scan
       image: aquasec/trivy:0.70.0
@@ -59,6 +69,10 @@ spec:
         #!/usr/bin/env sh
         set -eu
 
+        # jq isn't in the upstream trivy image by default; the runtime is
+        # Alpine-based so apk add is a sub-second operation.
+        apk add --no-cache --quiet jq >/dev/null
+
         # Trivy reads TRIVY_USERNAME/PASSWORD when pulling from a private
         # registry. Remap from the canonical REGISTRY_* secret keys.
         export TRIVY_USERNAME="${REGISTRY_USERNAME}"
@@ -72,7 +86,34 @@ spec:
           TRIVYIGNORE_FLAG="--ignorefile /workspace/source/.trivyignore"
         fi
 
-        echo "Scanning $TARGET (severity=$(params.severity))"
+        # PASS 1 — full JSON dump, never aborts. Used to extract CVE counts
+        # for the TaskRun results. --severity covers all so the JSON has
+        # every finding; the count then filters by HIGH/CRITICAL.
+        echo "Scanning $TARGET (JSON pass — for results extraction)"
+        # shellcheck disable=SC2086
+        trivy image \
+          --exit-code 0 \
+          --ignore-unfixed \
+          $TRIVYIGNORE_FLAG \
+          --format json \
+          --output /tmp/trivy.json \
+          "$TARGET"
+
+        CRIT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' /tmp/trivy.json)
+        HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' /tmp/trivy.json)
+        echo "CVE counts: CRITICAL=$CRIT  HIGH=$HIGH"
+
+        # Emit TaskRun results BEFORE the gating pass so they're available
+        # even when the gating pass fails (Tekton captures termination msg
+        # only when the container exits — write before the gate exits 1).
+        printf "%s" "$CRIT"                         > $(results.cve-critical.path)
+        printf "%s" "$HIGH"                         > $(results.cve-high.path)
+        printf "CRITICAL=%s HIGH=%s" "$CRIT" "$HIGH" > $(results.cve-summary.path)
+
+        # PASS 2 — human-readable table + gating. Fails the step if any
+        # CVE at the configured severity is found. This is what the user
+        # sees in Tekton Dashboard's step logs panel.
+        echo "Scanning $TARGET (table + gate, severity=$(params.severity))"
         # shellcheck disable=SC2086
         trivy image \
           --severity "$(params.severity)" \

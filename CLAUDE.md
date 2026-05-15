@@ -104,6 +104,7 @@ auto-update on each install.
 | Tekton Pipelines | `v1.12.0` | `apps/tekton/values-common.yaml` `release.pipelinesVersion` (informational) + vendored YAML in `templates/release-pipelines.yaml` | Refresh procedure in `apps/tekton/README.md`. |
 | Tekton Triggers | `v0.35.0` | same place | |
 | Tekton Interceptors | `v0.35.0` | same place | |
+| Tekton Dashboard | `v0.68.0` | `apps/tekton/values-common.yaml` `release.dashboardVersion` (informational) + vendored YAML in `apps/tekton/templates/release-dashboard.yaml` | Gated on `.Values.dashboard.enabled` (DEV only). |
 | Buildah (build image) | `quay.io/buildah/stable:v1.43.1` | `apps/image-builder/templates/tasks/buildah-build-push.yaml` step image | |
 | Trivy (scan image) | `aquasec/trivy:0.70.0` | `apps/image-builder/templates/tasks/trivy-scan.yaml` step image | |
 | Prometheus-community mongodb-exporter chart | `3.7.0` | `apps/mongodb/Chart.yaml` | |
@@ -223,6 +224,42 @@ auto-update on each install.
     matching `Chart.yaml`'s `appVersion`. Don't switch to the upstream
     `project-zot/helm-charts/zot` chart — our wrapper is consistent with
     the rest of the platform's library-chart pattern.
+- **Tekton Dashboard is inside `apps/tekton/`, DEV-only via toggle**:
+  the official Tekton Dashboard `v0.68.0` is part of the same Helm release
+  as the Pipelines + Triggers operator — single ArgoCD Application `tekton-dev`
+  shows everything-Tekton in one place. Toggle: `.Values.dashboard.enabled`.
+  DEV's values-dev.yaml flips it to `true`; TEST/PROD leave the
+  values-common.yaml default `false`, so none of the dashboard resources
+  render there (single template gate on the vendored YAML + per-env
+  `enabled: false` on each lib-chart dep block — ingress / middleware /
+  secret-store / externalsecret-auth).
+
+  Deployed at `https://tkn.dev.<DOMAIN_SUFFIX>/` behind a Traefik
+  basic-auth Middleware (same dbgate-style pattern). Vendored upstream
+  `release-full.yaml` in `apps/tekton/templates/release-dashboard.yaml`
+  (the `-full` variant is chosen deliberately — `--read-only=false` lets
+  operators kick off manual PipelineRuns from the browser; the trimmed
+  `release.yaml` would hide the Run button). htpasswd blob materialized
+  from Vault path `secret/<env>/app/tekton-dashboard/auth` (single key
+  `auth`, full htpasswd line `admin:$2y$...`). Dashboard adds a
+  Deployment + ClusterRole/Binding cluster-wide read on Tekton CRs +
+  Pod read for logs; doesn't touch operator CRs.
+- **PipelineRun retention**: every webhook-spawned PipelineRun carries
+  `spec.ttlSecondsAfterFinished: 604800` (7 days), set in
+  `apps/image-builder/templates/triggertemplate.yaml`. Manual PRs from
+  `apps/image-builder/examples/pipelinerun-manual.yaml` carry the same
+  field. K8s' built-in TTL controller (same one that handles Jobs)
+  prunes the PR + child TaskRuns + pods after the window. To extend or
+  per-status-retain, switch to a TektonPruner CRD (separate operator,
+  not currently installed).
+- **trivy-scan emits TaskRun results**: `apps/image-builder/templates/
+  tasks/trivy-scan.yaml` runs trivy twice — once with `--format json
+  --exit-code 0` to extract CVE counts (jq, `--format json` output to
+  /tmp), once with `--format table --exit-code 1` for the gate + step
+  logs. Three results emitted (`cve-critical`, `cve-high`, `cve-summary`)
+  visible in Tekton Dashboard's PR detail panel at-a-glance. Don't move
+  the result-writing AFTER the gating pass — gate exits non-zero and
+  Tekton wouldn't capture the results.
 - **MicroK8s built-in `registry` addon is disabled**: the snap's HTTP-only
   `:32000` registry is superseded by the GitOps-managed Zot above. The
   cleanup happens via `DISABLED_ADDONS=("registry")` in
@@ -290,14 +327,16 @@ For the GitOps tree, an additional pre-flight applies:
 3. **`build.<env>.<DOMAIN_SUFFIX>`** — needed by the image-builder
    EventListener Ingress (Phase A: DEV only). Must resolve to the host's
    public IPv4 same as the others.
-4. **`zot.dev.<DOMAIN_SUFFIX>`** — DEV-only, pointing at the DEV host's
+4. **`tkn.dev.<DOMAIN_SUFFIX>`** — DEV-only Tekton Dashboard hostname.
+   Required for the LE HTTP-01 cert-manager challenge on first deploy.
+5. **`zot.dev.<DOMAIN_SUFFIX>`** — DEV-only, pointing at the DEV host's
    public IPv4. Serves both the OCI distribution API + Zot's bundled
    web UI from a single hostname. Public-internet access is required
    so test/prod clusters can pull images. Inside the DEV cluster
    itself, CoreDNS has a rewrite (`apps/coredns/values-dev.yaml`
    `extraRewrites`) that points zot.dev at the Traefik service for
    in-cluster traffic; this is invisible to external clients.
-5. **Vault data + auth config**: handled by `setup-kubernetes.sh
+6. **Vault data + auth config**: handled by `setup-kubernetes.sh
    --<env> --seed-vault`. This step is built into the installer now
    (`lib/seed-vault.sh`):
    - sources `configs/secrets.<env>` (gitignored per-host file with the

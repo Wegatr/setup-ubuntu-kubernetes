@@ -1,2 +1,20 @@
-# DEV-specific Tekton overrides — none today. Phase A: only DEV runs the
-# image-build pipelines, but the operator config is identical across envs.
+# DEV-specific Tekton overrides. Phase A: only DEV runs the image-build
+# pipelines + the Dashboard UI.
+dashboard:
+  enabled: true
+
+secret-store:
+  enabled: true
+
+externalsecret-auth:
+  externalSecret:
+    enabled: true
+    vaultPath: dev/app/tekton-dashboard
+
+basicauth:
+  middleware:
+    enabled: true
+
+ingress:
+  ingress:
+    enabled: true

@@ -11,6 +11,8 @@ metadata:
   generateName: build-manual-
   namespace: image-builder
 spec:
+  # Auto-prune 7 days after finish — same as webhook-triggered runs.
+  ttlSecondsAfterFinished: 604800
   pipelineRef:
     name: build-pipeline
   taskRunTemplate:
