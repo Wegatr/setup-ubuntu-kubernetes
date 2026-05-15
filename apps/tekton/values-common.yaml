@@ -75,9 +75,12 @@ ingress:
       - path: /
         pathType: Prefix
         # Service emitted by the oauth-proxy lib chart. Naming convention is
-        # `{{ Release.Name }}-{{ chart-or-alias }}` → `tekton-oauth-proxy`
-        # in this release.
-        serviceName: tekton-oauth-proxy
+        # `{{ Release.Name }}-{{ chart-or-alias }}`. ArgoCD names the Helm
+        # release after the Application (`tekton-dev` / `tekton-test` /
+        # `tekton-prod`), so the literal serviceName differs per env — use
+        # the Helm template so we don't have to special-case per values-<env>.
+        # The ingress chart applies `tpl` to this field.
+        serviceName: '{{ .Release.Name }}-oauth-proxy'
         servicePort: 4180
     tls:
       enabled: true
