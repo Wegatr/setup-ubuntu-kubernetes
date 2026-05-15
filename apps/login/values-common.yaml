@@ -77,3 +77,15 @@ ingress:
     tls:
       enabled: true
       secretName: login-tls
+
+# Cross-subdomain /oauth2/* routing (see templates/ingressroute-oauth2-paths.yaml
+# for the why). Hosts listed here get a Traefik IngressRoute that routes the
+# /oauth2/* path prefix to the oauth-proxy Service in THIS namespace. TLS is
+# served via SNI from each host's existing main-Ingress LE cert.
+#
+# Adding a new gated subdomain: append its hostname here AND add the
+# `login-forwardauth@kubernetescrd` annotation to that subdomain's Ingress.
+ingressRoute:
+  enabled: false  # values-<env>.yaml overrides
+
+oauth2PathsHosts: []  # values-<env>.yaml provides the actual list

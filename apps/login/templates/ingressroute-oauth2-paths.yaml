@@ -1,0 +1,44 @@
+{{- /*
+oauth2-paths IngressRoute — the OTHER half of the SSO architecture.
+
+The forwardAuth Middleware (login-forwardauth@kubernetescrd, defined by the
+charts/middleware dep) on each gated app's Ingress runs the auth-check BEFORE
+the upstream is hit. When a user has no cookie, oauth2-proxy returns 403
+with the sign-in form HTML inline. The form's POST target is /oauth2/sign_in
+RELATIVE to the current host (e.g. argo.dev.<DOMAIN_SUFFIX>/oauth2/sign_in).
+
+Without this IngressRoute, /oauth2/sign_in on argo.dev would route to the
+ArgoCD backend Service, which has no such path → 404. Login appears broken.
+
+This IngressRoute makes /oauth2/* requests on EVERY gated subdomain route
+back to the central oauth2-proxy in this namespace. TLS uses the per-host
+LE cert already loaded by each consumer's main Ingress (Traefik picks via
+SNI from the shared cert pool — no separate cert needed here).
+
+Adding a new gated subdomain → append its hostname to
+.Values.oauth2PathsHosts in this app's values-<env>.yaml.
+*/}}
+{{- if .Values.ingressRoute.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: oauth2-paths
+  namespace: {{ .Release.Namespace }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: >-
+        ({{- range $i, $host := .Values.oauth2PathsHosts -}}
+        {{- if $i }} || {{ end -}}
+        Host(`{{ tpl $host $ }}`)
+        {{- end -}}) && PathPrefix(`/oauth2`)
+      kind: Rule
+      services:
+        - name: {{ .Release.Name }}-oauth-proxy
+          port: 4180
+  # tls: {} → uses SNI to pick the matching cert from Traefik's loaded pool.
+  # Each consumer's main Ingress already loads its own LE cert; this route
+  # piggybacks on that. No separate cert/Secret here.
+  tls: {}
+{{- end }}
