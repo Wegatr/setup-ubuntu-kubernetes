@@ -17,7 +17,7 @@ release:
 # render, lib-chart deps (ingress/middleware/secret-store/external-secret)
 # also produce nothing because their own enabled flags are off below.
 #
-# Dashboard lives at https://tkn.dev.<DOMAIN_SUFFIX>/ behind Traefik
+# Dashboard lives at https://tekton.dev.<DOMAIN_SUFFIX>/ behind Traefik
 # basic-auth. htpasswd comes from Vault path
 # secret/<env>/app/tekton-dashboard/auth (single key `auth`, full
 # htpasswd line generated with `htpasswd -nbB admin '<password>'`).
@@ -54,7 +54,7 @@ ingress:
       # Traefik Middleware ref: <ns>-<middleware-name>@kubernetescrd
       traefik.ingress.kubernetes.io/router.middlewares: tekton-basic-auth@kubernetescrd
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    host: 'tkn.dev.{{ .Values.global.domain }}'
+    host: 'tekton.dev.{{ .Values.global.domain }}'
     paths:
       - path: /
         pathType: Prefix

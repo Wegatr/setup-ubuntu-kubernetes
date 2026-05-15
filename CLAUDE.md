@@ -234,7 +234,7 @@ auto-update on each install.
   `enabled: false` on each lib-chart dep block — ingress / middleware /
   secret-store / externalsecret-auth).
 
-  Deployed at `https://tkn.dev.<DOMAIN_SUFFIX>/` behind a Traefik
+  Deployed at `https://tekton.dev.<DOMAIN_SUFFIX>/` behind a Traefik
   basic-auth Middleware (same dbgate-style pattern). Vendored upstream
   `release-full.yaml` in `apps/tekton/templates/release-dashboard.yaml`
   (the `-full` variant is chosen deliberately — `--read-only=false` lets
@@ -327,7 +327,7 @@ For the GitOps tree, an additional pre-flight applies:
 3. **`build.<env>.<DOMAIN_SUFFIX>`** — needed by the image-builder
    EventListener Ingress (Phase A: DEV only). Must resolve to the host's
    public IPv4 same as the others.
-4. **`tkn.dev.<DOMAIN_SUFFIX>`** — DEV-only Tekton Dashboard hostname.
+4. **`tekton.dev.<DOMAIN_SUFFIX>`** — DEV-only Tekton Dashboard hostname.
    Required for the LE HTTP-01 cert-manager challenge on first deploy.
 5. **`zot.dev.<DOMAIN_SUFFIX>`** — DEV-only, pointing at the DEV host's
    public IPv4. Serves both the OCI distribution API + Zot's bundled

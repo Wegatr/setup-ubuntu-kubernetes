@@ -11,7 +11,7 @@ interceptors, dashboard).
 The Dashboard adds a Pipeline-DAG view, PipelineRun list with drill-in,
 step-by-step live-tail logs, a manual "Create PipelineRun" form, and
 inline TaskRun results (e.g. trivy CVE counts). Lives at
-`https://tkn.dev.<DOMAIN_SUFFIX>/` behind a Traefik basic-auth Middleware.
+`https://tekton.dev.<DOMAIN_SUFFIX>/` behind a Traefik basic-auth Middleware.
 DEV-only: TEST/PROD don't run image-builder so they don't need it; the
 `dashboard.enabled` toggle defaults to `false` in values-common.yaml.
 
@@ -111,7 +111,7 @@ tkn version       # client + server
 Required before the first ArgoCD sync of the `tekton-dev` Application
 with `dashboard.enabled=true`. Skip on TEST/PROD.
 
-1. **DNS** — `tkn.dev.<DOMAIN_SUFFIX>` A-record → cluster's public IPv4.
+1. **DNS** — `tekton.dev.<DOMAIN_SUFFIX>` A-record → cluster's public IPv4.
 
 2. **Generate admin password + bcrypt-hash**:
    ```bash
@@ -135,7 +135,7 @@ with `dashboard.enabled=true`. Skip on TEST/PROD.
    key. (Gitignored per host. Schema row already in `secrets.example`.)
 
 After ArgoCD syncs:
-- Browser to `https://tkn.dev.<DOMAIN_SUFFIX>/` → basic-auth dialog →
+- Browser to `https://tekton.dev.<DOMAIN_SUFFIX>/` → basic-auth dialog →
   `admin` + the plaintext password from step 2 → DAG view loads.
 - Forgot the password: regenerate, paste new htpasswd into Vault entry,
   force-resync the ExternalSecret:

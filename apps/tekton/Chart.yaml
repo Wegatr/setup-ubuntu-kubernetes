@@ -22,7 +22,7 @@ dependencies:
     repository: file://../../charts/monitoring
 
   # ----- Dashboard-related deps (only effective when dashboard.enabled) -----
-  # Public Ingress at tkn.dev.<DOMAIN_SUFFIX>. cert-manager LE cert.
+  # Public Ingress at tekton.dev.<DOMAIN_SUFFIX>. cert-manager LE cert.
   - name: ingress
     version: 1.0.0
     repository: file://../../charts/ingress
