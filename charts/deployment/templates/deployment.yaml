@@ -7,6 +7,10 @@ metadata:
 spec:
   revisionHistoryLimit: 2
   replicas: {{ .Values.replicas }}
+  {{- with .Values.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "deployment.selectorLabels" . | nindent 6 }}

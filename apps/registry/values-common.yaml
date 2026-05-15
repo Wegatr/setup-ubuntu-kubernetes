@@ -17,6 +17,12 @@ app:
     tag: "v2.1.16"
     pullPolicy: IfNotPresent
   replicas: 1
+  # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot
+  # holds an exclusive boltdb file lock on /var/lib/registry/cache.db.
+  # With RollingUpdate, the new pod fails to start until the old pod
+  # releases the lock, and Tekton's healthcheck timeout fires.
+  strategy:
+    type: Recreate
   # Zot listens on 5000 by default; matched in configFiles.config.json below.
   containerPort: 5000
   service:

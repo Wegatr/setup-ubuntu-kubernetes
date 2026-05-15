@@ -31,6 +31,12 @@ hostAliases: []
 
 terminationGracePeriodSeconds: 30
 
+# Rollout strategy. Empty `{}` uses the K8s default (RollingUpdate with
+# maxSurge=25% / maxUnavailable=25%). Set to `{ type: Recreate }` for
+# workloads with a ReadWriteOnce PVC where two pods can't coexist (e.g.
+# apps that hold an exclusive boltdb / SQLite file lock).
+strategy: {}
+
 service:
   enabled: true
   type: ClusterIP
