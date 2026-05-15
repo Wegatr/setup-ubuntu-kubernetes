@@ -11,40 +11,30 @@ interceptors, dashboard).
 The Dashboard adds a Pipeline-DAG view, PipelineRun list with drill-in,
 step-by-step live-tail logs, a manual "Create PipelineRun" form, and
 inline TaskRun results (e.g. trivy CVE counts). Lives at
-`https://tekton.dev.<DOMAIN_SUFFIX>/` behind an **oauth2-proxy v7
-reverse-proxy** with cookie-based session auth (htpasswd backend).
-DEV-only: TEST/PROD don't run image-builder so they don't need it; the
-`dashboard.enabled` toggle defaults to `false` in values-common.yaml.
+`https://tekton.dev.<DOMAIN_SUFFIX>/`.
 
-## Why oauth2-proxy and not Traefik basic-auth
+## Auth — handled by apps/login/, not here
 
-The first iteration of this chart gated the Dashboard with a Traefik
-`basicAuth` Middleware. Functional but a poor fit for an SPA:
+There is **no per-app oauth2-proxy, no htpasswd Secret, no Vault entry**
+in this chart any more. The Dashboard Ingress carries a single Traefik
+annotation:
 
-- Browsers cache basic-auth credentials per `(origin, realm)`, but the
-  cache invalidates on 401 responses from sub-resources — Dashboard's
-  React app fires dozens of XHR/Fetch requests on every navigation and
-  ANY 401 along the way re-prompts the dialog.
-- **WebSocket upgrades do not propagate the `Authorization` header.**
-  Dashboard streams live step logs over WS; the first WS handshake
-  returns 401, the browser re-prompts.
-- Result: users see the basic-auth dialog repeatedly after the first
-  login. Annoying enough to abandon basic-auth for any SPA-class UI.
+```yaml
+traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
+```
 
-oauth2-proxy solves both:
+That cross-namespace reference points at the `forwardauth` Middleware
+materialized by `apps/login/`. Login once at
+`https://login.dev.<DOMAIN_SUFFIX>/oauth2/sign_in` → apex cookie set
+on `.dev.<DOMAIN_SUFFIX>` → recognized here automatically. WebSocket
+upgrades for live log-tail work because Traefik runs forwardAuth BEFORE
+the WS handshake; cookies travel same-origin on the actual WS upgrade.
 
-- The login is an **HTML form** posted to `/oauth2/sign_in`; no browser
-  dialog at all. On success, oauth2-proxy issues a signed `_tekton_session`
-  cookie (7d expiry, 24h refresh).
-- Cookies **are** sent on same-origin WebSocket handshakes, so live
-  log-tail works without re-auth.
-- The same library chart (`charts/oauth2-proxy/`) can be reused later
-  to gate ArgoCD, Headlamp, dbgate — anywhere basic-auth bites today.
-
-This chart runs oauth2-proxy in **reverse-proxy mode**, not Traefik
-`forwardAuth`. Single Ingress → oauth2-proxy:4180 → upstream
-`tekton-dashboard:9097`. WS upgrades pass cleanly through oauth2-proxy
-v7's built-in handler.
+If `login-forwardauth@kubernetescrd` is missing (e.g. apps/login wasn't
+applied or its sync wave is still pending), Traefik treats the
+annotation as no-op and the Dashboard is OPEN. ArgoCD sync waves
+(login=2, tekton=3) ensure the Middleware exists by the time Tekton
+syncs, but be aware on first-time bootstraps where waves race.
 
 ## One-time setup (per cluster)
 
@@ -82,9 +72,7 @@ v7's built-in handler.
      apps/tekton/templates/release-dashboard.yaml
 
    # Wrap the dashboard YAML in the Helm gate so TEST/PROD (where
-   # dashboard.enabled is false) skip rendering it. The curl downloads
-   # the raw upstream YAML; after the sed-strip above, prepend +
-   # append the Helm conditional:
+   # dashboard.enabled is false) skip rendering it.
    {
      echo '{{- if .Values.dashboard.enabled }}'
      echo '{{- /*'
@@ -107,7 +95,7 @@ v7's built-in handler.
      apps/tekton/templates/release-pipelines.yaml
    ```
 
-   Bump the three versions in `values-common.yaml` `release:` block so the
+   Bump the four versions in `values-common.yaml` `release:` block so the
    chart description stays in sync. Re-run the curl + sed block to refresh.
 
    **Note:** Tekton release artifacts moved from `storage.googleapis.com/
@@ -116,87 +104,24 @@ v7's built-in handler.
    now 404s for newer versions.
 
 2. **Commit + push.** ArgoCD's `tekton-dev` Application syncs at wave 3,
-   applying the operator manifests, then wave 25 brings up `image-builder`.
+   applying the operator manifests; `login-dev` at wave 2 ensures the
+   forwardAuth Middleware exists before this Ingress renders.
+
+3. **DNS** — `tekton.dev.<DOMAIN_SUFFIX>` A-record → cluster's public
+   IPv4. Cert-manager issues an LE cert on first reconcile.
 
 ## Verify install
 
 ```bash
 kubectl -n tekton get pods
 kubectl -n tekton get crds | grep tekton.dev
+kubectl -n tekton get ingress tekton-dev-ingress -o jsonpath='{.metadata.annotations}'  # check the forwardAuth annotation is present
 tkn version       # client + server
 ```
 
-## Tekton Dashboard bootstrap (DEV only — one-time)
-
-Required before the first ArgoCD sync of the `tekton-dev` Application
-with `dashboard.enabled=true`. Skip on TEST/PROD.
-
-1. **DNS** — `tekton.dev.<DOMAIN_SUFFIX>` A-record → cluster's public IPv4.
-
-2. **Generate admin password + bcrypt-hash**:
-   ```bash
-   PASS=$(openssl rand -base64 32 | tr -d /+= | head -c 40)
-   echo "Login password (save in password manager): $PASS"
-   htpasswd -nbB admin "$PASS"
-   # → admin:$2y$05$abcdef...   (paste this whole line into Vault below)
-   ```
-
-3. **Generate cookie-secret** (32 raw bytes, base64-trimmed to length 32):
-   ```bash
-   COOKIE=$(openssl rand -base64 32 | head -c 32)
-   echo "Cookie secret (paste into Vault, no need to save elsewhere): $COOKIE"
-   ```
-
-4. **Vault UI** at `https://vault.dev.<DOMAIN_SUFFIX>:8200/ui/`:
-   - Navigate to `secret/dev/app/tekton` (KV-v2).
-   - Create new version with **two keys**:
-     - `htpasswd` → the full htpasswd line from step 2.
-     - `cookie-secret` → the 32-char string from step 3.
-   - Save.
-   - If the previous `auth` key is present from an older basic-auth
-     install, you can delete it now — the new schema does not reference it.
-
-5. **Vault role**: same UI → `Access → Auth Methods → kubernetes/ →
-   Roles → external-secrets → Edit` → ensure `tekton` is in
-   `bound_service_account_namespaces`. Save. (Already done if the
-   previous basic-auth setup ran here; first-time setups need it.)
-
-6. **Per-host `configs/secrets.dev`** — set both
-   `TEKTON_AUTH_HTPASSWD=...` and `TEKTON_AUTH_COOKIE_SECRET=...` so a
-   future `setup-kubernetes.sh --dev --seed-vault` doesn't drop the keys.
-   (Gitignored per host. Schema rows already in `secrets.example`.)
-
-After ArgoCD syncs:
-- Browser to `https://tekton.dev.<DOMAIN_SUFFIX>/` → oauth2-proxy login
-  form (NOT a basic-auth dialog) → `admin` + the plaintext password from
-  step 2 → cookie set → DAG view loads.
-- Forgot the password: regenerate htpasswd (step 2), update Vault entry,
-  force-resync the ExternalSecret, then restart oauth2-proxy so it
-  re-reads the file:
-  ```bash
-  microk8s kubectl -n tekton annotate externalsecret \
-    tekton-dashboard-auth force-sync="$(date +%s)" --overwrite
-  microk8s kubectl -n tekton rollout restart deploy/tekton-oauth-proxy
-  ```
-- Rotate cookie-secret (invalidates ALL existing sessions): same
-  procedure, replace `cookie-secret` key in Vault, force-resync, rollout
-  restart.
-
-## Migration from basic-auth (one-time, only if you ran the basic-auth version)
-
-If your cluster currently runs the previous basic-auth iteration of this
-chart, do the migration steps below before pulling this commit, so the
-ArgoCD sync after pull lands on a working state:
-
-1. Generate cookie-secret as in step 3 above.
-2. In Vault UI, edit `secret/dev/app/tekton`: add `htpasswd` (copy the
-   value from the existing `auth` key) and `cookie-secret` (new). Save.
-3. Update `setup-kubernetes/configs/secrets.dev` per step 6.
-4. Pull this commit. ArgoCD reconciles: removes the Traefik basicAuth
-   Middleware, deploys oauth2-proxy, refreshes the K8s Secret with the
-   two new keys, swings the Ingress backend to oauth2-proxy:4180.
-5. Visit Dashboard URL — expect the new HTML login form.
-6. (Optional) Delete the now-unused `auth` key from the Vault entry.
+Browser → `https://tekton.dev.<DOMAIN_SUFFIX>/`. If no `_platform_session`
+cookie → 302 to `https://login.dev.<DOMAIN_SUFFIX>/oauth2/start?rd=...`
+→ login form → submit → cookie set on apex → 302 back → Dashboard loads.
 
 ## MicroK8s notes
 

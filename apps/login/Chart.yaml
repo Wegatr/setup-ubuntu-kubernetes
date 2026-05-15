@@ -1,0 +1,57 @@
+apiVersion: v2
+name: login
+version: 1.0.0
+description: |
+  Platform-wide login gateway — one oauth2-proxy instance fronted by the
+  hostname login.<env>.<DOMAIN_SUFFIX>. Cookie-domain is the env apex
+  (`.dev.example.com`) so authenticated sessions are shared across every
+  subdomain in that env: tekton.dev, dbgate.dev, grafana.dev, …
+
+  Other platform apps gate themselves by adding a single Traefik
+  Middleware annotation to their Ingress:
+      traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
+
+  The Middleware CR lives in this namespace and is referenced cross-
+  namespace via Traefik's k8scrd provider naming convention
+  `<namespace>-<middleware-name>@kubernetescrd`. Traefik calls
+  oauth2-proxy on every request; oauth2-proxy validates the cookie and
+  either lets Traefik proxy through (200) or 302s the browser to the
+  login form on this app's hostname.
+
+  Auth backend: htpasswd file mounted from K8s Secret materialized by
+  ESO from Vault path `secret/<env>/app/login` (keys `htpasswd` +
+  `cookie-secret`).
+type: application
+
+dependencies:
+  # oauth2-proxy reverse-proxy. In this app's case the "upstream" is
+  # `static://200` — oauth2-proxy serves only its /oauth2/* endpoints
+  # (login form, callback, sign_out, auth-check for forwardAuth).
+  - name: oauth2-proxy
+    version: 1.0.0
+    repository: file://../../charts/oauth2-proxy
+    alias: oauth-proxy
+
+  # Public Ingress at login.<env>.<DOMAIN_SUFFIX>. cert-manager LE cert.
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+
+  # Traefik forwardAuth Middleware CR. Consumer Ingresses across other
+  # namespaces reference it as `login-forwardauth@kubernetescrd`.
+  - name: middleware
+    version: 1.0.0
+    repository: file://../../charts/middleware
+    alias: forwardauth
+
+  # Per-namespace ESO SecretStore (login NS must be in Vault's
+  # external-secrets role bound_service_account_namespaces — manual UI step).
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # ExternalSecret pulling htpasswd + cookie-secret from Vault.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-auth

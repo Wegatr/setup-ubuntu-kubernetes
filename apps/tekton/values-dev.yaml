@@ -1,19 +1,8 @@
 # DEV-specific Tekton overrides. Phase A: only DEV runs the image-build
-# pipelines + the Dashboard UI.
+# pipelines + the Dashboard UI. Auth is gated by apps/login (shared
+# oauth2-proxy + apex cookie) — no per-app auth bits remain here.
 dashboard:
   enabled: true
-
-secret-store:
-  enabled: true
-
-externalsecret-auth:
-  externalSecret:
-    enabled: true
-    vaultPath: dev/app/tekton
-
-oauth-proxy:
-  oauth2proxy:
-    enabled: true
 
 ingress:
   ingress:

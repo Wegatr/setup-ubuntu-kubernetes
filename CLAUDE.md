@@ -224,46 +224,50 @@ auto-update on each install.
     matching `Chart.yaml`'s `appVersion`. Don't switch to the upstream
     `project-zot/helm-charts/zot` chart — our wrapper is consistent with
     the rest of the platform's library-chart pattern.
-- **Tekton Dashboard is inside `apps/tekton/`, DEV-only via toggle**:
-  the official Tekton Dashboard `v0.68.0` is part of the same Helm release
-  as the Pipelines + Triggers operator — single ArgoCD Application `tekton-dev`
-  shows everything-Tekton in one place. Toggle: `.Values.dashboard.enabled`.
-  DEV's values-dev.yaml flips it to `true`; TEST/PROD leave the
-  values-common.yaml default `false`, so none of the dashboard resources
-  render there (single template gate on the vendored YAML + per-env
-  `enabled: false` on each lib-chart dep block — ingress / oauth-proxy /
-  secret-store / externalsecret-auth).
+- **`apps/login/` is the shared platform auth gateway, DEV-only**:
+  one oauth2-proxy v7 instance at `https://login.<env>.<DOMAIN_SUFFIX>/`,
+  exposed by a Traefik forwardAuth Middleware (`login-forwardauth` in
+  `login` namespace). Other apps gate themselves with a single Ingress
+  annotation referencing `login-forwardauth@kubernetescrd` cross-namespace.
 
-  Deployed at `https://tekton.<env>.<DOMAIN_SUFFIX>/` behind an
-  **oauth2-proxy v7 reverse-proxy** (chart at `charts/oauth2-proxy/`,
-  aliased `oauth-proxy` in `apps/tekton/Chart.yaml`). Cookie session auth,
-  htpasswd backend (single admin user). Replaces the earlier Traefik
-  `basicAuth` Middleware which mis-served Dashboard's WebSocket log-tail
-  — browsers don't carry the `Authorization: Basic` header on WS
-  upgrades, so the first WS handshake returned 401 and re-prompted the
-  basic-auth dialog after every navigation.
+  Cookie scope is the env apex — `--cookie-domain=.dev.<DOMAIN_SUFFIX>`
+  (leading dot mandatory). One login carries to every gated subdomain
+  in the same env. Cookie name `_platform_session`, 7d expiry, 24h refresh.
 
-  Architecture: single Ingress → `tekton-oauth-proxy` Service:4180 →
-  upstream `tekton-dashboard` Service:9097. oauth2-proxy serves an HTML
-  login form (not a browser dialog) at `/oauth2/sign_in`, issues a
-  signed `_tekton_session` cookie (7d expiry, 24h refresh) on success,
-  and passes cookies through on WS upgrades. The provider/client-id/
-  client-secret flags are placeholder strings — required by oauth2-proxy
-  CLI validation but never reached because `--display-htpasswd-form=true
-  --skip-provider-button=true` makes the htpasswd form the only auth path.
+  oauth2-proxy upstream is `static://200` (it doesn't reverse-proxy
+  anything — it only serves `/oauth2/*` endpoints + answers Traefik
+  forwardAuth checks at `/`). The Ingress for `login.<env>` points at
+  the oauth2-proxy Service so users can reach the sign-in form directly.
+  Other apps' Ingresses point at THEIR OWN upstream Service (e.g.
+  `tekton-dashboard:9097`); Traefik's forwardAuth Middleware runs
+  before routing → 302 to login.<env> if no cookie, pass-through if OK.
 
-  Two Vault keys materialized by the `externalsecret-auth` dep into the
-  K8s Secret `tekton-dashboard-auth`:
-    - `htpasswd`       full htpasswd line, single admin user
-    - `cookie-secret`  32-char random string (AES-256 cookie encryption)
-  Vault path: `secret/<env>/app/tekton`. oauth2-proxy mounts both at
-  `/secrets/{htpasswd,cookie-secret}` (read at startup; rotate by
-  `kubectl rollout restart deploy/tekton-oauth-proxy` after a Vault edit).
+  Auth backend is htpasswd file (Vault keys `htpasswd` + `cookie-secret`
+  at `secret/<env>/app/login`) materialized by ESO into the K8s Secret
+  `login-auth`. CLI placeholders for OIDC provider/client-id/-secret are
+  required by oauth2-proxy validation but never reached because the
+  htpasswd form is the only sign-in path.
 
-  Vendored upstream `release-full.yaml` in `apps/tekton/templates/
-  release-dashboard.yaml` — the `-full` variant deliberately ships
-  `--read-only=false` so operators can kick off manual PipelineRuns from
-  the browser; the trimmed `release.yaml` hides the Run button.
+  Custom sign-in + error templates ship in `charts/oauth2-proxy/files/`
+  (white default + dark toggle), embedded into a ConfigMap and mounted
+  at `/custom-templates`. The default oauth2-proxy sign-in page renders
+  an unused OIDC provider button next to the htpasswd form — the custom
+  templates strip it. WHY NOT `--skip-provider-button=true`: that flag
+  jumps straight to `/oauth2/start` (OIDC redirect to noop.invalid) →
+  browser bounces back to oauth2-proxy → infinite redirect loop with
+  growing URL-encoding layers → ERR_TOO_MANY_REDIRECTS. Keep the
+  sign-in page; the templates handle the visual cleanup.
+
+- **`apps/tekton/` Dashboard (DEV-only) gates via forwardAuth, not its
+  own oauth2-proxy.** Toggle: `.Values.dashboard.enabled` (DEV: true,
+  TEST/PROD: false). When enabled, the Dashboard Service `tekton-dashboard:9097`
+  is exposed at `tekton.<env>.<DOMAIN_SUFFIX>` with a single annotation:
+    `traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd`
+  No per-app oauth2-proxy, htpasswd, Secret, or Vault entry remains in
+  apps/tekton/. Vendored upstream `release-full.yaml` in
+  `apps/tekton/templates/release-dashboard.yaml` — the `-full` variant
+  deliberately ships `--read-only=false` so operators can kick off manual
+  PipelineRuns; the trimmed `release.yaml` hides the Run button.
 - **PipelineRun retention**: every webhook-spawned PipelineRun carries
   `spec.ttlSecondsAfterFinished: 604800` (7 days), set in
   `apps/image-builder/templates/triggertemplate.yaml`. Manual PRs from
@@ -349,14 +353,17 @@ For the GitOps tree, an additional pre-flight applies:
    public IPv4 same as the others.
 4. **`tekton.dev.<DOMAIN_SUFFIX>`** — DEV-only Tekton Dashboard hostname.
    Required for the LE HTTP-01 cert-manager challenge on first deploy.
-5. **`zot.dev.<DOMAIN_SUFFIX>`** — DEV-only, pointing at the DEV host's
+5. **`login.dev.<DOMAIN_SUFFIX>`** — DEV-only platform auth gateway
+   (apps/login). Every gated subdomain (currently tekton.dev, future
+   argocd/dbgate/headlamp/etc) redirects unauth users here. LE cert.
+6. **`zot.dev.<DOMAIN_SUFFIX>`** — DEV-only, pointing at the DEV host's
    public IPv4. Serves both the OCI distribution API + Zot's bundled
    web UI from a single hostname. Public-internet access is required
    so test/prod clusters can pull images. Inside the DEV cluster
    itself, CoreDNS has a rewrite (`apps/coredns/values-dev.yaml`
    `extraRewrites`) that points zot.dev at the Traefik service for
    in-cluster traffic; this is invisible to external clients.
-6. **Vault data + auth config**: handled by `setup-kubernetes.sh
+7. **Vault data + auth config**: handled by `setup-kubernetes.sh
    --<env> --seed-vault`. This step is built into the installer now
    (`lib/seed-vault.sh`):
    - sources `configs/secrets.<env>` (gitignored per-host file with the

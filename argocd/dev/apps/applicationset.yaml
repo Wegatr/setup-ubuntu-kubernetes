@@ -42,6 +42,17 @@ spec:
             createNamespace: "true"
             specialOptions: "external-secrets"
 
+          # Wave 2 — Shared platform login gateway (oauth2-proxy + Traefik
+          # forwardAuth Middleware). Must land before any app whose Ingress
+          # references the login-forwardauth Middleware. DEV-only by
+          # omission in test/prod ApplicationSets.
+          - name: login
+            syncWave: "2"
+            namespace: login
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
           # Wave 3 — Tekton operator + CRDs. Must exist before image-builder
           # (wave 25) creates Pipelines / Tasks / EventListeners.
           - name: tekton

@@ -124,8 +124,8 @@ spec:
             - --cookie-samesite=lax
             - --cookie-expire={{ .Values.oauth2proxy.cookieExpire }}
             - --cookie-refresh={{ .Values.oauth2proxy.cookieRefresh }}
-            - --cookie-domain={{ tpl .Values.oauth2proxy.hostname $ }}
-            - --whitelist-domain={{ tpl .Values.oauth2proxy.hostname $ }}
+            - --cookie-domain={{ tpl (.Values.oauth2proxy.cookieDomain | default .Values.oauth2proxy.hostname) $ }}
+            - --whitelist-domain={{ tpl (.Values.oauth2proxy.whitelistDomain | default .Values.oauth2proxy.hostname) $ }}
             - --redirect-url=https://{{ tpl .Values.oauth2proxy.hostname $ }}/oauth2/callback
             # Long upstream timeout for Tekton Dashboard's WS log-tail streams.
             - --upstream-timeout=600s

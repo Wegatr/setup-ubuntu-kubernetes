@@ -1,8 +1,28 @@
 middleware:
   enabled: true
+  # Supported types: basicAuth | stripPrefix | redirectScheme | redirectRegex |
+  #                  forwardAuth
   type: basicAuth
   basicAuth:
     secretName: ""
   redirectScheme:
     scheme: "https"
     permanent: true
+  # forwardAuth — delegate auth check to an external HTTP service.
+  # Typically used to wire Traefik to oauth2-proxy / authentik / authelia.
+  # The middleware itself is namespace-local; consumer Ingresses reference it
+  # cross-namespace via the Traefik k8scrd provider as
+  # `<this-ns>-<name>@kubernetescrd`.
+  forwardAuth:
+    # address is `tpl`'d so consumers can interpolate Service DNS via
+    # platform globals: 'http://login-oauth-proxy.{{ .Release.Namespace }}.svc.cluster.local:4180/'
+    address: ""
+    trustForwardHeader: true
+    # Response headers oauth2-proxy / IdP injects that Traefik should forward
+    # to the upstream (so the backend knows who the user is).
+    authResponseHeaders:
+      - X-Auth-Request-User
+      - X-Auth-Request-Email
+      - X-Auth-Request-Preferred-Username
+      - X-Auth-Request-Access-Token
+      - Authorization

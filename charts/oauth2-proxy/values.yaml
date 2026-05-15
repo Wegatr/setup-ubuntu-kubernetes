@@ -25,10 +25,20 @@ oauth2proxy:
   # interpolate platform globals (e.g. http://x.{{ .Release.Namespace }}.svc:80).
   upstream: ""
 
-  # Public FQDN this proxy serves. Cookie domain + OAuth callback URL derive
-  # from this value. Helm `tpl` applied — typical:
+  # Public FQDN this proxy itself is reachable on (used for redirect-url +
+  # default cookie scope). Helm `tpl` applied — typical:
   #   hostname: 'app.{{ .Values.global.env }}.{{ .Values.global.domain }}'
   hostname: ""
+
+  # Cookie domain scope. Empty → defaults to `hostname` (single-host scope).
+  # Set to a parent domain with leading dot (e.g. `.dev.example.com`) for
+  # shared-session SSO across all subdomains. Helm `tpl` applied.
+  cookieDomain: ""
+
+  # Allowed redirect targets after sign-in. Empty → defaults to `hostname`.
+  # For SSO across subdomains use the same parent-domain pattern as
+  # cookieDomain. Helm `tpl` applied.
+  whitelistDomain: ""
 
   # K8s Secret holding two keys:
   #   - htpasswd       full htpasswd line(s): `user:$2y$...`

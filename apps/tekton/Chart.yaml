@@ -11,11 +11,10 @@ description: |
   false). When disabled, none of the dashboard resources render — only
   the operator + Triggers + Interceptors install.
 
-  Dashboard auth: oauth2-proxy reverse-proxy in front of the Dashboard
-  Service. htpasswd backend (single admin user) + signed session cookie.
-  Replaces the previous Traefik basic-auth Middleware which mis-served
-  Dashboard's WebSocket-driven log-tail (browsers don't propagate the
-  Authorization header on WS upgrades → repeated auth prompts).
+  Dashboard auth is delegated to the shared `apps/login/` app via a
+  Traefik forwardAuth Middleware. No per-app oauth2-proxy, no per-app
+  htpasswd, no per-app Vault entry — one login at login.dev.<DOMAIN_SUFFIX>
+  carries to every gated subdomain via an apex cookie.
 type: application
 
 dependencies:
@@ -27,32 +26,11 @@ dependencies:
     version: 2.0.0
     repository: file://../../charts/monitoring
 
-  # ----- Dashboard-related deps (only effective when dashboard.enabled) -----
-  # Public Ingress at tekton.dev.<DOMAIN_SUFFIX>. cert-manager LE cert. The
-  # Ingress backend points at the oauth2-proxy Service (NOT the Dashboard
-  # Service directly) — oauth2-proxy gates traffic with a cookie session
-  # and upstreams cleanly to the in-cluster Dashboard.
+  # Public Ingress at tekton.<env>.<DOMAIN_SUFFIX>. cert-manager LE cert.
+  # Backend = tekton-dashboard Service directly. Auth is gated by a
+  # Traefik forwardAuth Middleware annotation pointing at the shared
+  # login-forwardauth Middleware in the login namespace. Effective only
+  # when dashboard.enabled.
   - name: ingress
     version: 1.0.0
     repository: file://../../charts/ingress
-
-  # oauth2-proxy reverse-proxy. Cookie session auth backed by an htpasswd
-  # file. Replaces the previous basic-auth Middleware (SPA + WS unfriendly).
-  - name: oauth2-proxy
-    version: 1.0.0
-    repository: file://../../charts/oauth2-proxy
-    alias: oauth-proxy
-
-  # Per-namespace ESO SecretStore (tekton NS must be in Vault's
-  # external-secrets role bound_service_account_namespaces — one-time UI step).
-  - name: secret-store
-    version: 1.0.0
-    repository: file://../../charts/secret-store
-
-  # ExternalSecret pulling htpasswd + cookie-secret from Vault. Materializes
-  # a K8s Secret with two keys (`htpasswd`, `cookie-secret`) which oauth2-proxy
-  # mounts at /secrets/.
-  - name: external-secret
-    version: 1.0.0
-    repository: file://../../charts/external-secret
-    alias: externalsecret-auth

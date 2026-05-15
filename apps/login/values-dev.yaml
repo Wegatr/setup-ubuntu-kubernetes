@@ -1,0 +1,23 @@
+# DEV overrides: flip every dep on. Phase A is DEV-only; TEST/PROD don't
+# need shared auth yet (no human-facing UIs there beyond observability,
+# which is reached via VPN).
+
+secret-store:
+  enabled: true
+
+externalsecret-auth:
+  externalSecret:
+    enabled: true
+    vaultPath: dev/app/login
+
+oauth-proxy:
+  oauth2proxy:
+    enabled: true
+
+forwardauth:
+  middleware:
+    enabled: true
+
+ingress:
+  ingress:
+    enabled: true

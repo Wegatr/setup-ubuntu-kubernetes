@@ -22,5 +22,18 @@ spec:
     regex: {{ .Values.middleware.redirectRegex.regex | quote }}
     replacement: {{ .Values.middleware.redirectRegex.replacement | quote }}
     permanent: {{ .Values.middleware.redirectRegex.permanent | default true }}
+  {{- else if eq .Values.middleware.type "forwardAuth" }}
+  forwardAuth:
+    {{- /*
+    address is tpl'd so the consumer can compose the URL from platform
+    globals (e.g. cluster-internal Service DNS includes the release name
+    that varies per env: login-dev vs login-test vs login-prod).
+    */}}
+    address: {{ tpl .Values.middleware.forwardAuth.address . | quote }}
+    trustForwardHeader: {{ .Values.middleware.forwardAuth.trustForwardHeader | default true }}
+    {{- with .Values.middleware.forwardAuth.authResponseHeaders }}
+    authResponseHeaders:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   {{- end }}
 {{- end }}
