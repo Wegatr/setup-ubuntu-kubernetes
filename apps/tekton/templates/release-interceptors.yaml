@@ -16,7 +16,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: tekton-triggers-core-interceptors-certs
-  namespace: tekton-pipelines
+  namespace: tekton
   labels:
     app.kubernetes.io/name: core-interceptors
     app.kubernetes.io/component: interceptors
@@ -44,7 +44,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tekton-triggers-core-interceptors
-  namespace: tekton-pipelines
+  namespace: tekton
   labels:
     app.kubernetes.io/name: core-interceptors
     app.kubernetes.io/component: interceptors
@@ -133,7 +133,7 @@ metadata:
     app: tekton-triggers-core-interceptors
     version: "v0.35.0"
   name: tekton-triggers-core-interceptors
-  namespace: tekton-pipelines
+  namespace: tekton
 spec:
   ports:
     - name: "https"
@@ -169,7 +169,7 @@ spec:
   clientConfig:
     service:
       name: tekton-triggers-core-interceptors
-      namespace: tekton-pipelines
+      namespace: tekton
       path: "cel"
       port: 8443
 ---
@@ -183,7 +183,7 @@ spec:
   clientConfig:
     service:
       name: tekton-triggers-core-interceptors
-      namespace: tekton-pipelines
+      namespace: tekton
       path: "bitbucket"
       port: 8443
 ---
@@ -197,7 +197,7 @@ spec:
   clientConfig:
     service:
       name: tekton-triggers-core-interceptors
-      namespace: tekton-pipelines
+      namespace: tekton
       path: "slack"
       port: 8443
 ---
@@ -211,7 +211,7 @@ spec:
   clientConfig:
     service:
       name: tekton-triggers-core-interceptors
-      namespace: tekton-pipelines
+      namespace: tekton
       path: "github"
       port: 8443
 ---
@@ -225,7 +225,7 @@ spec:
   clientConfig:
     service:
       name: tekton-triggers-core-interceptors
-      namespace: tekton-pipelines
+      namespace: tekton
       path: "gitlab"
       port: 8443
 

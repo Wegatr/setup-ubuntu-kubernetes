@@ -70,10 +70,10 @@ monitoring:
     external-secrets:
       enabled: true
       # ESO is installed as a single ArgoCD-managed Application
-      # (apps/external-secrets/) in the external-secrets-system namespace.
+      # (apps/external-secrets/) in the external-secrets namespace.
       # The controller's metrics Service ships with the chart when
       # metrics.service.enabled=true.
-      namespaces: [external-secrets-system]
+      namespaces: [external-secrets]
       matchLabels:
         app.kubernetes.io/name: external-secrets
       endpoints:

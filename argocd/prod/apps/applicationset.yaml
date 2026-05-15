@@ -32,7 +32,7 @@ spec:
           # the 262 KB last-applied-configuration annotation limit.
           - name: external-secrets
             syncWave: "1"
-            namespace: external-secrets-system
+            namespace: external-secrets
             prune: "true"
             createNamespace: "true"
             specialOptions: "external-secrets"

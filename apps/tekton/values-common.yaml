@@ -32,7 +32,7 @@ externalsecret-auth:
   externalSecret:
     enabled: false  # values-dev.yaml overrides
     name: tekton-dashboard-auth
-    namespace: tekton-pipelines
+    namespace: tekton
     targetSecretName: tekton-dashboard-auth
     data:
       - secretKey: users
@@ -52,7 +52,7 @@ ingress:
     className: public
     annotations:
       # Traefik Middleware ref: <ns>-<middleware-name>@kubernetescrd
-      traefik.ingress.kubernetes.io/router.middlewares: tekton-pipelines-basic-auth@kubernetescrd
+      traefik.ingress.kubernetes.io/router.middlewares: tekton-basic-auth@kubernetescrd
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
     host: 'tkn.dev.{{ .Values.global.domain }}'
     paths:
@@ -81,17 +81,17 @@ config:
 # Pipeline failures + long-running PipelineRuns.
 monitoring:
   serviceMonitors:
-    tekton-pipelines:
+    tekton:
       enabled: true
-      namespaces: [tekton-pipelines]
+      namespaces: [tekton]
       matchLabels:
-        app.kubernetes.io/part-of: tekton-pipelines
+        app.kubernetes.io/part-of: tekton
       endpoints:
         - port: http-metrics
           interval: 60s
     tekton-triggers:
       enabled: true
-      namespaces: [tekton-pipelines]
+      namespaces: [tekton]
       matchLabels:
         app.kubernetes.io/part-of: tekton-triggers
       endpoints:
@@ -106,7 +106,7 @@ monitoring:
           interval: 60s
           rules:
             - alert: TektonControllerDown
-              expr: up{job=~"tekton-pipelines.*|tekton-triggers.*"} == 0
+              expr: up{job=~"tekton.*|tekton-triggers.*"} == 0
               for: 5m
               labels:
                 severity: critical

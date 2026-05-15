@@ -79,7 +79,7 @@ metadata:
     app.kubernetes.io/instance: default
     app.kubernetes.io/part-of: tekton-dashboard
   name: tekton-dashboard
-  namespace: tekton-pipelines
+  namespace: tekton
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -88,7 +88,7 @@ metadata:
     app.kubernetes.io/instance: default
     app.kubernetes.io/part-of: tekton-dashboard
   name: tekton-dashboard-info
-  namespace: tekton-pipelines
+  namespace: tekton
 rules:
   - apiGroups:
       - ""
@@ -185,7 +185,7 @@ metadata:
     app.kubernetes.io/instance: default
     app.kubernetes.io/part-of: tekton-dashboard
   name: tekton-dashboard-info
-  namespace: tekton-pipelines
+  namespace: tekton
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -211,7 +211,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tekton-dashboard
-    namespace: tekton-pipelines
+    namespace: tekton
 ---
 apiVersion: v1
 data:
@@ -222,7 +222,7 @@ metadata:
     app.kubernetes.io/instance: default
     app.kubernetes.io/part-of: tekton-dashboard
   name: dashboard-info
-  namespace: tekton-pipelines
+  namespace: tekton
 ---
 apiVersion: v1
 kind: Service
@@ -237,7 +237,7 @@ metadata:
     dashboard.tekton.dev/release: v0.68.0
     version: v0.68.0
   name: tekton-dashboard
-  namespace: tekton-pipelines
+  namespace: tekton
 spec:
   ports:
     - name: http
@@ -263,7 +263,7 @@ metadata:
     dashboard.tekton.dev/release: v0.68.0
     version: v0.68.0
   name: tekton-dashboard
-  namespace: tekton-pipelines
+  namespace: tekton
 spec:
   replicas: 1
   selector:
@@ -311,11 +311,11 @@ spec:
             - --log-level=info
             - --logout-url=
             - --namespaces=
-            - --pipelines-namespace=tekton-pipelines
+            - --pipelines-namespace=tekton
             - --port=9097
             - --read-only=false
             - --stream-logs=true
-            - --triggers-namespace=tekton-pipelines
+            - --triggers-namespace=tekton
           env:
             - name: INSTALLED_NAMESPACE
               valueFrom:
@@ -366,7 +366,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tekton-dashboard
-    namespace: tekton-pipelines
+    namespace: tekton
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -384,7 +384,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tekton-dashboard
-    namespace: tekton-pipelines
+    namespace: tekton
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -402,7 +402,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tekton-dashboard
-    namespace: tekton-pipelines
+    namespace: tekton
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -420,7 +420,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tekton-dashboard
-    namespace: tekton-pipelines
+    namespace: tekton
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -438,7 +438,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tekton-dashboard
-    namespace: tekton-pipelines
+    namespace: tekton
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -456,6 +456,6 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tekton-dashboard
-    namespace: tekton-pipelines
+    namespace: tekton
 
 {{- end }}

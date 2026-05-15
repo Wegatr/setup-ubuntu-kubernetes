@@ -37,7 +37,7 @@ spec:
           # last-applied-configuration annotation limit on client-side apply.
           - name: external-secrets
             syncWave: "1"
-            namespace: external-secrets-system
+            namespace: external-secrets
             prune: "true"
             createNamespace: "true"
             specialOptions: "external-secrets"
@@ -46,7 +46,7 @@ spec:
           # (wave 25) creates Pipelines / Tasks / EventListeners.
           - name: tekton
             syncWave: "3"
-            namespace: tekton-pipelines
+            namespace: tekton
             prune: "true"
             createNamespace: "true"
             specialOptions: ""

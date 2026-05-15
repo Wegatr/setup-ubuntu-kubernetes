@@ -101,8 +101,8 @@ DEV-only: TEST/PROD don't run image-builder so they don't need it; the
 ## Verify install
 
 ```bash
-kubectl -n tekton-pipelines get pods
-kubectl -n tekton-pipelines get crds | grep tekton.dev
+kubectl -n tekton get pods
+kubectl -n tekton get crds | grep tekton.dev
 tkn version       # client + server
 ```
 
@@ -127,7 +127,7 @@ with `dashboard.enabled=true`. Skip on TEST/PROD.
    - Save.
 
 4. **Vault role**: same UI → `Access → Auth Methods → kubernetes/ →
-   Roles → external-secrets → Edit` → append `tekton-pipelines` to
+   Roles → external-secrets → Edit` → append `tekton` to
    `bound_service_account_namespaces`. Save.
 
 5. **Per-host `configs/secrets.dev`** — set `TEKTON_DASHBOARD_AUTH=...`
@@ -140,7 +140,7 @@ After ArgoCD syncs:
 - Forgot the password: regenerate, paste new htpasswd into Vault entry,
   force-resync the ExternalSecret:
   ```bash
-  microk8s kubectl -n tekton-pipelines annotate externalsecret \
+  microk8s kubectl -n tekton annotate externalsecret \
     tekton-dashboard-auth force-sync="$(date +%s)" --overwrite
   ```
 

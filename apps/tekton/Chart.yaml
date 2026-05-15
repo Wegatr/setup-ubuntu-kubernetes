@@ -34,7 +34,7 @@ dependencies:
     repository: file://../../charts/middleware
     alias: basicauth
 
-  # Per-namespace ESO SecretStore (tekton-pipelines NS must be in Vault's
+  # Per-namespace ESO SecretStore (tekton NS must be in Vault's
   # external-secrets role bound_service_account_namespaces — one-time UI step).
   - name: secret-store
     version: 1.0.0
