@@ -53,6 +53,13 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "oauth2-proxy.serviceAccountName" . }}
+      # Pod-level securityContext covers the PSA `restricted` profile's
+      # seccomp requirement once (also applies to any future init containers).
+      # Per-container constraints (runAsNonRoot, caps drop ALL, readonly FS)
+      # stay on the container block so they're co-located with the image.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       {{- with .Values.oauth2proxy.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
