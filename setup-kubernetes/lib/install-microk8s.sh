@@ -279,26 +279,58 @@ configure_traefik_addon() {
         return 0
     fi
 
-    local current_args
-    current_args=$(microk8s kubectl -n ingress get daemonset traefik \
+    # Step 1: ensure the DaemonSet TEMPLATE contains the flag.
+    local ds_args
+    ds_args=$(microk8s kubectl -n ingress get daemonset traefik \
         -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null)
 
-    if echo "${current_args}" | grep -q "allowCrossNamespace=true"; then
+    if ! echo "${ds_args}" | grep -q "allowCrossNamespace=true"; then
+        log_info "Patching Traefik DaemonSet — enabling cross-namespace middleware refs..."
+        microk8s kubectl -n ingress patch daemonset traefik --type=json \
+            -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--providers.kubernetescrd.allowCrossNamespace=true"}]' \
+            >/dev/null || {
+            log_error "Failed to patch Traefik DaemonSet"
+            return 1
+        }
+    fi
+
+    # Step 2: ensure the LIVE pod actually has the flag.
+    #
+    # The DaemonSet's default updateStrategy is RollingUpdate with maxSurge=1
+    # and maxUnavailable=0 — fine on multi-node, but deadlocks on single-node:
+    # the new pod is created BEFORE the old one is killed, but both pods need
+    # host:80 and host:443 → new pod is stuck in Pending forever, old keeps
+    # serving traffic with the OLD args (no cross-namespace).
+    #
+    # The fix: detect the mismatch and force-roll by deleting both Pending
+    # pods (which are wedged) and the Running pod (old args). The DS controller
+    # recreates a single new pod which grabs the now-free host ports and
+    # comes up with the new args.
+    local live_args
+    live_args=$(microk8s kubectl -n ingress get pods -l name=traefik-ingress \
+        -o jsonpath='{.items[?(@.status.phase=="Running")].spec.containers[0].args}' 2>/dev/null)
+
+    if echo "${live_args}" | grep -q "allowCrossNamespace=true"; then
         log_ok "Traefik already configured for cross-namespace middlewares"
         return 0
     fi
 
-    log_info "Patching Traefik DaemonSet — enabling cross-namespace middleware refs..."
-    microk8s kubectl -n ingress patch daemonset traefik --type=json \
-        -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--providers.kubernetescrd.allowCrossNamespace=true"}]' \
-        >/dev/null || {
-        log_error "Failed to patch Traefik DaemonSet"
-        return 1
-    }
+    log_info "Live Traefik pod missing the new flag — force-rolling DaemonSet..."
 
-    log_info "Waiting for Traefik rollout..."
-    microk8s kubectl -n ingress rollout status daemonset/traefik --timeout=60s >/dev/null 2>&1 || {
-        log_warn "Traefik rollout did not complete within 60s"
+    # Clear any wedged Pending pods first (no grace, no host port held).
+    microk8s kubectl -n ingress delete pod -l name=traefik-ingress \
+        --field-selector=status.phase=Pending --grace-period=0 --force \
+        >/dev/null 2>&1 || true
+
+    # Then drop the running pod so the controller can replace it with one
+    # rendered from the patched template.
+    microk8s kubectl -n ingress delete pod -l name=traefik-ingress \
+        --field-selector=status.phase=Running --grace-period=10 \
+        >/dev/null 2>&1 || true
+
+    log_info "Waiting for new Traefik pod with cross-namespace flag..."
+    microk8s kubectl -n ingress rollout status daemonset/traefik --timeout=90s >/dev/null 2>&1 || {
+        log_warn "Traefik rollout did not complete within 90s"
     }
 
     log_ok "Traefik cross-namespace middleware refs enabled"
@@ -315,7 +347,10 @@ configure_traefik_addon() {
 # `--install-microk8s` always lands the cluster in the same state, regardless
 # of what the previous run / snap default did.
 disable_addons() {
-    if [[ ${#DISABLED_ADDONS[@]:-0} -eq 0 ]]; then
+    # `${#ARRAY[@]}` is safe even when ARRAY is undeclared — returns 0.
+    # Older code tried `${#DISABLED_ADDONS[@]:-0}` which is a syntax error:
+    # the `${#…}` length form does not accept the `:-default` modifier.
+    if [[ ${#DISABLED_ADDONS[@]} -eq 0 ]]; then
         return 0
     fi
 
