@@ -1,7 +1,7 @@
 {{- if .Values.eventListener.enabled }}
 {{- /*
 TriggerTemplate — common shape consumed by all three provider Triggers. Each
-binding feeds the same four params; the template spawns a PipelineRun.
+binding feeds the same five params; the template spawns a PipelineRun.
 
 Workspaces:
   - source         : volumeClaimTemplate (10Gi) — fresh per run
@@ -23,10 +23,13 @@ spec:
     - name: git-revision
       description: Commit SHA to build.
     - name: image-name
-      description: Image name (no registry, no tag).
+      description: Image name (no registry, no tag) — typically the repo name OR an X-Image-Name header override for monorepos.
     - name: image-version
       description: Semver base; default "0.0.0".
       default: "0.0.0"
+    - name: containerfile
+      description: Path inside the cloned repo to the Containerfile. Default `Containerfile` at root; monorepos pass via X-Containerfile header.
+      default: Containerfile
   resourcetemplates:
     - apiVersion: tekton.dev/v1
       kind: PipelineRun
@@ -50,6 +53,8 @@ spec:
             value: $(tt.params.image-name)
           - name: image-version
             value: $(tt.params.image-version)
+          - name: containerfile
+            value: $(tt.params.containerfile)
         workspaces:
           - name: source
             volumeClaimTemplate:

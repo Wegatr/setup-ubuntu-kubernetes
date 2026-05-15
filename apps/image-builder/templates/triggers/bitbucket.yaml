@@ -5,6 +5,10 @@ Bitbucket push event → PipelineRun.
 Uses Tekton's built-in `bitbucket` ClusterInterceptor which validates the
 X-Hub-Signature header (HMAC) against `image-builder-webhook-secrets.bitbucket`.
 The CEL filter matches push events on configured branches.
+
+CEL overlays compute extensions.image-name + extensions.containerfile —
+see github.yaml for the rationale (X-Image-Name / X-Containerfile
+headers override the payload-derived defaults).
 */ -}}
 apiVersion: triggers.tekton.dev/v1beta1
 kind: Trigger
@@ -29,6 +33,18 @@ spec:
     - ref:
         name: cel
       params:
+        - name: overlays
+          value:
+            - key: image-name
+              expression: >-
+                header.canonical('X-Image-Name').size() > 0
+                ? header.canonical('X-Image-Name')
+                : body.repository.name
+            - key: containerfile
+              expression: >-
+                header.canonical('X-Containerfile').size() > 0
+                ? header.canonical('X-Containerfile')
+                : 'Containerfile'
         - name: filter
           # Bitbucket payload: each push has changes[].new.name = branch.
           value: >-

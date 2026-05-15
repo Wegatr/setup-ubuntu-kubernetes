@@ -7,8 +7,13 @@ X-Hub-Signature-256 HMAC header against the secret in
 `image-builder-webhook-secrets.github`. The CEL filter restricts to push
 events on matching branches.
 
-The payload's `repository.ssh_url` + `after` (commit SHA) feed the pipeline's
-git-url and git-revision params via the TriggerBinding.
+The CEL overlays compute two values that the TriggerBinding consumes:
+  - extensions.image-name    : `X-Image-Name` header if set, else
+                                `body.repository.name`. Lets a monorepo
+                                use one webhook per component with a
+                                custom header overriding the repo name.
+  - extensions.containerfile : `X-Containerfile` header if set, else
+                                `"Containerfile"` (repo-root default).
 */ -}}
 apiVersion: triggers.tekton.dev/v1beta1
 kind: Trigger
@@ -33,6 +38,18 @@ spec:
     - ref:
         name: cel
       params:
+        - name: overlays
+          value:
+            - key: image-name
+              expression: >-
+                header.canonical('X-Image-Name').size() > 0
+                ? header.canonical('X-Image-Name')
+                : body.repository.name
+            - key: containerfile
+              expression: >-
+                header.canonical('X-Containerfile').size() > 0
+                ? header.canonical('X-Containerfile')
+                : 'Containerfile'
         - name: filter
           # Extract branch from refs/heads/<branch>; match the configured regex.
           value: >-

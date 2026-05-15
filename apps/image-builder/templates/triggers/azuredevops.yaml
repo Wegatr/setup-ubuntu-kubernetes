@@ -9,9 +9,14 @@ authentication" which sends the configured password as the
   2. Filter on gitPush events that target a matching branch
 
 The Azure payload structure for a Code-Pushed event:
-  body.resource.refUpdates[].name      = "refs/heads/<branch>"
-  body.resource.repository.remoteUrl   = SSH URL when configured that way
+  body.resource.refUpdates[].name        = "refs/heads/<branch>"
+  body.resource.repository.remoteUrl     = HTTPS clone URL
+  body.resource.repository.name          = repo short name
   body.resource.refUpdates[].newObjectId = commit SHA
+
+CEL overlays compute extensions.image-name + extensions.containerfile —
+see github.yaml for the rationale (X-Image-Name / X-Containerfile
+headers override the payload-derived defaults).
 */ -}}
 apiVersion: triggers.tekton.dev/v1beta1
 kind: Trigger
@@ -27,14 +32,18 @@ spec:
     - ref:
         name: cel
       params:
-        # Resolve the shared secret from the Kubernetes Secret at filter time
-        # and require an exact match against the Authorization header.
-        # Azure sends `Authorization: Basic <base64-of-user:password>`; we
-        # accept any prefix and match the substring after "Basic ".
         - name: overlays
           value:
-            - key: expected_secret
-              expression: "'image-builder-webhook-secrets'"
+            - key: image-name
+              expression: >-
+                header.canonical('X-Image-Name').size() > 0
+                ? header.canonical('X-Image-Name')
+                : body.resource.repository.name
+            - key: containerfile
+              expression: >-
+                header.canonical('X-Containerfile').size() > 0
+                ? header.canonical('X-Containerfile')
+                : 'Containerfile'
         - name: filter
           # Reject events not bearing the matching shared secret AND restrict
           # to push events on matching branches.

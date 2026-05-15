@@ -3,22 +3,20 @@
 TriggerBindings — map per-provider webhook payload fields to the shared
 TriggerTemplate's `params:`. Each Trigger references its own binding.
 
-The TriggerTemplate (templates/triggertemplate.yaml) expects:
-  - git-url       (string)   HTTPS URL of the source repo
-  - git-revision  (string)   commit SHA to build
-  - image-name    (string)   image name (without registry/tag)
-  - image-version (string)   semver base — taken from the repo's name or a
-                              hard-coded "0.0.0" default; callers can override.
+Provider-specific (clone URL + commit SHA come from different payload paths):
+  - git-url       : HTTPS clone URL of the source repo
+  - git-revision  : commit SHA to build
 
-For all three providers, image-name defaults to the repository's short name.
-For image-version we use "0.0.0" — semver bumps are typically tied to git
-tags, which are out of scope for a push-triggered build. If you push a tag
-instead, the github/bitbucket Interceptors will filter it out by default
-(branchFilter regex).
-
-Git auth is HTTPS+PAT, materialized as Secret `image-builder-git-https`
-by ESO in this namespace; the git-clone Task envFroms it. Bindings emit
-HTTPS clone URLs (so `credential.helper=store` can match).
+Provider-agnostic (CEL overlay in templates/triggers/<provider>.yaml computes
+these into `extensions.*` before the binding evaluates):
+  - image-name    : `X-Image-Name` HTTP header if set, else repo name
+                    (monorepos use one webhook per component with a unique
+                    header value to scope the build to a single image)
+  - containerfile : `X-Containerfile` HTTP header if set, else "Containerfile"
+                    at the repo root (single-Containerfile tenants don't
+                    need any headers)
+  - image-version : "0.0.0" hard-coded for now — semver bumps are driven
+                    by the `deploy/image-version` file (Phase 2 feature)
 */ -}}
 {{- if .Values.eventListener.triggers.github.enabled }}
 ---
@@ -36,9 +34,11 @@ spec:
     - name: git-revision
       value: $(body.after)
     - name: image-name
-      value: $(body.repository.name)
+      value: $(extensions.image-name)
     - name: image-version
       value: "0.0.0"
+    - name: containerfile
+      value: $(extensions.containerfile)
 {{- end }}
 {{- if .Values.eventListener.triggers.bitbucket.enabled }}
 ---
@@ -59,9 +59,11 @@ spec:
     - name: git-revision
       value: $(body.push.changes[0].new.target.hash)
     - name: image-name
-      value: $(body.repository.name)
+      value: $(extensions.image-name)
     - name: image-version
       value: "0.0.0"
+    - name: containerfile
+      value: $(extensions.containerfile)
 {{- end }}
 {{- if .Values.eventListener.triggers.azuredevops.enabled }}
 ---
@@ -82,8 +84,10 @@ spec:
     - name: git-revision
       value: $(body.resource.refUpdates[0].newObjectId)
     - name: image-name
-      value: $(body.resource.repository.name)
+      value: $(extensions.image-name)
     - name: image-version
       value: "0.0.0"
+    - name: containerfile
+      value: $(extensions.containerfile)
 {{- end }}
 {{- end }}
