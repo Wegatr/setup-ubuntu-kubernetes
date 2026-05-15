@@ -3,50 +3,69 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark light">
 <title>Sign in</title>
 <style>
+  :root{
+    --bg:#f8fafc;--card:#ffffff;--text:#0f172a;--muted:#64748b;
+    --border:#e2e8f0;--input-bg:#f8fafc;--input-border:#cbd5e1;
+    --primary:#2563eb;--primary-hover:#1d4ed8;--ring:rgba(37,99,235,.18);
+    --shadow:0 10px 25px rgba(15,23,42,.08);
+  }
+  body.dark{
+    --bg:#0f172a;--card:#1e293b;--text:#e2e8f0;--muted:#94a3b8;
+    --border:#334155;--input-bg:#0f172a;--input-border:#334155;
+    --primary:#3b82f6;--primary-hover:#2563eb;--ring:rgba(59,130,246,.25);
+    --shadow:0 10px 25px rgba(0,0,0,.35);
+  }
   *,*::before,*::after{box-sizing:border-box}
   body{
     margin:0;min-height:100vh;display:grid;place-items:center;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
-    background:#0f172a;color:#e2e8f0;
+    background:var(--bg);color:var(--text);
+    transition:background .15s,color .15s;
   }
+  .toggle{
+    position:fixed;top:1rem;right:1rem;width:2.25rem;height:2.25rem;
+    background:var(--card);border:1px solid var(--border);border-radius:50%;
+    cursor:pointer;display:grid;place-items:center;font-size:1rem;
+    color:var(--text);transition:background .15s,border-color .15s;
+  }
+  .toggle:hover{border-color:var(--primary)}
+  .toggle .sun{display:none}
+  .toggle .moon{display:inline}
+  body.dark .toggle .sun{display:inline}
+  body.dark .toggle .moon{display:none}
   .card{
     width:min(360px,calc(100% - 2rem));padding:2rem 2rem 1.75rem;
-    background:#1e293b;border:1px solid #334155;border-radius:12px;
-    box-shadow:0 10px 25px rgba(0,0,0,.35);
+    background:var(--card);border:1px solid var(--border);border-radius:12px;
+    box-shadow:var(--shadow);
   }
   h1{margin:0 0 1.5rem;font-size:1.125rem;font-weight:600;text-align:center;letter-spacing:.02em}
   .field{display:block;margin-bottom:1rem;font-size:.875rem}
-  .field span{display:block;margin-bottom:.375rem;color:#94a3b8}
+  .field span{display:block;margin-bottom:.375rem;color:var(--muted)}
   input[type=text],input[type=password]{
-    width:100%;padding:.625rem .75rem;background:#0f172a;border:1px solid #334155;
-    border-radius:6px;color:#e2e8f0;font-size:.875rem;outline:none;
+    width:100%;padding:.625rem .75rem;background:var(--input-bg);
+    border:1px solid var(--input-border);border-radius:6px;color:var(--text);
+    font-size:.875rem;outline:none;
     transition:border-color .15s,box-shadow .15s;
   }
-  input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
-  button{
-    width:100%;padding:.625rem;margin-top:.5rem;background:#2563eb;color:#fff;
-    border:none;border-radius:6px;font-size:.875rem;font-weight:600;cursor:pointer;
-    transition:background .15s;
+  input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--ring)}
+  button[type=submit]{
+    width:100%;padding:.625rem;margin-top:.5rem;background:var(--primary);
+    color:#fff;border:none;border-radius:6px;font-size:.875rem;font-weight:600;
+    cursor:pointer;transition:background .15s;
   }
-  button:hover{background:#1d4ed8}
-  button:active{background:#1e40af}
+  button[type=submit]:hover{background:var(--primary-hover)}
   .message{
     margin:0 0 1rem;padding:.625rem .75rem;border-radius:6px;font-size:.8125rem;
-    background:#1e293b;border:1px solid #334155;color:#cbd5e1;
-  }
-  @media (prefers-color-scheme: light){
-    body{background:#f8fafc;color:#0f172a}
-    .card{background:#fff;border-color:#e2e8f0;box-shadow:0 10px 25px rgba(15,23,42,.08)}
-    .field span{color:#64748b}
-    input[type=text],input[type=password]{background:#f8fafc;border-color:#cbd5e1;color:#0f172a}
-    .message{background:#f1f5f9;border-color:#e2e8f0;color:#334155}
+    background:var(--input-bg);border:1px solid var(--border);color:var(--muted);
   }
 </style>
 </head>
 <body>
+  <button class="toggle" type="button" id="theme-toggle" aria-label="Toggle dark mode">
+    <span class="moon" aria-hidden="true">🌙</span><span class="sun" aria-hidden="true">☀️</span>
+  </button>
   <form method="POST" action="{{.ProxyPrefix}}/sign_in?rd={{.Redirect}}" class="card">
     <h1>Sign in</h1>
     {{ if .SignInMessage }}<p class="message">{{.SignInMessage}}</p>{{ end }}
@@ -61,6 +80,23 @@
     </label>
     <button type="submit">Sign in</button>
   </form>
+<script>
+  (function(){
+    var KEY="oauth2-proxy-theme";
+    var btn=document.getElementById("theme-toggle");
+    function set(t){
+      if(t==="dark"){document.body.classList.add("dark");}
+      else{document.body.classList.remove("dark");}
+      try{localStorage.setItem(KEY,t);}catch(e){}
+    }
+    var saved=null;
+    try{saved=localStorage.getItem(KEY);}catch(e){}
+    if(saved){set(saved);}
+    btn.addEventListener("click",function(){
+      set(document.body.classList.contains("dark")?"light":"dark");
+    });
+  })();
+</script>
 </body>
 </html>
 {{end}}
