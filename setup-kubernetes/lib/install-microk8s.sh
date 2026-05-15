@@ -246,12 +246,62 @@ enable_addons() {
     # out from CoreDNS to its upstream resolvers. Safe to call on every run.
     align_calico_backend || log_warn "Calico backend alignment incomplete"
 
+    # Allow Ingresses to reference Traefik Middlewares in a different namespace.
+    # Default is locked-down (same-namespace only). We need cross-namespace so
+    # one shared `apps/login/forwardauth` Middleware in the `login` namespace
+    # can gate Ingresses living in argocd / kubernetes-dashboard / vault /
+    # tekton / observability / seq / dbgate. Safe to call on every run.
+    configure_traefik_addon || log_warn "Traefik cross-namespace config incomplete"
+
     if [[ ${#failed_addons[@]} -gt 0 ]]; then
         log_error "Failed to enable addons: ${failed_addons[*]}"
         return 1
     fi
 
     log_ok "All addons enabled successfully"
+    return 0
+}
+
+# Append --providers.kubernetescrd.allowCrossNamespace=true to Traefik's args
+# if not already set. Triggers a DaemonSet rollout to pick up the new flag.
+#
+# Why: Traefik (MicroK8s ingress addon) ships with cross-namespace middleware
+# references DISABLED. An Ingress in namespace X cannot reference a Middleware
+# in namespace Y unless this flag is on. We have a single shared forwardAuth
+# Middleware in the `login` namespace, referenced cluster-wide as
+# `login-forwardauth@kubernetescrd`.
+#
+# Idempotent: the script reads the current container args, skips if the flag
+# is already present, otherwise json-patches it onto the DaemonSet.
+configure_traefik_addon() {
+    if ! microk8s kubectl -n ingress get daemonset traefik >/dev/null 2>&1; then
+        log_warn "Traefik DaemonSet not found in 'ingress' namespace — skipping cross-namespace patch"
+        return 0
+    fi
+
+    local current_args
+    current_args=$(microk8s kubectl -n ingress get daemonset traefik \
+        -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null)
+
+    if echo "${current_args}" | grep -q "allowCrossNamespace=true"; then
+        log_ok "Traefik already configured for cross-namespace middlewares"
+        return 0
+    fi
+
+    log_info "Patching Traefik DaemonSet — enabling cross-namespace middleware refs..."
+    microk8s kubectl -n ingress patch daemonset traefik --type=json \
+        -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--providers.kubernetescrd.allowCrossNamespace=true"}]' \
+        >/dev/null || {
+        log_error "Failed to patch Traefik DaemonSet"
+        return 1
+    }
+
+    log_info "Waiting for Traefik rollout..."
+    microk8s kubectl -n ingress rollout status daemonset/traefik --timeout=60s >/dev/null 2>&1 || {
+        log_warn "Traefik rollout did not complete within 60s"
+    }
+
+    log_ok "Traefik cross-namespace middleware refs enabled"
     return 0
 }
 
