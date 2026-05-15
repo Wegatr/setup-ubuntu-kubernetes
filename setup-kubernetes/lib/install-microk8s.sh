@@ -307,7 +307,7 @@ configure_traefik_addon() {
     # recreates a single new pod which grabs the now-free host ports and
     # comes up with the new args.
     local live_args
-    live_args=$(microk8s kubectl -n ingress get pods -l name=traefik-ingress \
+    live_args=$(microk8s kubectl -n ingress get pods -l app.kubernetes.io/name=traefik \
         -o jsonpath='{.items[?(@.status.phase=="Running")].spec.containers[0].args}' 2>/dev/null)
 
     if echo "${live_args}" | grep -q "allowCrossNamespace=true"; then
@@ -318,13 +318,13 @@ configure_traefik_addon() {
     log_info "Live Traefik pod missing the new flag — force-rolling DaemonSet..."
 
     # Clear any wedged Pending pods first (no grace, no host port held).
-    microk8s kubectl -n ingress delete pod -l name=traefik-ingress \
+    microk8s kubectl -n ingress delete pod -l app.kubernetes.io/name=traefik \
         --field-selector=status.phase=Pending --grace-period=0 --force \
         >/dev/null 2>&1 || true
 
     # Then drop the running pod so the controller can replace it with one
     # rendered from the patched template.
-    microk8s kubectl -n ingress delete pod -l name=traefik-ingress \
+    microk8s kubectl -n ingress delete pod -l app.kubernetes.io/name=traefik \
         --field-selector=status.phase=Running --grace-period=10 \
         >/dev/null 2>&1 || true
 
