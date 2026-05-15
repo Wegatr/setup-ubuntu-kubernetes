@@ -144,11 +144,14 @@ spec:
         - name: auth
           secret:
             secretName: {{ .Values.oauth2proxy.authSecretName }}
+            # defaultMode 0444 (decimal 292) — world-readable, no write.
+            # 0400 (owner-only) does NOT work because K8s secret volumes
+            # are owned by root:root and the container runs as UID 65532,
+            # which is neither owner nor in the root group.
+            defaultMode: 292
             items:
               - key: htpasswd
                 path: htpasswd
-                mode: 0400
               - key: cookie-secret
                 path: cookie-secret
-                mode: 0400
 {{- end }}
