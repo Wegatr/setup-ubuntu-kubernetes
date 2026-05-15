@@ -85,6 +85,16 @@ oauth2proxy:
     initialDelaySeconds: 3
     periodSeconds: 5
 
+  # Custom sign-in + error templates. Default `enabled: true` swaps the
+  # ugly default oauth2-proxy sign-in page (which renders a useless OIDC
+  # provider button) for a clean htpasswd-only form shipped in this chart's
+  # files/ directory. Consumer charts may override one or both by setting
+  # `signIn` / `error` to inline HTML strings.
+  customTemplates:
+    enabled: true
+    signIn: ""    # empty → use chart's files/sign_in.html
+    error: ""    # empty → use chart's files/error.html
+
   # Extra CLI flags forwarded to the oauth2-proxy binary AFTER the chart's
   # canonical args list. Use for one-off overrides (e.g. --skip-auth-regex,
   # --oidc-extra-audiences) without modifying the chart template.

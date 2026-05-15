@@ -1,0 +1,53 @@
+{{define "error.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>{{.StatusCode}} {{.Title}}</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  body{
+    margin:0;min-height:100vh;display:grid;place-items:center;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    background:#0f172a;color:#e2e8f0;
+  }
+  .card{
+    width:min(420px,calc(100% - 2rem));padding:2rem;
+    background:#1e293b;border:1px solid #334155;border-radius:12px;
+    box-shadow:0 10px 25px rgba(0,0,0,.35);text-align:center;
+  }
+  .code{
+    font-size:3rem;font-weight:700;line-height:1;margin:0 0 .5rem;
+    color:#ef4444;letter-spacing:-.02em;
+  }
+  h1{margin:0 0 1rem;font-size:1.125rem;font-weight:600;color:#e2e8f0}
+  p{margin:0 0 1.25rem;color:#94a3b8;font-size:.875rem;line-height:1.5}
+  a{
+    display:inline-block;padding:.5rem 1rem;background:#2563eb;color:#fff;
+    text-decoration:none;border-radius:6px;font-size:.875rem;font-weight:500;
+  }
+  a:hover{background:#1d4ed8}
+  .rid{margin-top:1rem;font-size:.75rem;color:#64748b;font-family:ui-monospace,monospace}
+  @media (prefers-color-scheme: light){
+    body{background:#f8fafc;color:#0f172a}
+    .card{background:#fff;border-color:#e2e8f0;box-shadow:0 10px 25px rgba(15,23,42,.08)}
+    h1{color:#0f172a}
+    p{color:#64748b}
+    .rid{color:#94a3b8}
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    <p class="code">{{.StatusCode}}</p>
+    <h1>{{.Title}}</h1>
+    <p>{{.Message}}</p>
+    {{ if eq .StatusCode 403 }}
+    <a href="{{.ProxyPrefix}}/sign_in">Sign in</a>
+    {{ end }}
+    {{ if .RequestID }}<div class="rid">id: {{.RequestID}}</div>{{ end }}
+  </main>
+</body>
+</html>
+{{end}}

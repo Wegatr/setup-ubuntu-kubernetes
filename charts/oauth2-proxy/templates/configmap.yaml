@@ -1,0 +1,30 @@
+{{- if and .Values.oauth2proxy.enabled .Values.oauth2proxy.customTemplates.enabled }}
+{{- /*
+Custom oauth2-proxy templates (sign_in.html + error.html). Embedded
+verbatim from `files/` via .Files.Get — Helm does NOT process the
+contents, so the Go html/template directives like `{{.ProxyPrefix}}`
+and `{{.Redirect}}` reach oauth2-proxy unmodified.
+
+WHY THESE EXIST:
+  Default oauth2-proxy sign-in page renders an OIDC provider button
+  alongside the htpasswd form. With htpasswd-only auth (our use case),
+  the button leads nowhere — visually ugly. Custom templates omit the
+  button entirely and ship only the htpasswd form.
+
+OVERRIDE:
+  Consumer charts may set `customTemplates.signIn` /
+  `customTemplates.error` to inline HTML strings, which take precedence
+  over the chart's built-in defaults.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "oauth2-proxy.fullname" . }}-templates
+  labels:
+    {{- include "oauth2-proxy.labels" . | nindent 4 }}
+data:
+  sign_in.html: |
+{{ (.Values.oauth2proxy.customTemplates.signIn | default (.Files.Get "files/sign_in.html")) | indent 4 }}
+  error.html: |
+{{ (.Values.oauth2proxy.customTemplates.error | default (.Files.Get "files/error.html")) | indent 4 }}
+{{- end }}

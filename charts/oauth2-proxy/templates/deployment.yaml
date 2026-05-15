@@ -48,6 +48,11 @@ spec:
         {{- end }}
       annotations:
         checksum/auth-secret-name: {{ .Values.oauth2proxy.authSecretName | sha256sum | trunc 8 }}
+        {{- if .Values.oauth2proxy.customTemplates.enabled }}
+        # Rolls the pod when the template content changes (oauth2-proxy reads
+        # templates at startup, so ConfigMap auto-sync alone isn't enough).
+        checksum/templates: {{ printf "%s%s%s%s" (.Files.Get "files/sign_in.html") (.Files.Get "files/error.html") (.Values.oauth2proxy.customTemplates.signIn | default "") (.Values.oauth2proxy.customTemplates.error | default "") | sha256sum | trunc 16 }}
+        {{- end }}
         {{- with .Values.oauth2proxy.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -124,6 +129,9 @@ spec:
             - --redirect-url=https://{{ tpl .Values.oauth2proxy.hostname $ }}/oauth2/callback
             # Long upstream timeout for Tekton Dashboard's WS log-tail streams.
             - --upstream-timeout=600s
+            {{- if .Values.oauth2proxy.customTemplates.enabled }}
+            - --custom-templates-dir=/custom-templates
+            {{- end }}
             {{- with .Values.oauth2proxy.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -135,6 +143,11 @@ spec:
             - name: auth
               mountPath: /secrets
               readOnly: true
+            {{- if .Values.oauth2proxy.customTemplates.enabled }}
+            - name: templates
+              mountPath: /custom-templates
+              readOnly: true
+            {{- end }}
           {{- with .Values.oauth2proxy.readinessProbe }}
           readinessProbe:
             {{- toYaml . | nindent 12 }}
@@ -168,4 +181,10 @@ spec:
                 path: htpasswd
               - key: cookie-secret
                 path: cookie-secret
+        {{- if .Values.oauth2proxy.customTemplates.enabled }}
+        - name: templates
+          configMap:
+            name: {{ include "oauth2-proxy.fullname" . }}-templates
+            defaultMode: 292
+        {{- end }}
 {{- end }}
