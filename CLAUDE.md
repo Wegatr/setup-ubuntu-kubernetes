@@ -96,7 +96,6 @@ auto-update on each install.
 |---|---|---|---|
 | MicroK8s | `1.35/stable` | `setup-kubernetes/configs/config.example` MICROK8S_CHANNEL | 1.36 is edge-only as of May 2026. |
 | Zot | `v2.1.16` | `apps/registry/Chart.yaml` appVersion + `values-common.yaml` `app.image.tag` | Two places — must match. |
-| Joxit UI | `2.6.0` | `apps/registry/values-common.yaml` `ui.image.tag` | docker-registry-ui SPA. |
 | Bitnami mongodb (chart / DB) | `19.0.3` / `8.3.2` | `apps/mongodb/Chart.yaml` deps[mongodb].version | OCI registry only since Aug 2025. |
 | Bitnami postgresql (chart / DB) | `18.6.6` / `18.4.0` | `apps/postgresql/Chart.yaml` deps[postgresql].version | 17.x is gone from bitnamicharts + bitnamilegacy. |
 | Bitnami redis (chart / DB) | `25.5.3` / `8.6.3` | `apps/redis/Chart.yaml` deps[redis].version | |
@@ -201,28 +200,19 @@ auto-update on each install.
   so the fallback always lands on the right thing. Don't add explicit
   `storageClass: microk8s-hostpath` back into subchart values blocks.
 - **`apps/registry/` runs on DEV only**: single platform-wide Zot OCI
-  registry at `zot.dev.<DOMAIN_SUFFIX>` + a Joxit UI at
-  `zotui.dev.<DOMAIN_SUFFIX>`. The ApplicationSet entry exists ONLY in
-  `argocd/dev/apps/applicationset.yaml` (sync wave 7) — test/prod do not
-  generate this Application. Image storage on the platform default
-  StorageClass (50Gi PVC).
-  - **Topology**: ONE Helm release deploys TWO pods + TWO Services +
-    TWO Ingresses. The Chart.yaml has two `deployment` deps (aliased
-    `app` for Zot, `ui` for Joxit) and two `ingress` deps (aliased
-    `ingress-zot` for the OCI endpoint, `ingress-ui` for the Joxit
-    frontend). Zot's own minimal UI is disabled in `config.json`
-    (`extensions.ui.enable: false`) — Joxit is the only browser-facing UI.
-  - **Joxit (UI)**: image `joxit/docker-registry-ui:2.6.0`. Single nginx
-    pod that serves the Joxit SPA and reverse-proxies `/v2/*` to
-    `http://registry-<env>-app.registry.svc.cluster.local:5000`. The
-    browser only ever connects to `zotui.dev.<domain>` — Joxit's nginx
-    handles same-origin CORS. Browser Basic-Auth → Joxit forwards the
-    `Authorization` header unchanged → Zot enforces htpasswd +
-    accessControl. `DELETE_IMAGES=true` env exposes delete buttons; the
-    admin user's policy actions are what actually let the API call succeed.
+  registry at `zot.dev.<DOMAIN_SUFFIX>`. The ApplicationSet entry exists
+  ONLY in `argocd/dev/apps/applicationset.yaml` (sync wave 7) —
+  test/prod do not generate this Application. Image storage on the
+  platform default StorageClass (50Gi PVC).
+  - **Topology**: ONE Helm release deploys ONE pod (Zot v2.1.16) +
+    ONE Service + ONE Ingress. Zot's bundled web UI is enabled
+    (`extensions.ui.enable: true` in `config.json`) and serves from the
+    same hostname/port as the OCI distribution API — one process, one
+    UI, one cert. Joxit was removed (May 2026) as redundant once Zot's
+    own UI was confirmed sufficient.
   - **htpasswd auth — three users** materialized from Vault by ESO:
     - `admin` — Zot's `accessControl.adminPolicy` (cross-repo admin:
-      read+create+update+delete spanning every repo). Use for Joxit UI
+      read+create+update+delete spanning every repo). Use for Zot UI
       interactive ops (browse, delete).
     - `push-user` — read+create+update+delete on every repo. Consumed by
       image-builder's buildah-build-push task (envFromSecret).
@@ -300,10 +290,10 @@ For the GitOps tree, an additional pre-flight applies:
 3. **`build.<env>.<DOMAIN_SUFFIX>`** — needed by the image-builder
    EventListener Ingress (Phase A: DEV only). Must resolve to the host's
    public IPv4 same as the others.
-4. **`zot.dev.<DOMAIN_SUFFIX>` + `zotui.dev.<DOMAIN_SUFFIX>`** — DEV-only,
-   both pointing at the DEV host's public IPv4. Public-internet access is
-   required so test/prod clusters can pull images from Zot, and so the
-   user can reach the Joxit UI from a browser. Inside the DEV cluster
+4. **`zot.dev.<DOMAIN_SUFFIX>`** — DEV-only, pointing at the DEV host's
+   public IPv4. Serves both the OCI distribution API + Zot's bundled
+   web UI from a single hostname. Public-internet access is required
+   so test/prod clusters can pull images. Inside the DEV cluster
    itself, CoreDNS has a rewrite (`apps/coredns/values-dev.yaml`
    `extraRewrites`) that points zot.dev at the Traefik service for
    in-cluster traffic; this is invisible to external clients.
