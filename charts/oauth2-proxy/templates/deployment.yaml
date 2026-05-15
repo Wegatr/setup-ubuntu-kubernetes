@@ -87,10 +87,24 @@ spec:
             - --set-xauthrequest=true
             - --email-domain=*
             # htpasswd-only auth — no OIDC roundtrip in the user-facing flow.
+            #
+            # WHY NOT --skip-provider-button=true:
+            #   That flag bypasses the sign-in page entirely and jumps straight
+            #   to /oauth2/start, which then constructs an OIDC auth URL. With
+            #   no real provider (the placeholders below), the auth URL is
+            #   bogus and the user-agent loops back to /oauth2/start with the
+            #   prior URL encoded as `rd=…`, accumulating URL-encoding layers
+            #   on every iteration → ERR_TOO_MANY_REDIRECTS in the browser.
+            #
+            # So we KEEP the sign-in page. With display-htpasswd-form=true the
+            # page renders both: a "Sign in with OpenID Connect" button (which
+            # would 404 if clicked because the provider is fake) AND the
+            # htpasswd form (which is what the user actually uses). Mildly
+            # ugly but the only htpasswd-only path that doesn't loop.
             - --htpasswd-file=/secrets/htpasswd
             - --display-htpasswd-form=true
-            - --skip-provider-button=true
-            # CLI-validation placeholders (see WHY comment above). Never used.
+            # CLI-validation placeholders. The OIDC button on the sign-in page
+            # is a dead end; users use the htpasswd form below it.
             - --provider=oidc
             - --client-id=noop
             - --client-secret=noop
