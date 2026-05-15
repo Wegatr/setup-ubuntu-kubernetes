@@ -23,17 +23,15 @@ deploy_argocd() {
     # Create namespace
     create_namespace_if_not_exists "${ARGOCD_NAMESPACE}" || return 1
 
-    # Check if already deployed
-    local is_new_deployment=false
+    # Pattern (same as deploy-vault): never skip — Helm install/upgrade is
+    # idempotent and is the ONLY way to push in-place changes from
+    # manifests/argocd/values.yaml (e.g. new Ingress annotations) without
+    # requiring an --force flag the operator has to remember. Initial-bootstrap
+    # only steps (admin password capture) stay gated on is_new_deployment.
+    local is_new_deployment=true
     if is_helm_release_deployed "${ARGOCD_RELEASE}" "${ARGOCD_NAMESPACE}"; then
-        if [[ "${FORCE_DEPLOY}" == "true" ]]; then
-            log_warn "ArgoCD already deployed, forcing upgrade..."
-        else
-            log_ok "ArgoCD already deployed, skipping"
-            return 0
-        fi
-    else
-        is_new_deployment=true
+        is_new_deployment=false
+        log_info "ArgoCD already deployed — running helm upgrade to apply any values changes"
     fi
 
     # Deploy with Helm (rendered with current environment hostnames)

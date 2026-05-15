@@ -91,14 +91,13 @@ deploy_kube() {
     # Create namespace
     create_namespace_if_not_exists "${KUBE_NAMESPACE}" || return 1
 
-    # Check if already deployed
+    # Pattern (same as deploy-vault): never skip — Helm install/upgrade is
+    # idempotent and is the ONLY way to push in-place values changes (e.g. new
+    # annotations in manifests/kube/values.yaml). The ingress re-apply below
+    # also runs unconditionally so an Ingress-only edit (manifests/kube/ingress.yaml)
+    # takes effect via `setup-kubernetes.sh --dev --deploy-kube` without --force.
     if is_helm_release_deployed "${KUBE_RELEASE}" "${KUBE_NAMESPACE}"; then
-        if [[ "${FORCE_DEPLOY}" == "true" ]]; then
-            log_warn "Dashboard already deployed, forcing upgrade..."
-        else
-            log_ok "Dashboard already deployed, skipping"
-            return 0
-        fi
+        log_info "Headlamp already deployed — running helm upgrade to apply any values changes"
     fi
 
     # Deploy with Helm
