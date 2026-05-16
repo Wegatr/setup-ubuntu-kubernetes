@@ -3,3 +3,10 @@
 externalsecret-htpasswd:
   externalSecret:
     vaultPath: dev/app/registry
+
+# Authentik OIDC client_secret lives under the system-tier Vault path
+# alongside the other IdP client_secrets. See externalsecret-oidc in
+# values-common.yaml for the wiring; only the per-env vaultPath differs.
+externalsecret-oidc:
+  externalSecret:
+    vaultPath: dev/system/idp

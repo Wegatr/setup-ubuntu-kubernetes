@@ -51,6 +51,7 @@ _idp_generate_or_load_secrets() {
         IDP_GRAFANA_CLIENT_SECRET=$(awk -F': ' '/^Grafana client_secret:/{print $2}' "${cred_file}")
         IDP_HEADLAMP_CLIENT_SECRET=$(awk -F': ' '/^Headlamp client_secret:/{print $2}' "${cred_file}")
         IDP_VAULT_CLIENT_SECRET=$(awk -F': ' '/^Vault client_secret:/{print $2}' "${cred_file}")
+        IDP_ZOT_CLIENT_SECRET=$(awk -F': ' '/^Zot client_secret:/{print $2}' "${cred_file}")
     fi
 
     # Fill any blanks with freshly-generated random values. On first install
@@ -64,6 +65,7 @@ _idp_generate_or_load_secrets() {
     [[ -z "${IDP_GRAFANA_CLIENT_SECRET:-}" ]]   && IDP_GRAFANA_CLIENT_SECRET=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
     [[ -z "${IDP_HEADLAMP_CLIENT_SECRET:-}" ]]  && IDP_HEADLAMP_CLIENT_SECRET=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
     [[ -z "${IDP_VAULT_CLIENT_SECRET:-}" ]]     && IDP_VAULT_CLIENT_SECRET=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
+    [[ -z "${IDP_ZOT_CLIENT_SECRET:-}" ]]       && IDP_ZOT_CLIENT_SECRET=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
 
     # Always (re-)write the credentials file so the latest set is on disk.
     save_credential "idp" \
@@ -78,7 +80,8 @@ _idp_generate_or_load_secrets() {
         "ArgoCD client_secret: ${IDP_ARGOCD_CLIENT_SECRET}" \
         "Grafana client_secret: ${IDP_GRAFANA_CLIENT_SECRET}" \
         "Headlamp client_secret: ${IDP_HEADLAMP_CLIENT_SECRET}" \
-        "Vault client_secret: ${IDP_VAULT_CLIENT_SECRET}"
+        "Vault client_secret: ${IDP_VAULT_CLIENT_SECRET}" \
+        "Zot client_secret: ${IDP_ZOT_CLIENT_SECRET}"
 }
 
 # Create the idp-bootstrap Secret in the idp namespace. The Authentik
@@ -98,6 +101,7 @@ _idp_apply_bootstrap_secret() {
         --from-literal=IDP_GRAFANA_CLIENT_SECRET="${IDP_GRAFANA_CLIENT_SECRET}" \
         --from-literal=IDP_HEADLAMP_CLIENT_SECRET="${IDP_HEADLAMP_CLIENT_SECRET}" \
         --from-literal=IDP_VAULT_CLIENT_SECRET="${IDP_VAULT_CLIENT_SECRET}" \
+        --from-literal=IDP_ZOT_CLIENT_SECRET="${IDP_ZOT_CLIENT_SECRET}" \
         --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
 
@@ -145,6 +149,7 @@ _idp_apply_blueprints_configmap() {
             -e "s|\${IDP_GRAFANA_CLIENT_SECRET}|${IDP_GRAFANA_CLIENT_SECRET}|g" \
             -e "s|\${IDP_HEADLAMP_CLIENT_SECRET}|${IDP_HEADLAMP_CLIENT_SECRET}|g" \
             -e "s|\${IDP_VAULT_CLIENT_SECRET}|${IDP_VAULT_CLIENT_SECRET}|g" \
+            -e "s|\${IDP_ZOT_CLIENT_SECRET}|${IDP_ZOT_CLIENT_SECRET}|g" \
             "${file}" > "${rendered_dir}/${base}"
     done
 
@@ -222,6 +227,7 @@ _idp_wait_for_blueprints_converged() {
         "Grafana OIDC client"
         "Headlamp OIDC client"
         "Vault OIDC client"
+        "Zot OIDC client"
         "Tekton Dashboard Forward Auth"
         "dbgate Forward Auth"
         "Seq Forward Auth"

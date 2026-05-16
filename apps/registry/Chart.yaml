@@ -42,6 +42,17 @@ dependencies:
     repository: file://../../charts/external-secret
     alias: externalsecret-htpasswd
 
+  # Separate ExternalSecret for the Authentik OIDC client_secret. Lives
+  # under Vault path `<env>/system/idp` (infrastructure-tier) rather
+  # than `<env>/app/registry` because Authentik is part of the platform
+  # IdP, not a workload secret. Materialized as `zot-oidc` Secret with
+  # key OIDC_CLIENT_SECRET; the Zot pod env-loads it so config.json's
+  # ${ZOT_OIDC_CLIENT_SECRET} expands at startup.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-oidc
+
   # Per-namespace ESO SecretStore (vault-backend) — required so the
   # externalsecret-htpasswd above can authenticate to Vault from THIS namespace.
   # Adds `registry` to Vault's external-secrets role bound_service_account_namespaces

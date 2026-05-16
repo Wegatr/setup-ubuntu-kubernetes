@@ -159,6 +159,7 @@ seed_vault() {
         v=$(awk -F': ' '/^Grafana client_secret:/  {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_GRAFANA_CLIENT_SECRET="$v"
         v=$(awk -F': ' '/^Headlamp client_secret:/ {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_HEADLAMP_CLIENT_SECRET="$v"
         v=$(awk -F': ' '/^Vault client_secret:/    {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_VAULT_CLIENT_SECRET="$v"
+        v=$(awk -F': ' '/^Zot client_secret:/      {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_ZOT_CLIENT_SECRET="$v"
         log_info "Overrode IDP_* shell vars from canonical ${idp_file}"
     fi
 

@@ -61,6 +61,21 @@ app:
       persistentVolumeClaim:
         claimName: zot-data
 
+  # Zot reads `${VAR}` substitutions from process env at startup, so the
+  # config.json's openid.providers.authentik.{issuer,clientsecret} expand
+  # from these two env vars. ISSUER is derived from platform globals via
+  # Helm tpl (the deployment library chart wraps env values in `tpl`).
+  # CLIENT_SECRET comes from the `zot-oidc` Secret materialized by ESO
+  # from Vault path <env>/system/idp/zot-client-secret.
+  env:
+    - name: ZOT_OIDC_ISSUER
+      value: 'https://idp.{{ .Values.global.env }}.{{ .Values.global.domain }}/application/o/zot/'
+    - name: ZOT_OIDC_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: zot-oidc
+          key: OIDC_CLIENT_SECRET
+
   # Plain TCP probe — Zot's /v2/ requires auth when configured, so a TCP
   # connect is the simplest indicator that the process is listening.
   livenessProbe:
@@ -160,11 +175,22 @@ configmap:
             "auth": {
               "htpasswd": {
                 "path": "/secret/htpasswd"
+              },
+              "openid": {
+                "providers": {
+                  "authentik": {
+                    "name": "Authentik",
+                    "clientid": "zot",
+                    "clientsecret": "${ZOT_OIDC_CLIENT_SECRET}",
+                    "issuer": "${ZOT_OIDC_ISSUER}",
+                    "scopes": ["openid", "email", "profile", "groups"]
+                  }
+                }
               }
             },
             "accessControl": {
               "adminPolicy": {
-                "users": ["admin"],
+                "users": ["admin", "akadmin"],
                 "actions": ["read", "create", "update", "delete"]
               },
               "repositories": {
@@ -215,6 +241,23 @@ externalsecret-htpasswd:
     data:
       - secretKey: htpasswd
         property: htpasswd
+
+# ----- ExternalSecret: Authentik OIDC client_secret -------------------------
+# Pulled from the system-tier Vault path (<env>/system/idp/zot-client-secret)
+# rather than <env>/app/registry because Authentik is infrastructure-tier,
+# not a workload secret. Materializes as `zot-oidc` Secret with key
+# OIDC_CLIENT_SECRET, which the Deployment loads as ZOT_OIDC_CLIENT_SECRET
+# env var (see app.env above) for ${ZOT_OIDC_CLIENT_SECRET} expansion
+# in config.json's http.auth.openid.providers.authentik.clientsecret.
+externalsecret-oidc:
+  externalSecret:
+    enabled: true
+    name: zot-oidc
+    namespace: registry
+    targetSecretName: zot-oidc
+    data:
+      - secretKey: OIDC_CLIENT_SECRET
+        property: zot-client-secret
 
 # ----- ESO SecretStore in this namespace ------------------------------------
 secret-store:
