@@ -1,0 +1,35 @@
+# Suppress Zot's `WWW-Authenticate: Basic realm="zot"` response header.
+#
+# Zot v2's authn middleware sets that header on every 401 from `/v2/*`
+# unless the inbound request carries `X-ZOT-API-CLIENT: zot-ui` (see
+# `pkg/api/constants/consts.go` for the literal). The browser's native
+# Basic-auth popup is triggered by exactly that response header, so as
+# long as it's present every visit to Zot's web UI causes Firefox /
+# Chrome to pop a credential prompt mid-flow — even when the user is
+# already authenticated via the OIDC session cookie.
+#
+# Adding the header at the Traefik edge for ALL requests bound for
+# zot.<env> is safe because:
+#   - browsers: the Zot UI's own JS already sets this header on its
+#     XHRs; adding it at the edge is redundant but harmless and stops
+#     the popup from ever firing on the initial HTML load.
+#   - CLI clients (buildah login, docker pull, kubelet imagePullSecret):
+#     these read credentials from local config (`~/.docker/config.json`,
+#     dockerconfigjson Secret) and send `Authorization: Basic <creds>`
+#     proactively on the first request. They do NOT rely on
+#     server-sent WWW-Authenticate to auto-discover the auth method —
+#     so suppressing the header doesn't break image-builder pushes or
+#     workload pulls.
+#
+# Chained with `oidc-redirect` on the registry-dev Ingress so the bare
+# host first redirects to Zot's OIDC login init, THEN this header is
+# present on every subsequent /v2/* call the UI makes.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: zot-api-client-header
+  namespace: registry
+spec:
+  headers:
+    customRequestHeaders:
+      X-ZOT-API-CLIENT: zot-ui
