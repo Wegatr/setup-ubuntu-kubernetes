@@ -255,8 +255,15 @@ externalsecret-oidc:
     template:
       engineVersion: v2
       data:
+        # Zot's readSecretFile uses Viper+mapstructure with case-insensitive
+        # field matching but NOT underscore-insensitive — so keys must be
+        # `clientid` / `clientsecret` (lowercase, no underscore) to match
+        # the `ClientID` / `ClientSecret` fields of Zot's OpenIDCredentials
+        # struct. The OAuth2 over-the-wire field names (snake_case) are
+        # used by Zot at runtime when calling Authentik; only the
+        # on-disk credentialsfile keys differ.
         oidc-credentials.json: |
-          {"client_id":"zot","client_secret":"{{ .clientsecret }}"}
+          {"clientid":"zot","clientsecret":"{{ .clientsecret }}"}
     data:
       - secretKey: clientsecret
         property: zot-client-secret
