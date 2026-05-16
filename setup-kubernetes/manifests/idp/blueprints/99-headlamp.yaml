@@ -17,11 +17,13 @@ entries:
     attrs:
       name: Headlamp
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       client_type: confidential
       client_id: headlamp
       client_secret: ${IDP_HEADLAMP_CLIENT_SECRET}
-      redirect_uris: |
-        https://kube.${IDP_ENV}.${IDP_DOMAIN}/oidc-callback
+      redirect_uris:
+        - matching_mode: strict
+          url: https://kube.${IDP_ENV}.${IDP_DOMAIN}/oidc-callback
       access_token_validity: hours=1
       refresh_token_validity: days=30
       sub_mode: hashed_user_id

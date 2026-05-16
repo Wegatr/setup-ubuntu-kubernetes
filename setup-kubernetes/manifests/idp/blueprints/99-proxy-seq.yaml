@@ -17,6 +17,7 @@ entries:
     attrs:
       name: Seq
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       external_host: https://log.${IDP_ENV}.${IDP_DOMAIN}
       mode: forward_domain
       cookie_domain: .${IDP_ENV}.${IDP_DOMAIN}

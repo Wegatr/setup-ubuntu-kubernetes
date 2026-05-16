@@ -17,14 +17,17 @@ entries:
     attrs:
       name: Vault
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       client_type: confidential
       client_id: vault
       client_secret: ${IDP_VAULT_CLIENT_SECRET}
       # Vault uses TWO redirect URIs: the in-browser UI flow + the CLI's
       # localhost listener used by `vault login -method=oidc`.
-      redirect_uris: |
-        https://vault.${IDP_ENV}.${IDP_DOMAIN}/ui/vault/auth/oidc/oidc/callback
-        http://localhost:8250/oidc/callback
+      redirect_uris:
+        - matching_mode: strict
+          url: https://vault.${IDP_ENV}.${IDP_DOMAIN}/ui/vault/auth/oidc/oidc/callback
+        - matching_mode: strict
+          url: http://localhost:8250/oidc/callback
       access_token_validity: hours=1
       refresh_token_validity: days=30
       sub_mode: hashed_user_id

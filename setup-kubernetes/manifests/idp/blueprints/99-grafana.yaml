@@ -17,11 +17,13 @@ entries:
     attrs:
       name: Grafana
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       client_type: confidential
       client_id: grafana
       client_secret: ${IDP_GRAFANA_CLIENT_SECRET}
-      redirect_uris: |
-        https://grafana.${IDP_ENV}.${IDP_DOMAIN}/login/generic_oauth
+      redirect_uris:
+        - matching_mode: strict
+          url: https://grafana.${IDP_ENV}.${IDP_DOMAIN}/login/generic_oauth
       access_token_validity: hours=1
       refresh_token_validity: days=30
       sub_mode: hashed_user_id
