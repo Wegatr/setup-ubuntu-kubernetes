@@ -268,7 +268,8 @@ enable_vault_oidc() {
                 default_role="default" >/dev/null
             vault write auth/oidc/role/default \
                 bound_audiences="$OIDC_CLIENT_ID" \
-                user_claim="email" \
+                user_claim="preferred_username" \
+                oidc_scopes="profile email groups" \
                 allowed_redirect_uris="https://${VAULT_HOST_PUB}/ui/vault/auth/oidc/oidc/callback,http://localhost:8250/oidc/callback" \
                 policies="default" >/dev/null
         ' >/dev/null 2>&1 || {
