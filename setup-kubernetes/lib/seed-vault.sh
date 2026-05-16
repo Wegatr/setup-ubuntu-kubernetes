@@ -139,6 +139,29 @@ seed_vault() {
     # shellcheck disable=SC1090
     source "${secrets_file}"
 
+    # IDP secrets canonical source: ~/secrets/idp-<env>.txt is what
+    # deploy_idp generates/preserves on every install. Override the
+    # IDP_* shell vars sourced above so seed-vault always pushes the
+    # CURRENT live IdP values to Vault — even if the per-host
+    # secrets.<env> has stale copies. Without this override Grafana,
+    # dbgate idp-postgres, and any other ESO consumer that pulls from
+    # `secret/<env>/system/idp/*` end up with a stale client_secret /
+    # password and OIDC token exchange fails with `invalid_client`.
+    local idp_file="${CREDENTIALS_DIR}/idp-${DEPLOY_ENV}.txt"
+    if [[ -f "${idp_file}" ]]; then
+        local v
+        v=$(awk -F': ' '/^Admin password:/  {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_BOOTSTRAP_PASSWORD="$v"
+        v=$(awk -F': ' '/^Admin email:/     {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_BOOTSTRAP_EMAIL="$v"
+        v=$(awk -F': ' '/^Admin user:/      {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_ADMIN_USER="$v"
+        v=$(awk -F': ' '/^Secret key:/      {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_SECRET_KEY="$v"
+        v=$(awk -F': ' '/^Postgres password:/ {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_POSTGRES_PASSWORD="$v"
+        v=$(awk -F': ' '/^ArgoCD client_secret:/   {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_ARGOCD_CLIENT_SECRET="$v"
+        v=$(awk -F': ' '/^Grafana client_secret:/  {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_GRAFANA_CLIENT_SECRET="$v"
+        v=$(awk -F': ' '/^Headlamp client_secret:/ {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_HEADLAMP_CLIENT_SECRET="$v"
+        v=$(awk -F': ' '/^Vault client_secret:/    {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_VAULT_CLIENT_SECRET="$v"
+        log_info "Overrode IDP_* shell vars from canonical ${idp_file}"
+    fi
+
     if [[ -z "${VAULT_SCHEMA[*]:-}" ]]; then
         log_error "${secrets_file} did not define VAULT_SCHEMA (or it's empty)."
         return 1
