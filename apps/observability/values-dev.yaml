@@ -196,6 +196,15 @@ kube-prometheus-stack:
     envFromSecret: idp-oidc-grafana
 
     grafana.ini:
+      # Public URL — required so Grafana composes correct redirect_uri
+      # for OIDC. Without root_url, Grafana auto-detects from request
+      # Host header + protocol but renders `http://grafana.dev:3000/...`
+      # because the in-cluster pod listens on plain HTTP:3000. Authentik
+      # then rejects the OAuth authorize call with "Redirect URI Error"
+      # because the registered uri is `https://grafana.dev/...`.
+      server:
+        domain: grafana.dev.digitaplatform.com
+        root_url: https://grafana.dev.digitaplatform.com/
       auth:
         disable_login_form: false   # keep admin/password as emergency fallback
         # Auto-redirect unauthenticated users to Authentik. With SSO cookie

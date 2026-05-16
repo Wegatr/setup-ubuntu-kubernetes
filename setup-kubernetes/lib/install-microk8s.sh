@@ -114,10 +114,21 @@ configure_kube_apiserver_oidc() {
     # client_id MUST equal the OAuth2Provider's client_id in Authentik
     # for `headlamp`. The id_token's `aud` claim is checked against
     # this value during validation.
+    #
+    # username-claim is `preferred_username`, NOT `email`, deliberately:
+    # K8s' OIDC authenticator hard-codes a check that rejects the token
+    # when claim=="email" and `email_verified` is not true. Authentik's
+    # default OAuth2 email scope mapping returns `email_verified: false`
+    # for users without an explicit verification flow, breaking login
+    # for the bootstrap admin and any UI-created user. `preferred_username`
+    # carries the Authentik username (e.g. "akadmin") and is checked
+    # without the verified-flag dependency. Resulting K8s username
+    # becomes `oidc:<username>` (e.g. `oidc:akadmin`); ClusterRoleBindings
+    # match users via the `oidc:` prefix.
     declare -A desired=(
         ["--oidc-issuer-url"]="${issuer_url}"
         ["--oidc-client-id"]="headlamp"
-        ["--oidc-username-claim"]="email"
+        ["--oidc-username-claim"]="preferred_username"
         ["--oidc-username-prefix"]="oidc:"
         ["--oidc-groups-claim"]="groups"
         ["--oidc-groups-prefix"]="oidc:"
