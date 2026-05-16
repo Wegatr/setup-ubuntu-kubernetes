@@ -351,17 +351,31 @@ auto-update on each install.
   is already populated on every cluster by the unified secrets-seed file;
   re-running `--seed-vault` after a namespace name change picks up the
   new bound_service_account_namespaces entry.
-- **ArgoCD Image Updater is platform-tier, OPT-IN per app**: installed by
-  `setup-kubernetes/lib/deploy-image-updater.sh` (Helm release
-  `argocd-image-updater` in the `argocd` namespace, alongside ArgoCD
-  itself — same chicken-egg reason as Authentik / Vault). Dispatcher flag
-  `--deploy-image-updater`, last in the `--deploy-all` chain. Needs
-  `IMAGE_BUILDER_GIT_CREDENTIALS` and `REGISTRY_PULL_USER` +
-  `REGISTRY_PULL_PASSWORD` from `configs/secrets.<env>` — those are reused
-  (no new secret rotation surface). Per-app annotation block syntax lives
-  under "When you change the GitOps tree" below; only apps that consume
-  Zot-built images add the `imageUpdater:` field. Apps pinning upstream
-  Bitnami / Grafana / public-registry versions stay manual (default).
+- **ArgoCD Image Updater is platform-tier, OPT-IN per app, EVENT-DRIVEN**:
+  installed by `setup-kubernetes/lib/deploy-image-updater.sh` (Helm release
+  `argocd-image-updater` in the `argocd` namespace, alongside ArgoCD itself
+  — same chicken-egg reason as Authentik / Vault). Dispatcher flag
+  `--deploy-image-updater`, last in the `--deploy-all` chain. Reuses
+  `IMAGE_BUILDER_GIT_CREDENTIALS` for git write-back; no new secret
+  rotation surface.
+
+  **Event-driven, NOT polling**: the controller runs with `--interval=0
+  --enable-webhook --webhook-port=8080`. The cluster-internal Service
+  `argocd-image-updater-webhook.argocd.svc.cluster.local:8080` exposes
+  `/api/webhook` for in-cluster callers ONLY (no Ingress, no public
+  hostname). The Tekton `buildah-build-push` task POSTs a dockerhub-
+  format event after every successful push (final step
+  `notify-image-updater`), Image Updater reads the Application annotations,
+  rewrites `apps/<app>/values-<env>.yaml`, commits + pushes to git, ArgoCD
+  reconciles. End-to-end latency: a few seconds, vs minutes with the
+  default poll interval. Failure mode: if the webhook is briefly
+  unreachable, the pipeline step logs a warning but stays green — operator
+  retriggers manually or the NEXT build's event self-heals.
+
+  Per-app annotation block syntax lives under "When you change the GitOps
+  tree" below; only apps that consume Zot-built images add the
+  `imageUpdater:` field. Apps pinning upstream Bitnami / Grafana /
+  public-registry versions stay manual (default).
 
 ## Pre-flight requirements the script cannot fix
 

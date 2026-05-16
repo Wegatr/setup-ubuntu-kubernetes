@@ -119,7 +119,17 @@ deploy_image_updater() {
         log_warn "Image Updater pods not ready yet — controller will retry on its own"
     }
 
+    # Cluster-internal webhook Service so the Tekton image-builder task can
+    # POST event triggers to a stable DNS name. The argocd-image-updater
+    # chart only exposes metrics on its bundled Service; we ship a separate
+    # one targeting the same Pod label selector. Idempotent kubectl apply.
+    log_info "Applying webhook ClusterIP Service..."
+    kubectl apply -f "${MANIFESTS_DIR}/image-updater/webhook-service.yaml" --request-timeout=30s || {
+        log_warn "Failed to apply Image Updater webhook Service"
+    }
+
     log_ok "ArgoCD Image Updater deployed successfully"
+    log_info "Webhook endpoint: http://argocd-image-updater-webhook.argocd.svc.cluster.local:8080/api/webhook"
     log_info "Per-app opt-in: add an 'imageUpdater:' block to an entry in argocd/${DEPLOY_ENV}/apps/applicationset.yaml"
     return 0
 }

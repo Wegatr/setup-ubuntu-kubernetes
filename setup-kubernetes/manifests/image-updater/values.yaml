@@ -26,10 +26,19 @@ config:
       credentials: pullsecret:argocd/argocd-image-updater-zot-creds
       defaultns: zot.__DEPLOY_ENV__.__DOMAIN_SUFFIX__
 
-# Commit identity + poll interval for the controller. Git auth itself is
-# read from the argocd-image-updater-secret keys mounted below.
+# Event-driven only: --interval=0 disables the periodic registry poll.
+# A new image tag triggers a write-back via the webhook server below,
+# called by the Tekton buildah-build-push task immediately after a push.
+# This is more robust than polling: zero latency, no wasted scans, the
+# pipeline knows EXACTLY when an image is freshly available.
+#
+# --enable-webhook starts an HTTP server on :8080/api/webhook that
+# accepts dockerhub-format POST bodies (the format the Tekton task emits).
+# --webhook-port=8080 makes it explicit.
 extraArgs:
-  - --interval=60s
+  - --interval=0
+  - --enable-webhook
+  - --webhook-port=8080
 
 # HTTPS write-back via PAT: image-updater reads $GIT_PASSWORD from
 # /etc/argocd-image-updater-creds/git-token. Username is a static label;
