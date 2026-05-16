@@ -121,7 +121,12 @@ uninstall_vault() {
     log_step "Uninstalling Vault..."
     helm uninstall "${VAULT_RELEASE}" -n "${VAULT_NAMESPACE}" || log_warn "Helm uninstall failed"
     kubectl delete ingress -n "${VAULT_NAMESPACE}" vault --ignore-not-found
+    kubectl delete ingressroute.traefik.io -n "${VAULT_NAMESPACE}" vault --ignore-not-found
+    kubectl delete middleware.traefik.io -n "${VAULT_NAMESPACE}" vault-oidc-redirect --ignore-not-found
     kubectl delete certificate -n "${VAULT_NAMESPACE}" vault-tls --ignore-not-found
+    # Zero-click SSO helper (Deployment + Service + ConfigMap)
+    kubectl delete -n "${VAULT_NAMESPACE}" deploy,svc,cm -l app=vault-auto-redirect --ignore-not-found
+    kubectl delete -n "${VAULT_NAMESPACE}" cm vault-auto-redirect --ignore-not-found
     kubectl delete pvc -n "${VAULT_NAMESPACE}" --all --ignore-not-found
     log_ok "Vault uninstalled"
     log_warn "Released PersistentVolume(s) may still exist on the host — remove manually if reclaim policy is Retain"

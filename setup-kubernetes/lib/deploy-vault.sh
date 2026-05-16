@@ -75,6 +75,14 @@ deploy_vault() {
     }
     rm -f "${cert_file}"
 
+    # Apply the zero-click auto-redirect helper (nginx + ConfigMap + Service)
+    # BEFORE the IngressRoute so the Service exists when Traefik resolves
+    # the route. Idempotent.
+    log_info "Applying Vault auto-redirect helper (zero-click SSO)..."
+    kubectl apply -f "${MANIFESTS_DIR}/vault/auto-redirect.yaml" --request-timeout=30s || {
+        log_warn "Failed to apply Vault auto-redirect helper — Vault UI still reachable, but the bare hostname won't auto-redirect to Authentik"
+    }
+
     # Apply IngressRoute (Traefik CRD, rendered with current env hostnames)
     local ingressroute_file
     ingressroute_file=$(render_manifest "${MANIFESTS_DIR}/vault/ingressroute.yaml")
@@ -85,6 +93,13 @@ deploy_vault() {
         return 1
     }
     rm -f "${ingressroute_file}"
+
+    # Clean up the legacy Traefik Middleware we used briefly (replaced
+    # by the auto-redirect Pod) so the cluster doesn't carry an orphaned
+    # CR after a `git pull`. Idempotent: --ignore-not-found means
+    # repeated runs are no-ops once it's gone.
+    kubectl -n "${VAULT_NAMESPACE}" delete middleware vault-oidc-redirect \
+        --ignore-not-found=true >/dev/null 2>&1 || true
 
     # Wait for deployment
     wait_for_pods_ready "${VAULT_NAMESPACE}" "app.kubernetes.io/name=vault" || {

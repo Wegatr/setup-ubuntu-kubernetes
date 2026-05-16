@@ -1,25 +1,3 @@
-# Traefik Middleware — pre-selects the OIDC auth method on the Vault UI's
-# login page so the user lands directly on the OIDC tab with the `default`
-# role pre-filled. One click ("Sign in with OIDC Provider") completes the
-# SSO flow against Authentik. Without this, Vault's default UI shows a
-# Method dropdown defaulting to Token and the user has to manually pick
-# OIDC every time.
-#
-# Vault OSS doesn't allow customizing the login UI directly; URL parameter
-# `with=oidc%2F` is the documented way to pre-select an auth method.
-# The redirect only fires for the bare hostname — once the user is in the
-# UI we don't keep rewriting, so logout / token-fallback paths still work.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: vault-oidc-redirect
-  namespace: vault
-spec:
-  redirectRegex:
-    regex: ^https?://__VAULT_HOST__/?$
-    replacement: https://__VAULT_HOST__/ui/vault/auth?with=oidc%2F
-    permanent: false
----
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -29,11 +7,20 @@ spec:
   entryPoints:
     - websecure
   routes:
+    # Bare-path route → tiny nginx that serves a JS auto-redirect to
+    # Authentik (see auto-redirect.yaml). Higher priority because it's
+    # more specific than the catch-all rule below.
+    - match: Host(`__VAULT_HOST__`) && Path(`/`)
+      kind: Rule
+      priority: 100
+      services:
+        - name: vault-auto-redirect
+          port: 80
+    # Everything else (/ui/..., /v1/..., static assets, callback) goes
+    # straight to Vault — including the POST to /v1/auth/oidc/oidc/auth_url
+    # that the redirect page fires.
     - match: Host(`__VAULT_HOST__`)
       kind: Rule
-      middlewares:
-        - name: vault-oidc-redirect
-          namespace: vault
       services:
         - name: vault
           port: 8200
@@ -42,4 +29,5 @@ spec:
     secretName: vault-tls
 # Auth: Vault's OWN OIDC auth method (enabled post-init by enable_vault_oidc
 # in lib/deploy-vault.sh) handles the browser SSO. The HTTP API still uses
-# token auth — IngressRoute is purely the transport + the redirect above.
+# token auth — IngressRoute is purely the transport + the bare-path
+# auto-redirect to a one-click SSO flow.

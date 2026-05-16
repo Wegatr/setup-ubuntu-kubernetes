@@ -1,0 +1,123 @@
+# Zero-click Vault SSO helper. The Vault OSS UI's OIDC auth form requires
+# a non-empty Role input even when `default_role` is configured on the
+# server side, so visiting vault.<env> normally costs one button click
+# plus typing "default". This tiny nginx pod serves a single HTML page
+# at vault.<env>/ that POSTs to Vault's `/v1/auth/oidc/oidc/auth_url`
+# with role=default, reads the returned Authentik authorize URL, and
+# redirects the browser there.
+#
+# Net flow: bare vault.<env> → this pod → JS POSTs → Authentik authorize
+# (SSO cookie covers it, no click) → callback → Vault session. Zero
+# manual input.
+#
+# The IngressRoute in ingressroute.yaml routes only `Path(/)` to this
+# Service; every other path (/ui/..., /v1/..., assets) goes straight
+# to Vault.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-auto-redirect
+  namespace: vault
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Vault SSO</title>
+    </head>
+    <body style="font-family: sans-serif; padding: 2rem">
+    <p>Redirecting to identity provider…</p>
+    <noscript><p>JavaScript is required. <a href="/ui/vault/auth?with=oidc%2F">Continue manually.</a></p></noscript>
+    <script>
+    (function () {
+      fetch('/v1/auth/oidc/oidc/auth_url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role: 'default',
+          redirect_uri: location.origin + '/ui/vault/auth/oidc/oidc/callback'
+        })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (d && d.data && d.data.auth_url) {
+          window.location = d.data.auth_url;
+        } else {
+          document.body.innerHTML = '<p>Auth URL unavailable. ' +
+            '<a href="/ui/vault/auth?with=oidc%2F">Open Vault login</a></p>';
+        }
+      }).catch(function (e) {
+        document.body.innerHTML = '<p>SSO redirect failed: ' + e +
+          '. <a href="/ui/vault/auth?with=oidc%2F">Open Vault login</a></p>';
+      });
+    })();
+    </script>
+    </body>
+    </html>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault-auto-redirect
+  namespace: vault
+  labels:
+    app: vault-auto-redirect
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vault-auto-redirect
+  template:
+    metadata:
+      labels:
+        app: vault-auto-redirect
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: false
+          readinessProbe:
+            httpGet:
+              path: /index.html
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+      volumes:
+        - name: html
+          configMap:
+            name: vault-auto-redirect
+            items:
+              - key: index.html
+                path: index.html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-auto-redirect
+  namespace: vault
+spec:
+  selector:
+    app: vault-auto-redirect
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
