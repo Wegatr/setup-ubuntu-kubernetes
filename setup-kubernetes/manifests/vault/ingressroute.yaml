@@ -1,3 +1,27 @@
+# Traefik Middleware — pre-selects the OIDC auth method on the Vault UI's
+# login page (Method dropdown defaults to Token otherwise). One click of
+# "Sign in with OIDC Provider" then completes the SSO flow against
+# Authentik. The Role input may be left blank — Vault's server-side
+# `default_role=default` (set by enable_vault_oidc in deploy-vault.sh)
+# kicks in automatically; the form's helperText confirms this in-UI.
+#
+# True zero-click is impractical: Vault OSS UI's OIDC callback handler
+# does `window.opener.postMessage(...)` and the parent auth page handles
+# the actual code→token exchange + localStorage write through Vault UI's
+# auth service. Replicating that outside Vault UI couples us tightly to
+# the Vault UI version (TOKEN_PREFIX + TOKEN_SEPARATOR + cluster-scoped
+# token-storage), so we keep the one-button-click pattern instead.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: vault-oidc-redirect
+  namespace: vault
+spec:
+  redirectRegex:
+    regex: ^https?://__VAULT_HOST__/?$
+    replacement: https://__VAULT_HOST__/ui/vault/auth?with=oidc%2F
+    permanent: false
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -7,27 +31,14 @@ spec:
   entryPoints:
     - websecure
   routes:
-    # Bare-path route → tiny nginx that serves a JS auto-redirect to
-    # Authentik (see auto-redirect.yaml). Higher priority because it's
-    # more specific than the catch-all rule below.
-    - match: Host(`__VAULT_HOST__`) && Path(`/`)
-      kind: Rule
-      priority: 100
-      services:
-        - name: vault-auto-redirect
-          port: 80
-    # Everything else (/ui/..., /v1/..., static assets, callback) goes
-    # straight to Vault — including the POST to /v1/auth/oidc/oidc/auth_url
-    # that the redirect page fires.
     - match: Host(`__VAULT_HOST__`)
       kind: Rule
+      middlewares:
+        - name: vault-oidc-redirect
+          namespace: vault
       services:
         - name: vault
           port: 8200
           serversTransport: vault-transport
   tls:
     secretName: vault-tls
-# Auth: Vault's OWN OIDC auth method (enabled post-init by enable_vault_oidc
-# in lib/deploy-vault.sh) handles the browser SSO. The HTTP API still uses
-# token auth — IngressRoute is purely the transport + the bare-path
-# auto-redirect to a one-click SSO flow.
