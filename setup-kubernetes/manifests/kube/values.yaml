@@ -38,13 +38,19 @@ settings:
   resourceAutoRefreshTimeInterval: 5
   disableAccessDeniedNotifications: false
 
-# OIDC config — values pulled from the `headlamp-oidc` Secret in this
-# namespace (pre-created by deploy_idp). Headlamp's `config.oidc` block
-# wires its `--oidc-*` startup flags from these keys.
+# OIDC — Headlamp chart 0.42+ uses an `envFrom: secretRef` pattern when
+# externalSecret.enabled=true. The referenced Secret must hold keys NAMED
+# AS THE ENV VARS Headlamp expects: OIDC_CLIENT_ID, OIDC_CLIENT_SECRET,
+# OIDC_ISSUER_URL, OIDC_SCOPES (NOT camelCase clientID/etc.). The Secret
+# `headlamp-oidc` in this namespace is pre-created by deploy_idp.
+# `hasScopes: true` makes the chart pass `-oidc-scopes=$(OIDC_SCOPES)` flag.
+# `secret.create: false` disables the chart's own bundled Secret (which
+# would only contain scopes literal and double-render).
 config:
   oidc:
-    secretName: headlamp-oidc
-    # The Secret has keys: clientID, clientSecret, issuerURL.
-    # Headlamp's chart reads them via valueFrom.secretKeyRef when this
-    # block sets `secretName`.
-    scopes: openid profile email
+    secret:
+      create: false
+    externalSecret:
+      enabled: true
+      name: headlamp-oidc
+      hasScopes: true

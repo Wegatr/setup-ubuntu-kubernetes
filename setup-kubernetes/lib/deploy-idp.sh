@@ -176,13 +176,18 @@ _idp_apply_consumer_oidc_secrets() {
             app.kubernetes.io/part-of=argocd | \
         kubectl apply -f - >/dev/null
 
-    # Headlamp: 'headlamp-oidc' in kubernetes-dashboard namespace. The
-    # Headlamp Helm values reference its keys via valueFrom.secretKeyRef.
+    # Headlamp: 'headlamp-oidc' in kubernetes-dashboard namespace.
+    # Chart's `config.oidc.externalSecret.enabled=true` mode does an
+    # `envFrom: secretRef` — KEY NAMES must equal the env vars Headlamp
+    # reads (OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_ISSUER_URL,
+    # OIDC_SCOPES — NOT camelCase). With `hasScopes=true` in values, the
+    # chart passes `-oidc-scopes=$(OIDC_SCOPES)` to the binary.
     create_namespace_if_not_exists kubernetes-dashboard >/dev/null
     kubectl -n kubernetes-dashboard create secret generic headlamp-oidc \
-        --from-literal=clientID=headlamp \
-        --from-literal=clientSecret="${IDP_HEADLAMP_CLIENT_SECRET}" \
-        --from-literal=issuerURL="https://${IDP_HOST}/application/o/headlamp/" \
+        --from-literal=OIDC_CLIENT_ID=headlamp \
+        --from-literal=OIDC_CLIENT_SECRET="${IDP_HEADLAMP_CLIENT_SECRET}" \
+        --from-literal=OIDC_ISSUER_URL="https://${IDP_HOST}/application/o/headlamp/" \
+        --from-literal=OIDC_SCOPES="openid profile email" \
         --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
     # Vault: 'vault-oidc' Secret consumed by enable_vault_oidc() in
