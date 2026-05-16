@@ -182,7 +182,7 @@ kube-prometheus-stack:
         # No forwardAuth Middleware — Grafana authenticates natively via OIDC
         # against the platform IdP (Authentik). See `grafana.ini.auth.generic_oauth`
         # below + the `idp-oidc-grafana` Secret materialized by ESO from
-        # secret/<env>/app/idp/grafana-client-secret.
+        # secret/<env>/system/idp/grafana-client-secret.
       hosts:
         - grafana.dev.digitaplatform.com
       tls:
@@ -236,4 +236,4 @@ grafana-admin-secret:
 
 grafana-oidc-secret:
   externalSecret:
-    vaultPath: dev/app/idp
+    vaultPath: dev/system/idp
