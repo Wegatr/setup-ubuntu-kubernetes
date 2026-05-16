@@ -198,20 +198,31 @@ kube-prometheus-stack:
     grafana.ini:
       auth:
         disable_login_form: false   # keep admin/password as emergency fallback
-        oauth_auto_login: false     # let users click "Sign in with Authentik" deliberately
+        # Auto-redirect unauthenticated users to Authentik. With SSO cookie
+        # already valid (from a prior login elsewhere) the Authentik
+        # consent step is skipped and the browser lands back at Grafana —
+        # single-click SSO. To bypass for admin/password recovery, hit
+        # /login?disableAutoLogin=true.
+        oauth_auto_login: true
       "auth.generic_oauth":
         enabled: true
         name: Authentik
         allow_sign_up: true
         client_id: grafana
         client_secret: $__env{GRAFANA_OAUTH_CLIENT_SECRET}
-        scopes: openid profile email
+        # `groups` scope is required for `role_attribute_path` below —
+        # without it the JWT carries no `groups` claim and every user
+        # falls through to the Viewer role.
+        scopes: openid profile email groups
         auth_url: https://idp.dev.digitaplatform.com/application/o/authorize/
         token_url: https://idp.dev.digitaplatform.com/application/o/token/
         api_url: https://idp.dev.digitaplatform.com/application/o/userinfo/
         signout_redirect_url: https://idp.dev.digitaplatform.com/application/o/grafana/end-session/
         use_pkce: true
-        role_attribute_path: contains(groups[*], 'platform-admins') && 'GrafanaAdmin' || 'Viewer'
+        # Built-in Authentik group `authentik Admins` (note the space;
+        # JMESPath single-quoted strings handle whitespace fine). Members
+        # of that group land as Grafana admins; everyone else as Viewer.
+        role_attribute_path: contains(groups[*], 'authentik Admins') && 'GrafanaAdmin' || 'Viewer'
 
 # ============================================================================
 # Loki / Tempo storage
