@@ -200,6 +200,63 @@ _idp_apply_consumer_oidc_secrets() {
         --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
 
+# Poll Authentik's BlueprintInstance table until every blueprint whose
+# file lives in our /blueprints/local/ ConfigMap is `successful`, OR the
+# timeout expires. Some 99-* blueprints declare `conditions:` that depend
+# on entries created by 10-groups-scopemapping.yaml — Authentik's
+# blueprints_discovery enqueues all apply_blueprint tasks in parallel, so
+# the first pass can leave dependent blueprints SKIPPED ("error" status
+# pre-conditions / "pending" with conditions). Authentik retries skipped
+# blueprints on the next discovery cycle (default ~5 min beat schedule).
+# We poke discovery every 20s by re-touching the ConfigMap so we don't
+# have to wait for the beat schedule; total budget ~2 min then warn.
+_idp_wait_for_blueprints_converged() {
+    log_info "Waiting for Authentik blueprints to converge..."
+
+    # Names whose convergence we care about — derived from filenames
+    # mounted at /blueprints/local. Map filename → metadata.name in the
+    # YAML. Hard-coded because parsing 8 files in bash is ugly.
+    local expected_names=(
+        "OAuth2 groups scope mapping"
+        "ArgoCD OIDC client"
+        "Grafana OIDC client"
+        "Headlamp OIDC client"
+        "Vault OIDC client"
+        "Tekton Dashboard Forward Auth"
+        "dbgate Forward Auth"
+        "Seq Forward Auth"
+        "Bind proxy providers to Embedded Outpost"
+    )
+
+    local deadline=$(( $(date +%s) + 120 ))
+    local pending iteration=0
+    while [[ $(date +%s) -lt ${deadline} ]]; do
+        iteration=$(( iteration + 1 ))
+        # Query the DB directly via the postgres pod. Returns one row per
+        # blueprint with status != successful.
+        local query="SELECT name FROM authentik_blueprints_blueprintinstance WHERE name IN ($(printf "'%s'," "${expected_names[@]}" | sed 's/,$//')) AND status != 'successful';"
+        pending=$(kubectl -n "${IDP_NAMESPACE}" exec idp-postgresql-0 -- \
+            env PGPASSWORD="${IDP_POSTGRES_PASSWORD}" \
+            psql -U authentik -d authentik -t -A -c "${query}" 2>/dev/null || true)
+        if [[ -z "${pending}" ]]; then
+            log_ok "All Authentik blueprints applied successfully"
+            return 0
+        fi
+        # Every 3rd iteration (~60s in) tickle the ConfigMap to force a
+        # fresh discovery cycle — covers the case where conditions had
+        # to wait for an earlier blueprint to commit before retrying.
+        if (( iteration % 3 == 0 )); then
+            kubectl -n "${IDP_NAMESPACE}" annotate cm idp-blueprints \
+                "trigger-rediscovery=$(date +%s)" --overwrite >/dev/null 2>&1 || true
+        fi
+        sleep 20
+    done
+
+    log_warn "Some blueprints did not converge within 120s: ${pending}"
+    log_warn "Authentik will keep retrying on the periodic discovery cycle."
+    return 0
+}
+
 deploy_idp() {
     if [[ "${ENABLE_IDP:-true}" != "true" ]]; then
         log_warn "IdP (Authentik) is disabled in config, skipping"
@@ -284,6 +341,7 @@ deploy_idp() {
         kubectl -n "${IDP_NAMESPACE}" rollout status deployment/idp-authentik-worker --timeout=120s >/dev/null 2>&1 || {
             log_warn "Authentik worker rollout did not complete within 120s"
         }
+        _idp_wait_for_blueprints_converged
     fi
 
     # Wire kube-apiserver to trust OIDC tokens issued by Authentik for the

@@ -1,3 +1,25 @@
+# Traefik Middleware — pre-selects the OIDC auth method on the Vault UI's
+# login page so the user lands directly on the OIDC tab with the `default`
+# role pre-filled. One click ("Sign in with OIDC Provider") completes the
+# SSO flow against Authentik. Without this, Vault's default UI shows a
+# Method dropdown defaulting to Token and the user has to manually pick
+# OIDC every time.
+#
+# Vault OSS doesn't allow customizing the login UI directly; URL parameter
+# `with=oidc%2F` is the documented way to pre-select an auth method.
+# The redirect only fires for the bare hostname — once the user is in the
+# UI we don't keep rewriting, so logout / token-fallback paths still work.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: vault-oidc-redirect
+  namespace: vault
+spec:
+  redirectRegex:
+    regex: ^https?://__VAULT_HOST__/?$
+    replacement: https://__VAULT_HOST__/ui/vault/auth?with=oidc%2F
+    permanent: false
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -9,12 +31,15 @@ spec:
   routes:
     - match: Host(`__VAULT_HOST__`)
       kind: Rule
+      middlewares:
+        - name: vault-oidc-redirect
+          namespace: vault
       services:
         - name: vault
           port: 8200
           serversTransport: vault-transport
   tls:
     secretName: vault-tls
-# Auth: handled by Vault's OWN OIDC auth method (enabled post-init by
-# `enable_vault_oidc` in lib/deploy-vault.sh). The HTTP API itself uses
-# token auth — IngressRoute is purely the transport layer.
+# Auth: Vault's OWN OIDC auth method (enabled post-init by enable_vault_oidc
+# in lib/deploy-vault.sh) handles the browser SSO. The HTTP API still uses
+# token auth — IngressRoute is purely the transport + the redirect above.
