@@ -183,7 +183,7 @@ configmap:
             },
             "accessControl": {
               "adminPolicy": {
-                "users": ["admin", "akadmin"],
+                "users": ["akadmin"],
                 "actions": ["read", "create", "update", "delete"]
               },
               "repositories": {
