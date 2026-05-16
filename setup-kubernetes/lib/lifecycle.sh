@@ -62,16 +62,19 @@ uninstall_idp() {
     kubectl delete secret -n kubernetes-dashboard headlamp-oidc --ignore-not-found
     kubectl delete secret -n vault vault-oidc --ignore-not-found
 
-    # Drop the ~/secrets/idp-<env>.txt so the next install generates fresh
-    # passwords + client_secrets (preserves the rebuild-from-scratch invariant).
-    local cred_file="${CREDENTIALS_DIR}/idp-${DEPLOY_ENV}.txt"
-    if [[ -f "${cred_file}" ]]; then
-        rm -f "${cred_file}"
-        log_info "Removed ${cred_file} — next --deploy-idp generates fresh creds"
-    fi
-
-    log_ok "IdP (Authentik) uninstalled"
-    log_warn "Re-run: sudo ./setup-kubernetes.sh --${DEPLOY_ENV} --deploy-idp + copy new ~/secrets/idp-${DEPLOY_ENV}.txt values into configs/secrets.${DEPLOY_ENV} + re-run --seed-vault"
+    # Credentials file ~/secrets/idp-<env>.txt is DELIBERATELY preserved (same
+    # pattern as Vault unseal keys). It is the source of truth; the next
+    # --deploy-idp reads it back and restores Authentik to byte-identical
+    # secret_key / bootstrap_password / client_secrets — so consumer apps
+    # (argocd-oidc, headlamp-oidc, vault-oidc K8s Secrets + the entries in
+    # configs/secrets.<env>) STAY VALID across --uninstall + --deploy cycles.
+    # No need to re-update secrets.<env> or re-deploy ArgoCD/Headlamp/Vault.
+    #
+    # To FORCE fresh secrets (e.g. genuine rotation event), delete the file
+    # manually before re-installing:
+    #   rm ~/secrets/idp-${DEPLOY_ENV}.txt
+    log_ok "IdP (Authentik) uninstalled (credentials in ${CREDENTIALS_DIR}/idp-${DEPLOY_ENV}.txt preserved)"
+    log_info "Re-run: sudo ./setup-kubernetes.sh --${DEPLOY_ENV} --deploy-idp"
 }
 
 uninstall_kube() {
