@@ -160,10 +160,21 @@ _idp_apply_blueprints_configmap() {
 _idp_apply_consumer_oidc_secrets() {
     # ArgoCD: 'argocd-oidc' Secret with the clientSecret key. ArgoCD's
     # configs.cm.oidc.config reads it via $secret:field substitution.
+    #
+    # CRITICAL: ArgoCD only reads from Secrets carrying the label
+    # `app.kubernetes.io/part-of: argocd`. Without it the dereference
+    # `$argocd-oidc:clientSecret` silently fails with the misleading log
+    # message "key does not exist in secret" — ArgoCD's lookup never even
+    # tries the unlabeled Secret. The label is a deliberate security
+    # mechanism to prevent ArgoCD from being tricked into reading
+    # arbitrary in-namespace Secrets via the cm config.
     create_namespace_if_not_exists argocd >/dev/null
     kubectl -n argocd create secret generic argocd-oidc \
         --from-literal=clientSecret="${IDP_ARGOCD_CLIENT_SECRET}" \
-        --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+        --dry-run=client -o yaml | \
+        kubectl label --local -f - --dry-run=client -o yaml \
+            app.kubernetes.io/part-of=argocd | \
+        kubectl apply -f - >/dev/null
 
     # Headlamp: 'headlamp-oidc' in kubernetes-dashboard namespace. The
     # Headlamp Helm values reference its keys via valueFrom.secretKeyRef.
