@@ -29,16 +29,6 @@ dependencies:
     version: 1.0.0
     repository: file://../../charts/ingress
 
-  # Traefik Middleware — auto-redirect bare zot.<env> visits to Zot's
-  # own OIDC login init endpoint (`/zot/auth/login?provider=oidc&...`).
-  # Without this the user lands on Zot's UI shell anonymously and has
-  # to click "Sign in with Authentik"; with it, the SSO cookie at
-  # apex `.dev.<DOMAIN_SUFFIX>` carries them through Authentik instantly.
-  - name: middleware
-    version: 1.0.0
-    repository: file://../../charts/middleware
-    alias: oidc-redirect
-
   # ConfigMap with Zot's config.json (HTTP server + auth + accessControl +
   # metrics extension). Mounted at /etc/zot/config.json by the Deployment.
   - name: configmap
@@ -51,17 +41,6 @@ dependencies:
     version: 1.0.0
     repository: file://../../charts/external-secret
     alias: externalsecret-htpasswd
-
-  # Separate ExternalSecret for the Authentik OIDC client_secret. Lives
-  # under Vault path `<env>/system/idp` (infrastructure-tier) rather
-  # than `<env>/app/registry` because Authentik is part of the platform
-  # IdP, not a workload secret. Materialized as `zot-oidc` Secret with
-  # key OIDC_CLIENT_SECRET; the Zot pod env-loads it so config.json's
-  # ${ZOT_OIDC_CLIENT_SECRET} expands at startup.
-  - name: external-secret
-    version: 1.0.0
-    repository: file://../../charts/external-secret
-    alias: externalsecret-oidc
 
   # Per-namespace ESO SecretStore (vault-backend) — required so the
   # externalsecret-htpasswd above can authenticate to Vault from THIS namespace.
