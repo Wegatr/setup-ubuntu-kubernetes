@@ -1,0 +1,17 @@
+# Zot TLS cert — issued by the platform ClusterIssuer. With IngressRoute
+# (Traefik CRD) the cert-manager.io annotation pattern doesn't fire
+# automatically, so we declare the Certificate explicitly. The Ingress
+# chart's TLS path is unused since the k8s Ingress is disabled in
+# values-common.yaml.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: registry-{{ .Values.global.env }}-tls
+  namespace: registry
+spec:
+  secretName: registry-{{ .Values.global.env }}-tls
+  issuerRef:
+    name: {{ .Values.global.clusterIssuer }}
+    kind: ClusterIssuer
+  dnsNames:
+    - zot.{{ .Values.global.env }}.{{ .Values.global.domain }}

@@ -113,32 +113,13 @@ pvc:
 #
 # Zot's bundled web UI is served from the SAME hostname (extensions.ui.enable
 # = true in config.json below); no second hostname needed.
+# k8s Ingress disabled — we use a Traefik IngressRoute (see
+# templates/ingressroute.yaml) instead, because we need TWO routes for
+# the same host with different middleware chains (browser vs CLI based
+# on User-Agent header). Standard k8s Ingress can't express that.
 ingress:
   ingress:
-    enabled: true
-    className: public
-    annotations:
-      # OCI clients (docker push, buildah push, skopeo) send chunked
-      # uploads with arbitrarily-large bodies (multi-MB to multi-GB
-      # layers). Traefik default has no body-size limit so no extra
-      # middleware needed. If a future hardening adds RequestBodySize
-      # middleware, attach it via this annotations block.
-      traefik.ingress.kubernetes.io/router.entrypoints: websecure
-      # Bare-host redirect to Zot's OIDC login (see Middleware below).
-      # Middleware name: `<namespace>-<name>@kubernetescrd`.
-      # Hardcoded for `dev` env because the chart only runs on DEV.
-      traefik.ingress.kubernetes.io/router.middlewares: registry-registry-dev-oidc-redirect@kubernetescrd
-    host: 'zot.dev.{{ .Values.global.domain }}'
-    paths:
-      - path: /
-        pathType: Prefix
-        # Service name = <release>-app (deployment lib chart's fullname
-        # includes the alias). Release = registry-<env>.
-        serviceName: 'registry-{{ .Values.global.env }}-app'
-        servicePort: 5000
-    tls:
-      enabled: true
-      secretName: 'registry-{{ .Values.global.env }}-tls'
+    enabled: false
 
 # ----- Zot config.json (mounted into the pod) -------------------------------
 # Access-control policy:
