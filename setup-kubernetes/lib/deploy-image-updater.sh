@@ -80,6 +80,14 @@ deploy_image_updater() {
         return 0
     fi
 
+    # Defaults so a per-host config.<env> that predates this lib still works
+    # without the operator hand-syncing every IMAGE_UPDATER_* row from
+    # config.example. Match the values in config.example exactly.
+    : "${IMAGE_UPDATER_REPO_NAME:=argo}"
+    : "${IMAGE_UPDATER_REPO_URL:=https://argoproj.github.io/argo-helm}"
+    : "${IMAGE_UPDATER_NAMESPACE:=argocd}"
+    : "${IMAGE_UPDATER_RELEASE:=argocd-image-updater}"
+
     log_step "Deploying ArgoCD Image Updater..."
 
     add_helm_repo "${IMAGE_UPDATER_REPO_NAME}" "${IMAGE_UPDATER_REPO_URL}" || return 1
