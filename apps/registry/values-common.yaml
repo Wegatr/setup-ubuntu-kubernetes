@@ -124,14 +124,10 @@ ingress:
       # middleware needed. If a future hardening adds RequestBodySize
       # middleware, attach it via this annotations block.
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
-      # Bare-host redirect to Zot's OIDC login (see Middleware below)
-      # CHAINED with the X-ZOT-API-CLIENT header middleware so Zot
-      # never sends `WWW-Authenticate: Basic` (suppresses the browser
-      # popup that fires mid-flow on every UI load — see
-      # templates/middleware-api-client-header.yaml).
-      # Middleware names: `<namespace>-<name>@kubernetescrd`.
+      # Bare-host redirect to Zot's OIDC login (see Middleware below).
+      # Middleware name: `<namespace>-<name>@kubernetescrd`.
       # Hardcoded for `dev` env because the chart only runs on DEV.
-      traefik.ingress.kubernetes.io/router.middlewares: registry-registry-dev-oidc-redirect@kubernetescrd,registry-zot-api-client-header@kubernetescrd
+      traefik.ingress.kubernetes.io/router.middlewares: registry-registry-dev-oidc-redirect@kubernetescrd
     host: 'zot.dev.{{ .Values.global.domain }}'
     paths:
       - path: /
