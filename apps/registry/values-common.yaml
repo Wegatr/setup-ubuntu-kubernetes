@@ -42,6 +42,11 @@ app:
     - name: htpasswd
       mountPath: /secret
       readOnly: true
+    # OIDC credentials file (materialized by externalsecret-oidc via ESO
+    # template) — Zot's openid.providers.oidc.credentialsfile reads it.
+    - name: oidc-credentials
+      mountPath: /secret-oidc
+      readOnly: true
     # Inline ConfigMap → /etc/zot/config.json
     - name: config
       mountPath: /etc/zot
@@ -54,27 +59,15 @@ app:
     - name: htpasswd
       secret:
         secretName: zot-htpasswd
+    - name: oidc-credentials
+      secret:
+        secretName: zot-oidc
     - name: config
       configMap:
         name: zot-config
     - name: data
       persistentVolumeClaim:
         claimName: zot-data
-
-  # Zot reads `${VAR}` substitutions from process env at startup, so the
-  # config.json's openid.providers.authentik.{issuer,clientsecret} expand
-  # from these two env vars. ISSUER is derived from platform globals via
-  # Helm tpl (the deployment library chart wraps env values in `tpl`).
-  # CLIENT_SECRET comes from the `zot-oidc` Secret materialized by ESO
-  # from Vault path <env>/system/idp/zot-client-secret.
-  env:
-    - name: ZOT_OIDC_ISSUER
-      value: 'https://idp.{{ .Values.global.env }}.{{ .Values.global.domain }}/application/o/zot/'
-    - name: ZOT_OIDC_CLIENT_SECRET
-      valueFrom:
-        secretKeyRef:
-          name: zot-oidc
-          key: OIDC_CLIENT_SECRET
 
   # Plain TCP probe — Zot's /v2/ requires auth when configured, so a TCP
   # connect is the simplest indicator that the process is listening.
@@ -180,9 +173,8 @@ configmap:
                 "providers": {
                   "oidc": {
                     "name": "Authentik",
-                    "clientid": "zot",
-                    "clientsecret": "${ZOT_OIDC_CLIENT_SECRET}",
-                    "issuer": "${ZOT_OIDC_ISSUER}",
+                    "credentialsfile": "/secret-oidc/oidc-credentials.json",
+                    "issuer": "https://idp.{{ .Values.global.env }}.{{ .Values.global.domain }}/application/o/zot/",
                     "scopes": ["openid", "email", "profile", "groups"]
                   }
                 }
@@ -242,21 +234,31 @@ externalsecret-htpasswd:
       - secretKey: htpasswd
         property: htpasswd
 
-# ----- ExternalSecret: Authentik OIDC client_secret -------------------------
+# ----- ExternalSecret: Authentik OIDC credentialsfile -----------------------
 # Pulled from the system-tier Vault path (<env>/system/idp/zot-client-secret)
 # rather than <env>/app/registry because Authentik is infrastructure-tier,
-# not a workload secret. Materializes as `zot-oidc` Secret with key
-# OIDC_CLIENT_SECRET, which the Deployment loads as ZOT_OIDC_CLIENT_SECRET
-# env var (see app.env above) for ${ZOT_OIDC_CLIENT_SECRET} expansion
-# in config.json's http.auth.openid.providers.authentik.clientsecret.
+# not a workload secret. ESO composes a JSON credentialsfile from the
+# Vault value via `template:` — Zot's OpenID provider reads this file
+# at startup (deprecation warning the old inline clientid/clientsecret
+# format emitted). The Deployment mounts the materialized `zot-oidc`
+# Secret as a file at /secret-oidc/oidc-credentials.json.
+#
+# Template uses ESO v2 engine: `{{ .clientsecret }}` resolves to the
+# `clientsecret` key declared in data[] below, which in turn pulls the
+# `zot-client-secret` property from the Vault path.
 externalsecret-oidc:
   externalSecret:
     enabled: true
     name: zot-oidc
     namespace: registry
     targetSecretName: zot-oidc
+    template:
+      engineVersion: v2
+      data:
+        oidc-credentials.json: |
+          {"client_id":"zot","client_secret":"{{ .clientsecret }}"}
     data:
-      - secretKey: OIDC_CLIENT_SECRET
+      - secretKey: clientsecret
         property: zot-client-secret
 
 # ----- ESO SecretStore in this namespace ------------------------------------

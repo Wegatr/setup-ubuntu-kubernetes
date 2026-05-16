@@ -7,6 +7,14 @@ metadata:
     {{- include "configmap.labels" . | nindent 4 }}
 {{- with .Values.configmap.data }}
 data:
-  {{- toYaml . | nindent 2 }}
+  {{- /*
+  Apply Helm `tpl` so data values can reference .Values.global.{env,domain}
+  and other platform globals. Needed by apps/registry to compose Zot's
+  OIDC issuer URL from one source of truth at chart-render time (Zot's
+  config.json does not env-expand ${VAR} for OpenID fields). Harmless
+  for plain-string data — tpl is a no-op on strings without
+  `{{ ... }}` expressions.
+  */}}
+  {{- tpl (toYaml .) $ | nindent 2 }}
 {{- end }}
 {{- end }}
