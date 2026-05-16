@@ -14,6 +14,16 @@ metadata:
   name: ArgoCD OIDC client
   labels:
     blueprints.goauthentik.io/instantiate: "true"
+# Wait for the `groups` scope mapping from 10-groups-scopemapping.yaml to
+# exist before applying this blueprint. Authentik's blueprints_discovery
+# enqueues apply_blueprint tasks in parallel; without this gate, a fresh
+# install where 99-* runs before 10-* completes lets !Find return None for
+# the groups property_mapping, then the serializer rejects `"None"` as an
+# invalid scope-mapping pk and the whole blueprint fails. Authentik
+# retries skipped blueprints on the next discovery cycle, so eventual
+# convergence is guaranteed.
+conditions:
+  - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
 entries:
   - id: argocd-provider
     model: authentik_providers_oauth2.oauth2provider

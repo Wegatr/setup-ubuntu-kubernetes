@@ -9,6 +9,10 @@ metadata:
   name: Vault OIDC client
   labels:
     blueprints.goauthentik.io/instantiate: "true"
+# Wait for 10-groups-scopemapping.yaml's `groups` scope to exist —
+# parallel-apply race fix; see 99-argocd.yaml comment for details.
+conditions:
+  - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
 entries:
   - id: vault-provider
     model: authentik_providers_oauth2.oauth2provider

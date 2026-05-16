@@ -261,6 +261,16 @@ enable_vault_oidc() {
             if ! vault auth list 2>/dev/null | grep -q "^oidc/"; then
                 vault auth enable oidc
             fi
+            # Admin policy — sudo-equivalent on every path. Granted to OIDC
+            # users via the default role so a single-operator setup can
+            # manage all kv-v2 secrets through the UI. Idempotent: vault
+            # policy write overwrites whatever is there. Root token still
+            # exists for emergency recovery (~/secrets/vault-<env>.txt).
+            cat <<POLICY | vault policy write admin -
+path "*" {
+  capabilities = ["create", "read", "update", "delete", "list", "sudo", "patch"]
+}
+POLICY
             vault write auth/oidc/config \
                 oidc_discovery_url="$OIDC_ISSUER_URL" \
                 oidc_client_id="$OIDC_CLIENT_ID" \
@@ -271,7 +281,7 @@ enable_vault_oidc() {
                 user_claim="preferred_username" \
                 oidc_scopes="profile email groups" \
                 allowed_redirect_uris="https://${VAULT_HOST_PUB}/ui/vault/auth/oidc/oidc/callback,http://localhost:8250/oidc/callback" \
-                policies="default" >/dev/null
+                policies="admin" >/dev/null
         ' >/dev/null 2>&1 || {
         log_warn "vault auth enable/write oidc failed — check vault-0 logs for details"
         return 1
