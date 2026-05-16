@@ -1,0 +1,24 @@
+# Grants cluster-admin to every user whose OIDC token (issued by
+# Authentik for the `headlamp` client) carries the group `authentik
+# Admins`. kube-apiserver's --oidc-groups-prefix=oidc: prepends `oidc:`
+# to every group name from the token, so the binding's subject name is
+# `oidc:authentik Admins` (note the space — quoted as a single string).
+#
+# akadmin is automatically a member of `authentik Admins` after the
+# Authentik bootstrap, so this binding gives akadmin cluster-admin in
+# Headlamp without any per-user step.
+#
+# To add other admins later: create the user in Authentik UI and add
+# them to the `authentik Admins` group (Directory → Groups).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-platform-admins
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: "oidc:authentik Admins"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin

@@ -286,6 +286,16 @@ deploy_idp() {
         }
     fi
 
+    # Wire kube-apiserver to trust OIDC tokens issued by Authentik for the
+    # `headlamp` client, and grant the `authentik Admins` group cluster-
+    # admin RBAC. Without these two steps, Headlamp's OIDC login succeeds
+    # against Authentik but every API call returns 401 ("Unauthorized")
+    # because kube-apiserver doesn't recognize the bearer token.
+    configure_kube_apiserver_oidc
+    kubectl apply -f "${MANIFESTS_DIR}/idp/cluster-rolebinding-platform-admins.yaml" >/dev/null || {
+        log_warn "Failed to apply platform-admins ClusterRoleBinding"
+    }
+
     log_ok "IdP (Authentik) deployed successfully"
     log_info "Access at: https://${IDP_HOST}"
     log_info "Admin user: akadmin (password in ${CREDENTIALS_DIR}/idp-${DEPLOY_ENV}.txt)"

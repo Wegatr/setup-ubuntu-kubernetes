@@ -84,6 +84,78 @@ configure_kube_proxy_nftables() {
     log_ok "kube-proxy now using native nftables proxier"
 }
 
+# Configure kube-apiserver to trust OIDC tokens issued by the platform IdP
+# (Authentik). Required for Headlamp to authenticate users — Headlamp
+# forwards the user's id_token to the API server as a bearer token, and
+# without these flags the API server rejects every request with 401.
+#
+# Idempotent: writes one flag at a time, skipping any already present
+# with the same value, replacing in place if the value drifted. Restarts
+# kubelite only if at least one flag changed.
+#
+# IDP_HOST must be set in the env (sourced from configs/config.<env>).
+# Safe to call before Authentik is up — kube-apiserver doesn't crash on
+# an unreachable issuer URL, it just fails token validation until the
+# URL becomes reachable.
+configure_kube_apiserver_oidc() {
+    local args_file="/var/snap/microk8s/current/args/kube-apiserver"
+
+    if [[ ! -f "${args_file}" ]]; then
+        log_warn "kube-apiserver args file not present at ${args_file} — skipping"
+        return 0
+    fi
+
+    if [[ -z "${IDP_HOST:-}" ]]; then
+        log_warn "IDP_HOST not set in config — skipping kube-apiserver OIDC wiring"
+        return 0
+    fi
+
+    local issuer_url="https://${IDP_HOST}/application/o/headlamp/"
+    # client_id MUST equal the OAuth2Provider's client_id in Authentik
+    # for `headlamp`. The id_token's `aud` claim is checked against
+    # this value during validation.
+    declare -A desired=(
+        ["--oidc-issuer-url"]="${issuer_url}"
+        ["--oidc-client-id"]="headlamp"
+        ["--oidc-username-claim"]="email"
+        ["--oidc-username-prefix"]="oidc:"
+        ["--oidc-groups-claim"]="groups"
+        ["--oidc-groups-prefix"]="oidc:"
+    )
+
+    local changed=0
+    local flag value current_line
+    for flag in "${!desired[@]}"; do
+        value="${desired[${flag}]}"
+        current_line=$(grep -E "^${flag}=" "${args_file}" || true)
+        if [[ -n "${current_line}" ]]; then
+            if [[ "${current_line}" == "${flag}=${value}" ]]; then
+                continue
+            fi
+            # In-place value update
+            sed -i "s|^${flag}=.*|${flag}=${value}|" "${args_file}"
+            changed=1
+            log_info "Updated ${flag} → ${value}"
+        else
+            echo "${flag}=${value}" >> "${args_file}"
+            changed=1
+            log_info "Added ${flag}=${value}"
+        fi
+    done
+
+    if [[ ${changed} -eq 0 ]]; then
+        log_ok "kube-apiserver OIDC flags already set for ${IDP_HOST}"
+        return 0
+    fi
+
+    log_step "Restarting kubelite to apply kube-apiserver OIDC flags..."
+    systemctl restart snap.microk8s.daemon-kubelite.service || {
+        log_warn "kubelite restart failed — flags will activate on next snap restart"
+    }
+    wait_for_microk8s_ready 120 || log_warn "MicroK8s slow to settle after kubelite restart"
+    log_ok "kube-apiserver now trusts OIDC tokens from ${issuer_url}"
+}
+
 add_user_to_group() {
     log_step "Adding user to microk8s group..."
 
