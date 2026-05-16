@@ -1,35 +1,32 @@
-# Suppress Zot's `WWW-Authenticate: Basic realm="zot"` response header.
+# Suppress the browser's native Basic-auth popup that fires whenever
+# the Zot UI XHR catches a 401 from /v2/*. Zot tags every 401 with
+# `WWW-Authenticate: Basic realm="zot"` UNLESS the request already
+# carries `X-ZOT-API-CLIENT: zot-ui` (the Zot UI's own JS sets that
+# header on its requests; browser-triggered fetches don't).
 #
-# Zot v2's authn middleware sets that header on every 401 from `/v2/*`
-# unless the inbound request carries `X-ZOT-API-CLIENT: zot-ui` (see
-# `pkg/api/constants/consts.go` for the literal). The browser's native
-# Basic-auth popup is triggered by exactly that response header, so as
-# long as it's present every visit to Zot's web UI causes Firefox /
-# Chrome to pop a credential prompt mid-flow — even when the user is
-# already authenticated via the OIDC session cookie.
+# Earlier we added the header at the Traefik edge for ALL requests,
+# but that broke CLI auth: `ctr push` / `buildah login` send their
+# HEAD probe expecting a WWW-Authenticate challenge to discover the
+# auth scheme, and without the header containerd hits 401 and aborts
+# rather than retrying with credentials.
 #
-# Adding the header at the Traefik edge for ALL requests bound for
-# zot.<env> is safe because:
-#   - browsers: the Zot UI's own JS already sets this header on its
-#     XHRs; adding it at the edge is redundant but harmless and stops
-#     the popup from ever firing on the initial HTML load.
-#   - CLI clients (buildah login, docker pull, kubelet imagePullSecret):
-#     these read credentials from local config (`~/.docker/config.json`,
-#     dockerconfigjson Secret) and send `Authorization: Basic <creds>`
-#     proactively on the first request. They do NOT rely on
-#     server-sent WWW-Authenticate to auto-discover the auth method —
-#     so suppressing the header doesn't break image-builder pushes or
-#     workload pulls.
+# This new middleware strips the WWW-Authenticate header from
+# RESPONSES instead — the browser doesn't see the Basic challenge so
+# no popup, but the 401 itself is still emitted and a CLI client with
+# credentials in its docker-config can still authenticate (it does
+# `Authorization: Basic <creds>` on every request when the registry
+# is in its `auths:` block).
 #
-# Chained with `oidc-redirect` on the registry-dev Ingress so the bare
-# host first redirects to Zot's OIDC login init, THEN this header is
-# present on every subsequent /v2/* call the UI makes.
+# Pure response-header rewrite — doesn't touch the request, doesn't
+# affect Zot's authn logic.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: zot-api-client-header
+  name: zot-strip-basic-challenge
   namespace: registry
 spec:
   headers:
-    customRequestHeaders:
-      X-ZOT-API-CLIENT: zot-ui
+    # Setting a custom response header to empty string causes Traefik
+    # to drop the header from the response entirely.
+    customResponseHeaders:
+      WWW-Authenticate: ""
