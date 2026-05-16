@@ -128,10 +128,23 @@ _idp_apply_blueprints_configmap() {
     local file base
     for file in "${blueprints_dir}"/*.yaml; do
         base=$(basename "${file}")
+        # Pre-resolve URL placeholders + client_secrets at ConfigMap creation.
+        # client_secrets MUST be resolved here (not via Authentik env-var
+        # interpolation) because Authentik's blueprint engine fingerprints
+        # the file by sha512 of its raw content. If a client_secret rotates
+        # but the file text stays `${IDP_FOO_CLIENT_SECRET}`, the hash is
+        # identical → Authentik skips re-apply → stale value persists in DB.
+        # Inlining the resolved value puts the secret directly in the
+        # ConfigMap (same trust level as the idp-bootstrap Secret — both
+        # readable only by privileged accounts in the idp namespace).
         sed \
             -e "s|\${IDP_ENV}|${DEPLOY_ENV}|g" \
             -e "s|\${IDP_DOMAIN}|${DOMAIN_SUFFIX}|g" \
             -e "s|\${IDP_HOST}|${IDP_HOST}|g" \
+            -e "s|\${IDP_ARGOCD_CLIENT_SECRET}|${IDP_ARGOCD_CLIENT_SECRET}|g" \
+            -e "s|\${IDP_GRAFANA_CLIENT_SECRET}|${IDP_GRAFANA_CLIENT_SECRET}|g" \
+            -e "s|\${IDP_HEADLAMP_CLIENT_SECRET}|${IDP_HEADLAMP_CLIENT_SECRET}|g" \
+            -e "s|\${IDP_VAULT_CLIENT_SECRET}|${IDP_VAULT_CLIENT_SECRET}|g" \
             "${file}" > "${rendered_dir}/${base}"
     done
 
