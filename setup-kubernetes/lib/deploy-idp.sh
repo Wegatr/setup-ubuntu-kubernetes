@@ -44,11 +44,9 @@ _idp_generate_or_load_secrets() {
     if [[ -f "${cred_file}" ]]; then
         log_info "Found existing ${cred_file} — reading current values"
         # Parse "Key: value" lines (matches save_credential's output format).
-        # Tolerate leading whitespace and arbitrary suffix.
         IDP_SECRET_KEY=$(awk -F': ' '/^Secret key:/{print $2}' "${cred_file}")
         IDP_BOOTSTRAP_PASSWORD=$(awk -F': ' '/^Admin password:/{print $2}' "${cred_file}")
         IDP_POSTGRES_PASSWORD=$(awk -F': ' '/^Postgres password:/{print $2}' "${cred_file}")
-        IDP_REDIS_PASSWORD=$(awk -F': ' '/^Redis password:/{print $2}' "${cred_file}")
         IDP_ARGOCD_CLIENT_SECRET=$(awk -F': ' '/^ArgoCD client_secret:/{print $2}' "${cred_file}")
         IDP_GRAFANA_CLIENT_SECRET=$(awk -F': ' '/^Grafana client_secret:/{print $2}' "${cred_file}")
         IDP_HEADLAMP_CLIENT_SECRET=$(awk -F': ' '/^Headlamp client_secret:/{print $2}' "${cred_file}")
@@ -57,10 +55,11 @@ _idp_generate_or_load_secrets() {
 
     # Fill any blanks with freshly-generated random values. On first install
     # everything is blank; on re-runs only NEW additions get generated.
+    # Note: Authentik 2026 dropped its Redis dependency — uses Postgres for
+    # cache + queue + sessions — so no Redis password to manage.
     [[ -z "${IDP_SECRET_KEY:-}" ]]              && IDP_SECRET_KEY=$(openssl rand -hex 32)
     [[ -z "${IDP_BOOTSTRAP_PASSWORD:-}" ]]      && IDP_BOOTSTRAP_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
     [[ -z "${IDP_POSTGRES_PASSWORD:-}" ]]       && IDP_POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
-    [[ -z "${IDP_REDIS_PASSWORD:-}" ]]          && IDP_REDIS_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
     [[ -z "${IDP_ARGOCD_CLIENT_SECRET:-}" ]]    && IDP_ARGOCD_CLIENT_SECRET=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
     [[ -z "${IDP_GRAFANA_CLIENT_SECRET:-}" ]]   && IDP_GRAFANA_CLIENT_SECRET=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
     [[ -z "${IDP_HEADLAMP_CLIENT_SECRET:-}" ]]  && IDP_HEADLAMP_CLIENT_SECRET=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
@@ -75,7 +74,6 @@ _idp_generate_or_load_secrets() {
         "" \
         "Secret key: ${IDP_SECRET_KEY}" \
         "Postgres password: ${IDP_POSTGRES_PASSWORD}" \
-        "Redis password: ${IDP_REDIS_PASSWORD}" \
         "" \
         "ArgoCD client_secret: ${IDP_ARGOCD_CLIENT_SECRET}" \
         "Grafana client_secret: ${IDP_GRAFANA_CLIENT_SECRET}" \
@@ -84,10 +82,15 @@ _idp_generate_or_load_secrets() {
 }
 
 # Create the idp-bootstrap Secret in the idp namespace. The Authentik
-# server + worker pods mount this via envFrom — env vars become available
-# in blueprint string interpolation as ${IDP_*}.
+# server + worker pods mount this via envFrom — env vars feed:
+#   - AUTHENTIK_BOOTSTRAP_PASSWORD/_EMAIL: first-time admin creation
+#     (Authentik reads these on first start, then ignores them)
+#   - IDP_*: blueprint string interpolation (${IDP_FOO} in /blueprints/local/
+#     YAMLs resolves from env at Authentik worker startup)
 _idp_apply_bootstrap_secret() {
     kubectl -n "${IDP_NAMESPACE}" create secret generic idp-bootstrap \
+        --from-literal=AUTHENTIK_BOOTSTRAP_PASSWORD="${IDP_BOOTSTRAP_PASSWORD}" \
+        --from-literal=AUTHENTIK_BOOTSTRAP_EMAIL="${IDP_BOOTSTRAP_EMAIL}" \
         --from-literal=IDP_ENV="${DEPLOY_ENV}" \
         --from-literal=IDP_DOMAIN="${DOMAIN_SUFFIX}" \
         --from-literal=IDP_HOST="${IDP_HOST}" \

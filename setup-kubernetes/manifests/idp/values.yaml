@@ -3,23 +3,23 @@
 # the credentials in ~/secrets/idp-<env>.txt.
 #
 # Authentik is deployed under release name "idp" in namespace "idp", so all
-# emitted Services/ServiceAccounts are named "idp-server" / "idp-worker" /
-# etc. The Helm chart is the upstream authentik/authentik chart.
+# emitted Services are named "idp-server" / "idp-worker" / "idp-postgresql".
+# Upstream chart 2026.2.x — note the major restructure: all `replicas`,
+# `resources`, `envFrom`, `volumes`, `volumeMounts`, `ingress`, `service`
+# fields moved INSIDE `server:` and `worker:` blocks (top-level ones are
+# now hard-deprecated and the chart refuses to install if any are set).
 
 authentik:
   secret_key: __IDP_SECRET_KEY__
   error_reporting:
     enabled: false
-  bootstrap_password: __IDP_BOOTSTRAP_PASSWORD__
-  bootstrap_email: __IDP_BOOTSTRAP_EMAIL__
   postgresql:
     password: __IDP_POSTGRES_PASSWORD__
-  redis:
-    password: __IDP_REDIS_PASSWORD__
 
 # Bundled PostgreSQL → keeps Authentik self-contained; NOT dependent on
 # apps/postgresql which is GitOps-managed (would create a bootstrap cycle:
-# ArgoCD needs Authentik for OIDC; apps/postgresql is reconciled BY ArgoCD).
+# ArgoCD reconciles apps/postgresql, but ArgoCD itself authenticates via
+# Authentik — so Authentik must come up first, with its own datastore).
 postgresql:
   enabled: true
   auth:
@@ -29,16 +29,28 @@ postgresql:
       enabled: true
       size: 8Gi
 
-# Bundled Redis for session/cache.
-redis:
-  enabled: true
-  auth:
-    password: __IDP_REDIS_PASSWORD__
+# Authentik 2026 uses PostgreSQL for cache + queue + sessions — no Redis
+# dependency. (Previous chart bundled Bitnami redis; the 2026 chart
+# removed it entirely.)
+
+# Mount the 7 declarative OAuth2/Proxy provider blueprints (created
+# alongside this chart by deploy_idp.sh as ConfigMap `idp-blueprints`).
+# `blueprints.configMaps` is a list the chart watches, but it does NOT
+# auto-mount — we still wire the volume + volumeMount manually under
+# server + worker below.
+blueprints:
+  configMaps:
+    - idp-blueprints
 
 server:
+  enabled: true
   replicas: 1
-  # OIDC client_secrets are injected via env var so Blueprints can resolve
-  # them at startup via ${IDP_*_CLIENT_SECRET}.
+  # The chart auto-creates an internal Secret from `authentik.*` values
+  # above and envFroms it into the pod. We ADD our own `idp-bootstrap`
+  # Secret (created by deploy_idp.sh) which carries:
+  #   - AUTHENTIK_BOOTSTRAP_PASSWORD / _EMAIL (first-time admin creation)
+  #   - IDP_ENV / IDP_DOMAIN / IDP_HOST (blueprint string interpolation)
+  #   - IDP_{ARGOCD,GRAFANA,HEADLAMP,VAULT}_CLIENT_SECRET (blueprints).
   envFrom:
     - secretRef:
         name: idp-bootstrap
@@ -57,8 +69,14 @@ server:
     limits:
       memory: 512Mi
       cpu: 500m
+  # Disable the chart-bundled Ingress — we ship our own IngressRoute
+  # (manifests/idp/ingressroute.yaml) for consistency with Vault/ArgoCD/
+  # Headlamp + native Traefik CRD support.
+  ingress:
+    enabled: false
 
 worker:
+  enabled: true
   replicas: 1
   envFrom:
     - secretRef:
@@ -78,7 +96,3 @@ worker:
     limits:
       memory: 512Mi
       cpu: 500m
-
-# We use our own IngressRoute (manifests/idp/ingressroute.yaml).
-ingress:
-  enabled: false

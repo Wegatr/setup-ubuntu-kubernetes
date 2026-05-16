@@ -426,7 +426,6 @@ render_manifest() {
         -e "s|__IDP_BOOTSTRAP_PASSWORD__|${IDP_BOOTSTRAP_PASSWORD:-}|g" \
         -e "s|__IDP_BOOTSTRAP_EMAIL__|${IDP_BOOTSTRAP_EMAIL:-}|g" \
         -e "s|__IDP_POSTGRES_PASSWORD__|${IDP_POSTGRES_PASSWORD:-}|g" \
-        -e "s|__IDP_REDIS_PASSWORD__|${IDP_REDIS_PASSWORD:-}|g" \
         "${source_file}" > "${tmp_file}"
     echo "${tmp_file}"
 }
