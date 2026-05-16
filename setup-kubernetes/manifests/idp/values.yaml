@@ -66,11 +66,11 @@ server:
       readOnly: true
   resources:
     requests:
-      memory: 256Mi
+      memory: 512Mi
       cpu: 100m
     limits:
-      memory: 512Mi
-      cpu: 500m
+      memory: 1Gi
+      cpu: 1000m
   # Disable the chart-bundled Ingress — we ship our own IngressRoute
   # (manifests/idp/ingressroute.yaml) for consistency with Vault/ArgoCD/
   # Headlamp + native Traefik CRD support.
@@ -93,8 +93,8 @@ worker:
       readOnly: true
   resources:
     requests:
-      memory: 256Mi
+      memory: 512Mi
       cpu: 100m
     limits:
-      memory: 512Mi
-      cpu: 500m
+      memory: 1Gi
+      cpu: 1000m
