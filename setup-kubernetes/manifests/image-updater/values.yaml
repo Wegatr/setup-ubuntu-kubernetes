@@ -1,0 +1,81 @@
+# ArgoCD Image Updater Helm values — substituted at render time by
+# render_manifest() in lib/cli.sh (replaces __DEPLOY_ENV__ /
+# __DOMAIN_SUFFIX__ tokens).
+#
+# Per the platform's convention, this runs in the SAME namespace as ArgoCD
+# (argocd) and talks to ArgoCD's gRPC service in-cluster.
+config:
+  argocd:
+    # In-cluster gRPC endpoint. plaintext=false because we keep TLS on the
+    # argocd-server service; image-updater verifies via the bundled cluster
+    # CA. insecure=false because the cert is the LE-issued cluster cert.
+    serverAddress: argocd-server.argocd
+    insecure: false
+    plaintext: false
+    grpcWeb: false
+
+  logLevel: info
+
+  # One Zot registry per env. Credentials reference the dockerconfigjson
+  # Secret pre-created by lib/deploy-image-updater.sh (pull-user creds from
+  # the platform's existing Vault path secret/<env>/app/registry).
+  registries:
+    - name: zot-__DEPLOY_ENV__
+      api_url: https://zot.__DEPLOY_ENV__.__DOMAIN_SUFFIX__
+      prefix: zot.__DEPLOY_ENV__.__DOMAIN_SUFFIX__
+      credentials: pullsecret:argocd/argocd-image-updater-zot-creds
+      defaultns: zot.__DEPLOY_ENV__.__DOMAIN_SUFFIX__
+
+# Commit identity + poll interval for the controller. Git auth itself is
+# read from the argocd-image-updater-secret keys mounted below.
+extraArgs:
+  - --interval=60s
+
+# HTTPS write-back via PAT: image-updater reads $GIT_PASSWORD from
+# /etc/argocd-image-updater-creds/git-token. Username is a static label;
+# any value works for HTTPS+PAT auth against most providers.
+extraEnv:
+  - name: GIT_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: argocd-image-updater-secret
+        key: git-username
+  - name: GIT_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: argocd-image-updater-secret
+        key: git-token
+
+# Same Secret mounted as files for write-back-method=git's helper script
+# which reads paths rather than env vars in some chart versions. Belt +
+# suspenders, no harm.
+extraVolumeMounts:
+  - name: image-updater-creds
+    mountPath: /etc/argocd-image-updater-creds
+    readOnly: true
+
+extraVolumes:
+  - name: image-updater-creds
+    secret:
+      secretName: argocd-image-updater-secret
+
+serviceAccount:
+  create: true
+  name: argocd-image-updater
+
+rbac:
+  enabled: true
+
+# Resources kept small — controller is single-replica, low traffic.
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# No Ingress — controller has no UI, only metrics on /metrics (scraped via
+# ServiceMonitor if observability is up).
+metrics:
+  enabled: true

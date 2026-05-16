@@ -50,9 +50,9 @@ SETUP:
     --skip-microk8s / --skip-storage / --skip-cert-manager / --skip-cli-tools / --skip-aliases
 
 INFRASTRUCTURE:
-    --deploy-kube / --deploy-argocd / --deploy-vault / --deploy-all
-    --install-kube / --install-argocd / --install-vault    (aliases for deploy)
-    --uninstall-kube / --uninstall-argocd / --uninstall-vault
+    --deploy-kube / --deploy-argocd / --deploy-vault / --deploy-image-updater / --deploy-all
+    --install-kube / --install-argocd / --install-vault / --install-image-updater (aliases)
+    --uninstall-kube / --uninstall-argocd / --uninstall-vault / --uninstall-image-updater
     --upgrade-kube / --upgrade-argocd / --upgrade-vault
     --seed-vault                  Write secrets from configs/secrets.<env>
                                   into Vault (KV-v2). Re-runnable: each call
@@ -161,6 +161,7 @@ init_flag_defaults() {
     DEPLOY_KUBE=false
     DEPLOY_ARGOCD=false
     DEPLOY_VAULT=false
+    DEPLOY_IMAGE_UPDATER=false
     SEED_VAULT=false
     FORCE_DEPLOY=false
 
@@ -169,6 +170,7 @@ init_flag_defaults() {
     CLEANUP_KUBE=false
     CLEANUP_ARGOCD=false
     CLEANUP_VAULT=false
+    CLEANUP_IMAGE_UPDATER=false
 
     # Maintenance flags
     SHOW_INFRA_STATUS=false
@@ -289,11 +291,18 @@ parse_arguments() {
                 INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
                 shift
                 ;;
+            --deploy-image-updater)
+                DEPLOY_IMAGE_UPDATER=true
+                INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
+                shift
+                ;;
             --deploy-all)
                 # IdP MUST come before ArgoCD so the OIDC clientSecret K8s
                 # Secrets are pre-created in each consumer namespace by the
-                # time their helm install runs.
-                DEPLOY_IDP=true; DEPLOY_KUBE=true; DEPLOY_ARGOCD=true; DEPLOY_VAULT=true
+                # time their helm install runs. Image Updater goes last
+                # because it reads from configs/secrets.<env> which the
+                # seed step (`--seed-vault`) reads on the same run.
+                DEPLOY_IDP=true; DEPLOY_KUBE=true; DEPLOY_ARGOCD=true; DEPLOY_VAULT=true; DEPLOY_IMAGE_UPDATER=true
                 INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
                 shift
                 ;;
@@ -322,10 +331,15 @@ parse_arguments() {
                 DEPLOY_VAULT=true
                 INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
                 shift ;;
+            --install-image-updater) # alias for --deploy-image-updater
+                DEPLOY_IMAGE_UPDATER=true
+                INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
+                shift ;;
             --uninstall-idp) CLEANUP_IDP=true; shift ;;
             --uninstall-kube) CLEANUP_KUBE=true; shift ;;
             --uninstall-argocd) CLEANUP_ARGOCD=true; shift ;;
             --uninstall-vault) CLEANUP_VAULT=true; shift ;;
+            --uninstall-image-updater) CLEANUP_IMAGE_UPDATER=true; shift ;;
             --upgrade-idp) UPGRADE_APP="idp"; shift ;;
             --upgrade-kube) UPGRADE_APP="kube"; shift ;;
             --upgrade-argocd) UPGRADE_APP="argocd"; shift ;;
@@ -426,6 +440,8 @@ render_manifest() {
         -e "s|__IDP_BOOTSTRAP_PASSWORD__|${IDP_BOOTSTRAP_PASSWORD:-}|g" \
         -e "s|__IDP_BOOTSTRAP_EMAIL__|${IDP_BOOTSTRAP_EMAIL:-}|g" \
         -e "s|__IDP_POSTGRES_PASSWORD__|${IDP_POSTGRES_PASSWORD:-}|g" \
+        -e "s|__DEPLOY_ENV__|${DEPLOY_ENV}|g" \
+        -e "s|__DOMAIN_SUFFIX__|${DOMAIN_SUFFIX}|g" \
         "${source_file}" > "${tmp_file}"
     echo "${tmp_file}"
 }

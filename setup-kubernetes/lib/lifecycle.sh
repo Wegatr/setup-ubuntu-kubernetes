@@ -112,6 +112,21 @@ uninstall_argocd() {
     log_ok "ArgoCD uninstalled"
 }
 
+uninstall_image_updater() {
+    if ! is_helm_release_deployed "${IMAGE_UPDATER_RELEASE}" "${IMAGE_UPDATER_NAMESPACE}"; then
+        log_warn "Image Updater not deployed, nothing to uninstall"
+        return 0
+    fi
+
+    log_step "Uninstalling ArgoCD Image Updater..."
+    helm uninstall "${IMAGE_UPDATER_RELEASE}" -n "${IMAGE_UPDATER_NAMESPACE}" || log_warn "Helm uninstall failed"
+    kubectl -n "${IMAGE_UPDATER_NAMESPACE}" delete secret \
+        argocd-image-updater-secret \
+        argocd-image-updater-zot-creds \
+        --ignore-not-found
+    log_ok "ArgoCD Image Updater uninstalled"
+}
+
 uninstall_vault() {
     if ! is_helm_release_deployed "${VAULT_RELEASE}" "${VAULT_NAMESPACE}"; then
         log_warn "Vault not deployed, nothing to uninstall"

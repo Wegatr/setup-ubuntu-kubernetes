@@ -182,6 +182,22 @@ spec:
   # this stays free of "Implicit map key" / "Block collection in flow"
   # warnings. ArgoCD's applicationset-controller renders this and strategic-
   # merges the result onto the template above.
+  #
+  # Per-app `imageUpdater:` block (optional): when present, renders the
+  # ArgoCD Image Updater annotations so the platform's image-updater
+  # controller (installed by setup-kubernetes/lib/deploy-image-updater.sh)
+  # auto-bumps the listed Zot images on new builds and commits the tag
+  # change back to this repo. Schema:
+  #   imageUpdater:
+  #     images:
+  #       - alias: <short-name>
+  #         repository: zot.<env>.<domain>/<repo-name>
+  #         helmImageName: images.<alias>.repository  # Helm values path
+  #         helmImageTag: images.<alias>.tag           # Helm values path
+  #         strategy: newest-build       # optional, default newest-build
+  #         allowTagsRegex: '^...'       # optional, default ^N.N.N.YYYYMMDDTHHMMSSZ$
+  # Omit the block entirely on apps that pin upstream Bitnami / Grafana /
+  # public-registry versions (most current apps).
   templatePatch: |
     spec:
       syncPolicy:
@@ -206,4 +222,18 @@ spec:
           kind: Deployment
           jqPathExpressions:
             - '.spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor'
+      {{- end }}
+      {{- if .imageUpdater }}
+      metadata:
+        annotations:
+          argocd-image-updater.argoproj.io/image-list: '{{- range $i, $img := .imageUpdater.images }}{{ if $i }},{{ end }}{{ $img.alias }}={{ $img.repository }}{{- end }}'
+          {{- range .imageUpdater.images }}
+          argocd-image-updater.argoproj.io/{{ .alias }}.update-strategy: '{{ default "newest-build" .strategy }}'
+          argocd-image-updater.argoproj.io/{{ .alias }}.allow-tags: 'regexp:{{ default `^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]{8}T[0-9]{6}Z$` .allowTagsRegex }}'
+          argocd-image-updater.argoproj.io/{{ .alias }}.helm.image-name: '{{ .helmImageName }}'
+          argocd-image-updater.argoproj.io/{{ .alias }}.helm.image-tag: '{{ .helmImageTag }}'
+          {{- end }}
+          argocd-image-updater.argoproj.io/write-back-method: git
+          argocd-image-updater.argoproj.io/write-back-target: 'helmvalues:/apps/{{ .name }}/values-dev.yaml'
+          argocd-image-updater.argoproj.io/git-branch: main
       {{- end }}

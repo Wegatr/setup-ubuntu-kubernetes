@@ -110,6 +110,7 @@ auto-update on each install.
 | Prometheus-community mongodb-exporter chart | `3.7.0` | `apps/mongodb/Chart.yaml` | |
 | Prometheus-community redis-exporter chart | `6.5.0` | `apps/redis/Chart.yaml` | |
 | Headlamp / ArgoCD / Vault Helm charts | (no pin — `helm install` latest at deploy time) | `setup-kubernetes/lib/deploy-{kube,argocd,vault}.sh` | Re-running `--deploy-<app>` after a chart release picks up the new version. |
+| ArgoCD Image Updater chart | (no pin — latest at deploy time) | `setup-kubernetes/lib/deploy-image-updater.sh` | Same pattern as ArgoCD/Vault: `--deploy-image-updater` re-pulls latest. Installed in the `argocd` namespace alongside ArgoCD itself. |
 | cert-manager / Traefik | MicroK8s addon defaults | snap addon | Tied to MicroK8s channel. |
 
 ## Hardcoded constraints — DO NOT change without asking
@@ -237,7 +238,7 @@ auto-update on each install.
     - `setup-kubernetes/manifests/idp/{values.yaml, ingressroute.yaml,
        middleware-forwardauth.yaml, blueprints/*.yaml}`.
     - Dispatcher flag `--deploy-idp`, ordered FIRST in `--deploy-all`
-      (`idp → kube → argocd → vault → seed-vault`).
+      (`idp → kube → argocd → vault → seed-vault → image-updater`).
     - Hostname `idp.<env>.<DOMAIN_SUFFIX>`. Bundled PostgreSQL +
       Redis StatefulSets keep Authentik self-contained (NO dep on
       `apps/postgresql`, which is GitOps-managed).
@@ -350,6 +351,17 @@ auto-update on each install.
   is already populated on every cluster by the unified secrets-seed file;
   re-running `--seed-vault` after a namespace name change picks up the
   new bound_service_account_namespaces entry.
+- **ArgoCD Image Updater is platform-tier, OPT-IN per app**: installed by
+  `setup-kubernetes/lib/deploy-image-updater.sh` (Helm release
+  `argocd-image-updater` in the `argocd` namespace, alongside ArgoCD
+  itself — same chicken-egg reason as Authentik / Vault). Dispatcher flag
+  `--deploy-image-updater`, last in the `--deploy-all` chain. Needs
+  `IMAGE_BUILDER_GIT_CREDENTIALS` and `REGISTRY_PULL_USER` +
+  `REGISTRY_PULL_PASSWORD` from `configs/secrets.<env>` — those are reused
+  (no new secret rotation surface). Per-app annotation block syntax lives
+  under "When you change the GitOps tree" below; only apps that consume
+  Zot-built images add the `imageUpdater:` field. Apps pinning upstream
+  Bitnami / Grafana / public-registry versions stay manual (default).
 
 ## Pre-flight requirements the script cannot fix
 
@@ -493,6 +505,34 @@ Same idempotency rule. Specific patterns to model:
   Chart.yaml + values + templates structure, then append one element to
   every `argocd/<env>/apps/applicationset.yaml` list. No new ArgoCD
   Application file per app — the ApplicationSet generates them.
+- **Auto-tag-bump for a Zot-built image** — if the new app consumes an
+  image pushed by `apps/image-builder/` to Zot, add an `imageUpdater:`
+  block to its ApplicationSet entry to have the platform's Image Updater
+  controller (installed by `setup-kubernetes/lib/deploy-image-updater.sh`,
+  living in the `argocd` namespace) auto-commit tag bumps back to
+  `apps/<name>/values-<env>.yaml`. Example:
+  ```yaml
+  - name: fleet
+    syncWave: "40"
+    namespace: fleet
+    prune: "true"
+    createNamespace: "true"
+    specialOptions: ""
+    imageUpdater:
+      images:
+        - alias: backend
+          repository: zot.dev.digitaplatform.com/fleet-backend
+          helmImageName: images.backend.repository
+          helmImageTag: images.backend.tag
+        - alias: frontend
+          repository: zot.dev.digitaplatform.com/fleet-frontend
+          helmImageName: images.frontend.repository
+          helmImageTag: images.frontend.tag
+  ```
+  Apps without an `imageUpdater:` block are NOT watched (default opt-in).
+  Apps that pin upstream Bitnami / Grafana / public-registry versions
+  (mongodb / postgresql / redis / observability / etc.) MUST NOT add the
+  block — auto-update would pull breaking changes from upstream.
 - **Adding a new platform constant** — add it under `global:` in
   `platform/values-common.yaml` (or per-env if env-specific). Reference
   via `.Values.global.<key>` in chart templates. For upstream charts that

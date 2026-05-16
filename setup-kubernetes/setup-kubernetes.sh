@@ -33,7 +33,7 @@ source "${SCRIPT_DIR}/common-kubernetes.sh"
 # that main() calls below).
 for _lib in cli preflight install-microk8s install-storage-tls install-tools \
             verify deploy-idp deploy-kube deploy-argocd deploy-vault seed-vault \
-            lifecycle maintenance; do
+            deploy-image-updater lifecycle maintenance; do
     if [[ ! -f "${LIB_DIR}/${_lib}.sh" ]]; then
         echo "ERROR: Missing library: ${LIB_DIR}/${_lib}.sh"
         exit 1
@@ -173,9 +173,15 @@ main() {
         exit $?
     fi
 
+    if [[ "${CLEANUP_IMAGE_UPDATER}" == "true" ]]; then
+        check_root || die "Root privileges required"
+        uninstall_image_updater
+        exit $?
+    fi
+
     # Check if any deployment flags are set
     local deploying_infra=false
-    if [[ "${DEPLOY_IDP}" == "true" || "${DEPLOY_KUBE}" == "true" || "${DEPLOY_ARGOCD}" == "true" || "${DEPLOY_VAULT}" == "true" ]]; then
+    if [[ "${DEPLOY_IDP}" == "true" || "${DEPLOY_KUBE}" == "true" || "${DEPLOY_ARGOCD}" == "true" || "${DEPLOY_VAULT}" == "true" || "${DEPLOY_IMAGE_UPDATER}" == "true" ]]; then
         deploying_infra=true
     fi
 
@@ -279,6 +285,13 @@ main() {
     # Also runnable standalone against an already-deployed Vault.
     if [[ "${SEED_VAULT}" == "true" ]]; then
         seed_vault || log_warn "Vault seeding had issues"
+    fi
+
+    # Image Updater runs AFTER seed_vault so the registry / git-PAT shell
+    # vars sourced from configs/secrets.<env> are guaranteed to exist.
+    # In --deploy-all this runs last in the chain.
+    if [[ "${DEPLOY_IMAGE_UPDATER}" == "true" ]]; then
+        deploy_image_updater || log_warn "Image Updater deployment had issues"
     fi
 
     # Print summary
