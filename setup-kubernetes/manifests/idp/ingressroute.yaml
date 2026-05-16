@@ -27,7 +27,9 @@ spec:
     - match: Host(`__IDP_HOST__`)
       kind: Rule
       services:
-        - name: idp-server
+        # Chart names the Service `{release}-authentik-{component}` —
+        # `idp-authentik-server` for our release.
+        - name: idp-authentik-server
           port: 80
   tls:
     secretName: idp-tls
