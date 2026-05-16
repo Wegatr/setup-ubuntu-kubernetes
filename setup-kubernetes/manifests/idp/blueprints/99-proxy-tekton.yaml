@@ -19,7 +19,7 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "true"
 entries:
-  - identifier: tekton-proxy-provider
+  - id: tekton-proxy-provider
     model: authentik_providers_proxy.proxyprovider
     identifiers:
       name: Tekton Dashboard
@@ -35,14 +35,14 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
-  - identifier: tekton-app
+  - id: tekton-app
     model: authentik_core.application
     identifiers:
       slug: tekton-dashboard
     attrs:
       name: Tekton Dashboard
       slug: tekton-dashboard
-      provider: !KeyOf tekton-proxy-provider
+      provider: !Find [authentik_providers_proxy.proxyprovider, [name, Tekton Dashboard]]
       meta_launch_url: https://tekton.${IDP_ENV}.${IDP_DOMAIN}/
       open_in_new_tab: true
       group: Build

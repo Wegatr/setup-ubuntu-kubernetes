@@ -10,7 +10,7 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "true"
 entries:
-  - identifier: seq-proxy-provider
+  - id: seq-proxy-provider
     model: authentik_providers_proxy.proxyprovider
     identifiers:
       name: Seq
@@ -26,14 +26,14 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
-  - identifier: seq-app
+  - id: seq-app
     model: authentik_core.application
     identifiers:
       slug: seq
     attrs:
       name: Seq
       slug: seq
-      provider: !KeyOf seq-proxy-provider
+      provider: !Find [authentik_providers_proxy.proxyprovider, [name, Seq]]
       meta_launch_url: https://log.${IDP_ENV}.${IDP_DOMAIN}/
       open_in_new_tab: true
       group: Observability

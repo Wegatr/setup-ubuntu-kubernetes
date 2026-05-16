@@ -15,7 +15,7 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "true"
 entries:
-  - identifier: argocd-provider
+  - id: argocd-provider
     model: authentik_providers_oauth2.oauth2provider
     identifiers:
       name: ArgoCD
@@ -37,14 +37,14 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
-  - identifier: argocd-app
+  - id: argocd-app
     model: authentik_core.application
     identifiers:
       slug: argocd
     attrs:
       name: ArgoCD
       slug: argocd
-      provider: !KeyOf argocd-provider
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, ArgoCD]]
       meta_launch_url: https://argo.${IDP_ENV}.${IDP_DOMAIN}/
       open_in_new_tab: true
       group: Platform

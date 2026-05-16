@@ -104,14 +104,39 @@ _idp_apply_bootstrap_secret() {
 # Create the idp-blueprints ConfigMap from manifests/idp/blueprints/*.yaml.
 # Each file becomes one key in the ConfigMap; Authentik pods auto-load
 # every file under /blueprints/local at startup.
+#
+# Pre-resolve the non-secret URL placeholders (IDP_ENV, IDP_DOMAIN, IDP_HOST)
+# at ConfigMap-creation time, because Authentik's blueprint VALIDATE phase
+# runs URL serializer checks BEFORE env-var interpolation. Without
+# pre-resolution the literal string `https://argo.${IDP_ENV}.${IDP_DOMAIN}/...`
+# fails URL validation and BlueprintInstance.status stays 'error'.
+#
+# Client_secrets stay as `${IDP_*_CLIENT_SECRET}` so they don't get baked
+# into the ConfigMap as plaintext — Authentik resolves them at apply time
+# via the envFrom: idp-bootstrap Secret mount.
 _idp_apply_blueprints_configmap() {
     local blueprints_dir="${MANIFESTS_DIR}/idp/blueprints"
     if [[ ! -d "${blueprints_dir}" ]]; then
         log_error "Blueprints directory not found: ${blueprints_dir}"
         return 1
     fi
+
+    local rendered_dir
+    rendered_dir=$(mktemp -d "/tmp/idp-blueprints-XXXXXX")
+    trap "rm -rf '${rendered_dir}'" RETURN
+
+    local file base
+    for file in "${blueprints_dir}"/*.yaml; do
+        base=$(basename "${file}")
+        sed \
+            -e "s|\${IDP_ENV}|${DEPLOY_ENV}|g" \
+            -e "s|\${IDP_DOMAIN}|${DOMAIN_SUFFIX}|g" \
+            -e "s|\${IDP_HOST}|${IDP_HOST}|g" \
+            "${file}" > "${rendered_dir}/${base}"
+    done
+
     kubectl -n "${IDP_NAMESPACE}" create configmap idp-blueprints \
-        --from-file="${blueprints_dir}" \
+        --from-file="${rendered_dir}" \
         --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
 

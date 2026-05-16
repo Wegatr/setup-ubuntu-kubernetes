@@ -10,7 +10,7 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "true"
 entries:
-  - identifier: headlamp-provider
+  - id: headlamp-provider
     model: authentik_providers_oauth2.oauth2provider
     identifiers:
       name: Headlamp
@@ -32,14 +32,14 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
-  - identifier: headlamp-app
+  - id: headlamp-app
     model: authentik_core.application
     identifiers:
       slug: headlamp
     attrs:
       name: Headlamp
       slug: headlamp
-      provider: !KeyOf headlamp-provider
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, Headlamp]]
       meta_launch_url: https://kube.${IDP_ENV}.${IDP_DOMAIN}/
       open_in_new_tab: true
       group: Platform

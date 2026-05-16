@@ -10,7 +10,7 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "true"
 entries:
-  - identifier: vault-provider
+  - id: vault-provider
     model: authentik_providers_oauth2.oauth2provider
     identifiers:
       name: Vault
@@ -36,14 +36,14 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
-  - identifier: vault-app
+  - id: vault-app
     model: authentik_core.application
     identifiers:
       slug: vault
     attrs:
       name: Vault
       slug: vault
-      provider: !KeyOf vault-provider
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, Vault]]
       meta_launch_url: https://vault.${IDP_ENV}.${IDP_DOMAIN}/
       open_in_new_tab: true
       group: Platform
