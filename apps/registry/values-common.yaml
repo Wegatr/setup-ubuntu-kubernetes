@@ -124,6 +124,11 @@ ingress:
       # middleware needed. If a future hardening adds RequestBodySize
       # middleware, attach it via this annotations block.
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      # Bare-host redirect to Zot's OIDC login (see Middleware below).
+      # Middleware name: `<release>-<alias>` → `registry-<env>-oidc-redirect`.
+      # Hardcoded as `registry-dev-oidc-redirect` because the chart only
+      # runs on DEV; if extended to other envs, use Helm tpl here too.
+      traefik.ingress.kubernetes.io/router.middlewares: registry-registry-dev-oidc-redirect@kubernetescrd
     host: 'zot.dev.{{ .Values.global.domain }}'
     paths:
       - path: /
@@ -183,7 +188,7 @@ configmap:
             },
             "accessControl": {
               "adminPolicy": {
-                "users": ["akadmin"],
+                "users": ["kartalbas@gmail.com"],
                 "actions": ["read", "create", "update", "delete"]
               },
               "repositories": {
@@ -268,6 +273,22 @@ externalsecret-oidc:
     data:
       - secretKey: clientsecret
         property: zot-client-secret
+
+# ----- Traefik Middleware: bare-host → OIDC login auto-redirect -------------
+# Visiting https://zot.<env>/ without a session lands on Zot's UI shell
+# anonymously (loads HTML, all API calls 401). This middleware rewrites
+# the bare path to Zot's own /zot/auth/login?provider=oidc init endpoint
+# — same callback the in-UI "Sign in with Authentik" button uses, just
+# triggered automatically. With an active Authentik SSO cookie the user
+# lands back in Zot signed-in within one round-trip.
+oidc-redirect:
+  middleware:
+    enabled: true
+    type: redirectRegex
+    redirectRegex:
+      regex: '^https?://zot\.{{ .Values.global.env }}\.{{ .Values.global.domain }}/?$'
+      replacement: 'https://zot.{{ .Values.global.env }}.{{ .Values.global.domain }}/zot/auth/login?provider=oidc&callback_ui=https%3A%2F%2Fzot.{{ .Values.global.env }}.{{ .Values.global.domain }}%2Fhome'
+      permanent: false
 
 # ----- ESO SecretStore in this namespace ------------------------------------
 secret-store:

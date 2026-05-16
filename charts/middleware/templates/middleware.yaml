@@ -19,8 +19,11 @@ spec:
     permanent: {{ .Values.middleware.redirectScheme.permanent | default true }}
   {{- else if eq .Values.middleware.type "redirectRegex" }}
   redirectRegex:
-    regex: {{ .Values.middleware.redirectRegex.regex | quote }}
-    replacement: {{ .Values.middleware.redirectRegex.replacement | quote }}
+    # `tpl` so regex/replacement can reference .Values.global.{env,domain}
+    # — apps/registry composes the bare-host → OIDC-login redirect from
+    # one source of truth via Helm. No-op for non-templated strings.
+    regex: {{ tpl .Values.middleware.redirectRegex.regex . | quote }}
+    replacement: {{ tpl .Values.middleware.redirectRegex.replacement . | quote }}
     permanent: {{ .Values.middleware.redirectRegex.permanent | default true }}
   {{- else if eq .Values.middleware.type "forwardAuth" }}
   forwardAuth:

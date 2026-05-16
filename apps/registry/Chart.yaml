@@ -29,6 +29,16 @@ dependencies:
     version: 1.0.0
     repository: file://../../charts/ingress
 
+  # Traefik Middleware — auto-redirect bare zot.<env> visits to Zot's
+  # own OIDC login init endpoint (`/zot/auth/login?provider=oidc&...`).
+  # Without this the user lands on Zot's UI shell anonymously and has
+  # to click "Sign in with Authentik"; with it, the SSO cookie at
+  # apex `.dev.<DOMAIN_SUFFIX>` carries them through Authentik instantly.
+  - name: middleware
+    version: 1.0.0
+    repository: file://../../charts/middleware
+    alias: oidc-redirect
+
   # ConfigMap with Zot's config.json (HTTP server + auth + accessControl +
   # metrics extension). Mounted at /etc/zot/config.json by the Deployment.
   - name: configmap
