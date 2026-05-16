@@ -6,6 +6,8 @@ metadata:
 entries:
   - identifier: grafana-provider
     model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: Grafana
     attrs:
       name: Grafana
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
@@ -24,6 +26,8 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
   - identifier: grafana-app
     model: authentik_core.application
+    identifiers:
+      slug: grafana
     attrs:
       name: Grafana
       slug: grafana

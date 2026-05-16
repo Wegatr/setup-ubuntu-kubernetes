@@ -6,6 +6,8 @@ metadata:
 entries:
   - identifier: seq-proxy-provider
     model: authentik_providers_proxy.proxyprovider
+    identifiers:
+      name: Seq
     attrs:
       name: Seq
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
@@ -19,6 +21,8 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
   - identifier: seq-app
     model: authentik_core.application
+    identifiers:
+      slug: seq
     attrs:
       name: Seq
       slug: seq

@@ -11,6 +11,8 @@ metadata:
 entries:
   - identifier: argocd-provider
     model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: ArgoCD
     attrs:
       name: ArgoCD
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
@@ -29,6 +31,8 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
   - identifier: argocd-app
     model: authentik_core.application
+    identifiers:
+      slug: argocd
     attrs:
       name: ArgoCD
       slug: argocd

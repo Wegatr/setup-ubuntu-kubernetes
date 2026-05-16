@@ -6,6 +6,8 @@ metadata:
 entries:
   - identifier: vault-provider
     model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: Vault
     attrs:
       name: Vault
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
@@ -27,6 +29,8 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
   - identifier: vault-app
     model: authentik_core.application
+    identifiers:
+      slug: vault
     attrs:
       name: Vault
       slug: vault

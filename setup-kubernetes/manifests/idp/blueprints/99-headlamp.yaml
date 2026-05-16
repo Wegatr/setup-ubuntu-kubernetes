@@ -6,6 +6,8 @@ metadata:
 entries:
   - identifier: headlamp-provider
     model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: Headlamp
     attrs:
       name: Headlamp
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
@@ -24,6 +26,8 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
   - identifier: headlamp-app
     model: authentik_core.application
+    identifiers:
+      slug: headlamp
     attrs:
       name: Headlamp
       slug: headlamp
