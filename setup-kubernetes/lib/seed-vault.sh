@@ -181,6 +181,21 @@ seed_vault() {
             workload_seen[$name]=1
         fi
     done
+
+    # External tenants that are NOT in this repo's VAULT_SCHEMA but DO run
+    # ESO + a `vault-backend` SecretStore in their own namespace + need
+    # read access against this Vault. Listed in configs/config.<env> as
+    # EXTERNAL_ESO_NAMESPACES=(my-tenant-ns another-app-ns). Each entry
+    # gets added to the role's bound_service_account_namespaces so its
+    # `external-secrets-sa` SA can log in.
+    for ns in "${EXTERNAL_ESO_NAMESPACES[@]:-}"; do
+        [[ -z "${ns}" ]] && continue
+        if [[ -z "${workload_seen[$ns]:-}" ]]; then
+            workload_apps+=("$ns")
+            workload_seen[$ns]=1
+        fi
+    done
+
     local namespaces_csv
     namespaces_csv=$(IFS=,; echo "${workload_apps[*]}")
 

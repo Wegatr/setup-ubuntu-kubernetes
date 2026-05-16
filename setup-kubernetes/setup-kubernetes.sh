@@ -149,6 +149,12 @@ main() {
     fi
 
     # Handle uninstall operations (require root)
+    if [[ "${CLEANUP_IDP}" == "true" ]]; then
+        check_root || die "Root privileges required"
+        uninstall_idp
+        exit $?
+    fi
+
     if [[ "${CLEANUP_KUBE}" == "true" ]]; then
         check_root || die "Root privileges required"
         uninstall_kube

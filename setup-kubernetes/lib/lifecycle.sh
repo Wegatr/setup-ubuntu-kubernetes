@@ -36,6 +36,44 @@ save_credential() {
     log_info "Credentials saved to: ${cred_file}"
 }
 
+uninstall_idp() {
+    if ! is_helm_release_deployed "${IDP_RELEASE}" "${IDP_NAMESPACE}"; then
+        log_warn "IdP (Authentik) not deployed, nothing to uninstall"
+        return 0
+    fi
+
+    log_step "Uninstalling IdP (Authentik)..."
+    helm uninstall "${IDP_RELEASE}" -n "${IDP_NAMESPACE}" || log_warn "Helm uninstall failed"
+
+    # The bundled PostgreSQL StatefulSet's PVCs are NOT auto-deleted with the
+    # Helm release (intentional — protects user data). Wipe them so the next
+    # --deploy-idp gets a fresh DB. This is the nuclear-recovery path used
+    # after blueprint duplicates or other DB-level wedges.
+    kubectl delete pvc -n "${IDP_NAMESPACE}" --all --ignore-not-found
+    kubectl delete certificate -n "${IDP_NAMESPACE}" idp-tls --ignore-not-found
+    kubectl delete ingressroute -n "${IDP_NAMESPACE}" idp --ignore-not-found
+    kubectl delete middleware -n "${IDP_NAMESPACE}" forwardauth --ignore-not-found
+    kubectl delete configmap -n "${IDP_NAMESPACE}" idp-blueprints --ignore-not-found
+    kubectl delete secret -n "${IDP_NAMESPACE}" idp-bootstrap --ignore-not-found
+
+    # Drop the per-consumer OIDC secrets that deploy_idp pre-creates — they
+    # carry the now-stale client_secrets. Next --deploy-idp generates new ones.
+    kubectl delete secret -n argocd argocd-oidc --ignore-not-found
+    kubectl delete secret -n kubernetes-dashboard headlamp-oidc --ignore-not-found
+    kubectl delete secret -n vault vault-oidc --ignore-not-found
+
+    # Drop the ~/secrets/idp-<env>.txt so the next install generates fresh
+    # passwords + client_secrets (preserves the rebuild-from-scratch invariant).
+    local cred_file="${CREDENTIALS_DIR}/idp-${DEPLOY_ENV}.txt"
+    if [[ -f "${cred_file}" ]]; then
+        rm -f "${cred_file}"
+        log_info "Removed ${cred_file} — next --deploy-idp generates fresh creds"
+    fi
+
+    log_ok "IdP (Authentik) uninstalled"
+    log_warn "Re-run: sudo ./setup-kubernetes.sh --${DEPLOY_ENV} --deploy-idp + copy new ~/secrets/idp-${DEPLOY_ENV}.txt values into configs/secrets.${DEPLOY_ENV} + re-run --seed-vault"
+}
+
 uninstall_kube() {
     if ! is_helm_release_deployed "${KUBE_RELEASE}" "${KUBE_NAMESPACE}"; then
         log_warn "Kube Dashboard not deployed, nothing to uninstall"

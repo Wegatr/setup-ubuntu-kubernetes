@@ -237,6 +237,22 @@ VAULT_RELEASE="vault"
 # config; this file is committed-template).
 IDP_BOOTSTRAP_EMAIL="user@example.com"
 
+# Extra namespaces that run External-Secrets-Operator + a `vault-backend`
+# SecretStore against THIS Vault, but are NOT in this repo's VAULT_SCHEMA.
+# Use case: tenant applications managed by a separate GitOps repo (different
+# Argo app, different chart) that need to read Vault secrets via ESO.
+#
+# Each entry must:
+#   - be a real Kubernetes namespace
+#   - run a ServiceAccount named `external-secrets-sa` (the chart-of-charts
+#     pattern from charts/secret-store/ creates this by convention)
+#   - have a SecretStore CR pointing at https://vault.<env>.<DOMAIN_SUFFIX>:8200
+#
+# `--seed-vault` appends these to `bound_service_account_namespaces` on the
+# `external-secrets` Vault role. Re-run --seed-vault whenever the list changes.
+# Empty array = none (default).
+EXTERNAL_ESO_NAMESPACES=()
+
 # Vault PersistentVolumeClaim size.
 VAULT_STORAGE_SIZE="10Gi"
 
