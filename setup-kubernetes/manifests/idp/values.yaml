@@ -33,14 +33,16 @@ postgresql:
 # dependency. (Previous chart bundled Bitnami redis; the 2026 chart
 # removed it entirely.)
 
-# Mount the 7 declarative OAuth2/Proxy provider blueprints (created
-# alongside this chart by deploy_idp.sh as ConfigMap `idp-blueprints`).
-# `blueprints.configMaps` is a list the chart watches, but it does NOT
-# auto-mount — we still wire the volume + volumeMount manually under
-# server + worker below.
-blueprints:
-  configMaps:
-    - idp-blueprints
+# Blueprints are mounted manually via `server.volumes` + `server.volumeMounts`
+# below (same for worker), so they land at /blueprints/local/*.yaml which
+# Authentik's worker auto-discovers on startup.
+#
+# We deliberately do NOT use the chart's `blueprints.configMaps` field — it
+# registers the same ConfigMap as a blueprint source, which causes Authentik
+# to try to insert each blueprint TWICE (once from the volume mount, once
+# from the chart's auto-registration) → duplicate-key IntegrityError on
+# `authentik_blueprints_blueprintinstance_name_*_uniq` and the workers
+# crash-loop until the second insert is removed.
 
 server:
   enabled: true
