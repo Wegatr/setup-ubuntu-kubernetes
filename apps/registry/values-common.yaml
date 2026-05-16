@@ -178,7 +178,7 @@ configmap:
               },
               "openid": {
                 "providers": {
-                  "authentik": {
+                  "oidc": {
                     "name": "Authentik",
                     "clientid": "zot",
                     "clientsecret": "${ZOT_OIDC_CLIENT_SECRET}",

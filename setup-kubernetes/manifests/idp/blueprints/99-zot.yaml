@@ -6,8 +6,11 @@
 # htpasswd (push-user / pull-user / admin) unchanged.
 #
 # Redirect URI follows Zot's convention `<external-url>/auth/callback/
-# <provider-name>` — provider name in the apps/registry config is
-# "authentik" (lowercase), matching the OIDC issuer's own name.
+# <provider-name>`. Zot v2 only accepts a fixed allowlist of provider
+# names (github / google / gitlab / dex / oidc), so we use the generic
+# "oidc" key; the human-facing "name" field stays "Authentik" for the
+# UI label. Without "oidc" as the key Zot exits with
+# `unsupported openid/oauth2 provider` on startup.
 version: 1
 metadata:
   name: Zot OIDC client
@@ -30,7 +33,7 @@ entries:
       client_secret: ${IDP_ZOT_CLIENT_SECRET}
       redirect_uris:
         - matching_mode: strict
-          url: https://zot.${IDP_ENV}.${IDP_DOMAIN}/auth/callback/authentik
+          url: https://zot.${IDP_ENV}.${IDP_DOMAIN}/auth/callback/oidc
       access_token_validity: hours=1
       refresh_token_validity: days=30
       sub_mode: hashed_user_id
