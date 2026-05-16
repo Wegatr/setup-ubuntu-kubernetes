@@ -11,7 +11,7 @@ app:
     - name: SKIP_ALL_AUTH
       value: "true"
     - name: CONNECTIONS
-      value: "mongo,redis,postgres"
+      value: "mongo,redis,app_postgres,idp_postgres"
     # --- MongoDB ---
     - name: LABEL_mongo
       value: "MongoDB (DEV)"
@@ -35,26 +35,48 @@ app:
       value: "redis@dbgate-plugin-redis"
     - name: URL_redis
       value: "redis://redis-dev-master.redis.svc.cluster.local:6379"
-    # --- PostgreSQL ---
+    # --- PostgreSQL (app — bitnami chart) ---
     # Bitnami postgresql chart at release name `postgresql-dev` creates a
     # ClusterIP Service named `postgresql-dev` in the postgresql namespace.
     # Connecting as the superuser; per-app users/databases are created at
-    # runtime by the consuming application.
-    - name: LABEL_postgres
-      value: "PostgreSQL (DEV)"
-    - name: ENGINE_postgres
+    # runtime by the consuming application. Connection ID uses underscore
+    # (POSIX env var); UI label uses hyphen for human readability.
+    - name: LABEL_app_postgres
+      value: "app-postgres (DEV)"
+    - name: ENGINE_app_postgres
       value: "postgres@dbgate-plugin-postgres"
-    - name: SERVER_postgres
+    - name: SERVER_app_postgres
       value: "postgresql-dev.postgresql.svc.cluster.local"
-    - name: PORT_postgres
+    - name: PORT_app_postgres
       value: "5432"
-    - name: USER_postgres
+    - name: USER_app_postgres
       value: "postgres"
-    - name: PASSWORD_postgres
+    - name: PASSWORD_app_postgres
       valueFrom:
         secretKeyRef:
           name: dbgate-db-credentials
           key: postgresql-password
+    # --- PostgreSQL (idp — Authentik's bundled chart) ---
+    # Authentik's bundled PostgreSQL StatefulSet — release `idp` in `idp`
+    # namespace exposes a ClusterIP Service `idp-postgresql`. Connecting
+    # as the `authentik` user (the only role with access to the `authentik`
+    # database). Password sourced from Vault `<env>/system/idp` via a
+    # separate ExternalSecret (see externalsecret-idp-db below).
+    - name: LABEL_idp_postgres
+      value: "idp-postgres (DEV)"
+    - name: ENGINE_idp_postgres
+      value: "postgres@dbgate-plugin-postgres"
+    - name: SERVER_idp_postgres
+      value: "idp-postgresql.idp.svc.cluster.local"
+    - name: PORT_idp_postgres
+      value: "5432"
+    - name: USER_idp_postgres
+      value: "authentik"
+    - name: PASSWORD_idp_postgres
+      valueFrom:
+        secretKeyRef:
+          name: dbgate-idp-db-credentials
+          key: postgres-password
   resources:
     requests:
       cpu: 100m
@@ -91,8 +113,8 @@ externalsecret-auth:
       - secretKey: users
         property: auth
 
-# ExternalSecret #2 — DB passwords injected into the DBGate pod env vars
-# (PASSWORD_mongo via valueFrom.secretKeyRef above).
+# ExternalSecret #2 — DB passwords for the app-tier databases (mongo,
+# bitnami postgres) injected into DBGate pod env vars.
 externalsecret-db:
   externalSecret:
     enabled: true
@@ -106,3 +128,20 @@ externalsecret-db:
         property: mongodb-password
       - secretKey: postgresql-password
         property: postgresql-password
+
+# ExternalSecret #3 — Authentik's bundled PostgreSQL password from the
+# system-tier Vault path (Authentik = infrastructure, NOT a GitOps app,
+# so its postgres password lives under secret/<env>/system/idp/, not
+# secret/<env>/app/). The external-secrets Vault policy reads `secret/*`
+# so this works without a role change.
+externalsecret-idp-db:
+  externalSecret:
+    enabled: true
+    name: dbgate-idp-db-credentials
+    namespace: dbgate
+    secretStoreKind: SecretStore
+    targetSecretName: dbgate-idp-db-credentials
+    vaultPath: dev/system/idp
+    data:
+      - secretKey: postgres-password
+        property: postgres-password

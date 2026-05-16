@@ -23,6 +23,13 @@ entries:
       name: ArgoCD
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      # RSA keypair → Authentik signs ID tokens with RS256 and publishes
+      # the public key at /application/o/<slug>/jwks/. Without this, the
+      # provider falls back to HS256 (HMAC with client_secret) and JWKS
+      # returns 0 keys — OIDC clients that verify via JWKS (ArgoCD,
+      # Grafana, Headlamp) reject the token with "unexpected signature
+      # algorithm HS256; expected [RS256]".
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
       client_type: confidential
       client_id: argocd
       client_secret: ${IDP_ARGOCD_CLIENT_SECRET}
@@ -37,6 +44,7 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, groups]]
   - id: argocd-app
     model: authentik_core.application
     identifiers:

@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=
+# Authentik blueprint — defines the OAuth2 "groups" scope mapping that the
+# four OIDC clients reference in their property_mappings list.
+#
+# Authentik 2026 ships only these default scope mappings: openid, profile,
+# email, offline_access, entitlements, ak_proxy, goauthentik.io/api — no
+# `groups`. We define it here so the JWT carries a top-level
+# `groups: [...]` claim (the standard OIDC convention ArgoCD / Grafana /
+# Headlamp / Vault all expect for group-based RBAC).
+#
+# File name `10-*` so this runs BEFORE the `99-*.yaml` provider blueprints
+# that !Find this scope mapping. (Authentik applies blueprints in
+# alphabetical order by filename within /blueprints/local.)
+#
+# For authorization mapping we use Authentik's BUILT-IN group
+# "authentik Admins" — akadmin is automatically a member after bootstrap.
+# No custom group is created here; ArgoCD's RBAC policy.csv references
+# the built-in group name directly (quoted, because of the space).
+version: 1
+metadata:
+  name: OAuth2 groups scope mapping
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - id: groups-scopemapping
+    model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      managed: blueprint:platform:groups-mapping
+    attrs:
+      name: "OAuth Mapping: groups"
+      scope_name: groups
+      description: Groups the user belongs to
+      expression: |
+        return [group.name for group in request.user.ak_groups.all()]

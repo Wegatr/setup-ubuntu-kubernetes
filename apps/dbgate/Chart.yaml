@@ -24,6 +24,13 @@ dependencies:
     version: 1.0.0
     repository: file://../../charts/external-secret
     alias: externalsecret-db
+  # Separate ExternalSecret for the IdP-bundled PostgreSQL — reads from
+  # Vault path `<env>/system/idp` (not `app/dbgate`) because the IdP's
+  # postgres password is part of the infrastructure-tier secrets seed.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-idp-db
   - name: pvc
     version: 1.0.0
     repository: file://../../charts/pvc

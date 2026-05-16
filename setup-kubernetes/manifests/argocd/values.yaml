@@ -70,13 +70,16 @@ configs:
         - openid
         - profile
         - email
+        - groups
       requestedIDTokenClaims:
         groups:
           essential: true
-  # Map an Authentik group (e.g. `platform-admins`) to ArgoCD's admin role.
-  # Adjust the group name to match what you create in Authentik UI.
+  # Map Authentik's built-in `authentik Admins` group to ArgoCD's admin
+  # role. akadmin is automatically a member of this group from bootstrap.
+  # Quoted because of the space in the group name — Casbin's CSV parser
+  # honors double-quoted fields.
   rbac:
     policy.csv: |
-      g, platform-admins, role:admin
+      g, "authentik Admins", role:admin
     policy.default: role:readonly
     scopes: '[groups]'
