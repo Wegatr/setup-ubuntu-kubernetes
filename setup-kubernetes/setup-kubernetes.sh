@@ -32,7 +32,7 @@ source "${SCRIPT_DIR}/common-kubernetes.sh"
 # print_early_help, load_config, init_flag_defaults, parse_arguments, etc.
 # that main() calls below).
 for _lib in cli preflight install-microk8s install-storage-tls install-tools \
-            verify deploy-kube deploy-argocd deploy-vault seed-vault \
+            verify deploy-idp deploy-kube deploy-argocd deploy-vault seed-vault \
             lifecycle maintenance; do
     if [[ ! -f "${LIB_DIR}/${_lib}.sh" ]]; then
         echo "ERROR: Missing library: ${LIB_DIR}/${_lib}.sh"
@@ -169,7 +169,7 @@ main() {
 
     # Check if any deployment flags are set
     local deploying_infra=false
-    if [[ "${DEPLOY_KUBE}" == "true" || "${DEPLOY_ARGOCD}" == "true" || "${DEPLOY_VAULT}" == "true" ]]; then
+    if [[ "${DEPLOY_IDP}" == "true" || "${DEPLOY_KUBE}" == "true" || "${DEPLOY_ARGOCD}" == "true" || "${DEPLOY_VAULT}" == "true" ]]; then
         deploying_infra=true
     fi
 
@@ -246,7 +246,16 @@ main() {
         verify_installation || log_warn "Verification found issues"
     fi
 
-    # Deploy infrastructure applications
+    # Deploy infrastructure applications.
+    #
+    # ORDER MATTERS: IdP first — ArgoCD / Headlamp / Vault all consume the
+    # `*-oidc` K8s Secrets that deploy_idp pre-creates in their namespaces.
+    # If you re-run --deploy-argocd standalone, you can skip --deploy-idp
+    # provided the secrets already exist from a prior bootstrap.
+    if [[ "${DEPLOY_IDP}" == "true" ]]; then
+        deploy_idp || log_warn "IdP deployment had issues"
+    fi
+
     if [[ "${DEPLOY_KUBE}" == "true" ]]; then
         deploy_kube || log_warn "Dashboard deployment had issues"
     fi

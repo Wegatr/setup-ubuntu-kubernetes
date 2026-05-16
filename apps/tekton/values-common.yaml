@@ -17,10 +17,11 @@ release:
 # render, the Ingress dep also produces nothing because its own enabled
 # flag is off below.
 #
-# Auth is delegated to the shared apps/login/ app — Traefik forwardAuth
-# Middleware annotation below points at login-forwardauth@kubernetescrd.
-# No per-app oauth2-proxy, no per-app htpasswd. Cookie set at login.dev
-# carries here via the apex-scoped session cookie.
+# Auth is delegated to the platform IdP (Authentik, installed by
+# setup-kubernetes — see setup-kubernetes/manifests/idp/). Traefik
+# forwardAuth Middleware annotation below points at
+# idp-forwardauth@kubernetescrd. No per-app auth bits in this chart.
+# Cookie set at idp.<env>.<domain> carries here via the apex-scoped session.
 dashboard:
   enabled: false   # values-dev.yaml overrides to true
 
@@ -30,9 +31,10 @@ ingress:
     className: public
     annotations:
       # Cross-namespace Middleware ref: <namespace>-<middleware-name>@kubernetescrd
-      # The Middleware itself lives in the `login` namespace and is materialized
-      # by apps/login. Order matters — Traefik evaluates auth BEFORE routing.
-      traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
+      # The Middleware lives in the `idp` namespace and is created by
+      # setup-kubernetes/lib/deploy-idp.sh. Order matters — Traefik evaluates
+      # auth BEFORE routing.
+      traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
     host: 'tekton.{{ .Values.global.env }}.{{ .Values.global.domain }}'
     paths:

@@ -248,9 +248,9 @@ enable_addons() {
 
     # Allow Ingresses to reference Traefik Middlewares in a different namespace.
     # Default is locked-down (same-namespace only). We need cross-namespace so
-    # one shared `apps/login/forwardauth` Middleware in the `login` namespace
-    # can gate Ingresses living in argocd / kubernetes-dashboard / vault /
-    # tekton / observability / seq / dbgate. Safe to call on every run.
+    # the shared `forwardauth` Middleware in the `idp` namespace (Authentik
+    # embedded Outpost) can gate Ingresses living in tekton / dbgate / seq /
+    # other future apps. Safe to call on every run.
     configure_traefik_addon || log_warn "Traefik cross-namespace config incomplete"
 
     if [[ ${#failed_addons[@]} -gt 0 ]]; then
@@ -268,8 +268,8 @@ enable_addons() {
 # Why: Traefik (MicroK8s ingress addon) ships with cross-namespace middleware
 # references DISABLED. An Ingress in namespace X cannot reference a Middleware
 # in namespace Y unless this flag is on. We have a single shared forwardAuth
-# Middleware in the `login` namespace, referenced cluster-wide as
-# `login-forwardauth@kubernetescrd`.
+# Middleware in the `idp` namespace (Authentik), referenced cluster-wide as
+# `idp-forwardauth@kubernetescrd`.
 #
 # Idempotent: the script reads the current container args, skips if the flag
 # is already present, otherwise json-patches it onto the DaemonSet.

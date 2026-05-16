@@ -20,7 +20,7 @@ in this chart any more. The Dashboard Ingress carries a single Traefik
 annotation:
 
 ```yaml
-traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
+traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
 ```
 
 That cross-namespace reference points at the `forwardauth` Middleware
@@ -30,7 +30,7 @@ on `.dev.<DOMAIN_SUFFIX>` → recognized here automatically. WebSocket
 upgrades for live log-tail work because Traefik runs forwardAuth BEFORE
 the WS handshake; cookies travel same-origin on the actual WS upgrade.
 
-If `login-forwardauth@kubernetescrd` is missing (e.g. apps/login wasn't
+If `idp-forwardauth@kubernetescrd` is missing (e.g. apps/login wasn't
 applied or its sync wave is still pending), Traefik treats the
 annotation as no-op and the Dashboard is OPEN. ArgoCD sync waves
 (login=2, tekton=3) ensure the Middleware exists by the time Tekton

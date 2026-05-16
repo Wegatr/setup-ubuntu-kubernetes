@@ -1,0 +1,36 @@
+version: 1
+metadata:
+  name: Vault OIDC client
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - identifier: vault-provider
+    model: authentik_providers_oauth2.oauth2provider
+    attrs:
+      name: Vault
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      client_type: confidential
+      client_id: vault
+      client_secret: ${IDP_VAULT_CLIENT_SECRET}
+      # Vault uses TWO redirect URIs: the in-browser UI flow + the CLI's
+      # localhost listener used by `vault login -method=oidc`.
+      redirect_uris: |
+        https://vault.${IDP_ENV}.${IDP_DOMAIN}/ui/vault/auth/oidc/oidc/callback
+        http://localhost:8250/oidc/callback
+      access_token_validity: hours=1
+      refresh_token_validity: days=30
+      sub_mode: hashed_user_id
+      include_claims_in_id_token: true
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+  - identifier: vault-app
+    model: authentik_core.application
+    attrs:
+      name: Vault
+      slug: vault
+      provider: !KeyOf vault-provider
+      meta_launch_url: https://vault.${IDP_ENV}.${IDP_DOMAIN}/
+      open_in_new_tab: true
+      group: Platform

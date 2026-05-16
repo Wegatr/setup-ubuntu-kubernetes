@@ -9,28 +9,13 @@ server:
   service:
     type: ClusterIP
 
+  # Chart-bundled k8s Ingress disabled — we ship our own Traefik IngressRoute
+  # (manifests/argocd/ingressroute.yaml) for consistency with Vault and the
+  # IdP. Middlewares + native TLS lives in the IngressRoute spec.
   ingress:
-    enabled: true
-    ingressClassName: public
-    annotations:
-      cert-manager.io/cluster-issuer: __CLUSTER_ISSUER__
-      # Outer SSO gate via apps/login (oauth2-proxy + Traefik forwardAuth).
-      # Cross-namespace Middleware ref: <namespace>-<name>@kubernetescrd.
-      # When apps/login isn't yet synced, Traefik fail-opens — bootstrap
-      # works on a fresh cluster. Once login-dev is Ready, this gate kicks
-      # in and unauth users get 302'd to login.<env>.<domain>.
-      # ArgoCD STILL prompts for its own admin login after the gate
-      # (dual-auth, Phase 1). Phase 2 would wire ArgoCD's OIDC config to
-      # accept oauth2-proxy headers and skip its internal login.
-      traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
-    hosts:
-      - __ARGOCD_HOST__
-    tls:
-      - secretName: argocd-server-tls
-        hosts:
-          - __ARGOCD_HOST__
+    enabled: false
 
-  # Disable default TLS since we're using ingress
+  # TLS terminated at the IngressRoute → talk plaintext to argocd-server.
   extraArgs:
     - --insecure
 
@@ -61,3 +46,27 @@ configs:
       hs.status = "Healthy"
       hs.message = ""
       return hs
+    # OIDC client config — Authentik provides the OIDC issuer at
+    # idp.<env>.<domain>. The clientSecret is read from the K8s Secret
+    # `argocd-oidc` (key `clientSecret`) which deploy_idp pre-creates in
+    # this namespace. ArgoCD's `$secret-name:key` syntax substitutes it
+    # at runtime.
+    oidc.config: |
+      name: Authentik
+      issuer: https://__IDP_HOST__/application/o/argocd/
+      clientID: argocd
+      clientSecret: $argocd-oidc:clientSecret
+      requestedScopes:
+        - openid
+        - profile
+        - email
+      requestedIDTokenClaims:
+        groups:
+          essential: true
+  # Map an Authentik group (e.g. `platform-admins`) to ArgoCD's admin role.
+  # Adjust the group name to match what you create in Authentik UI.
+  rbac:
+    policy.csv: |
+      g, platform-admins, role:admin
+    policy.default: role:readonly
+    scopes: '[groups]'

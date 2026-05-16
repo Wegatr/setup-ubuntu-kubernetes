@@ -1,0 +1,35 @@
+# Public Certificate + IngressRoute for ArgoCD UI/CLI.
+# Replaces the chart-bundled k8s Ingress so the routing layer is consistent
+# across all four setup-kubernetes-installed apps (idp, kube, argocd, vault).
+# Auth is handled by ArgoCD's own OIDC client (manifests/argocd/values.yaml
+# configs.cm.oidc.config) talking directly to the IdP — no Traefik
+# forwardAuth Middleware needed.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: argocd-server-tls
+  namespace: argocd
+spec:
+  secretName: argocd-server-tls
+  issuerRef:
+    name: __CLUSTER_ISSUER__
+    kind: ClusterIssuer
+  dnsNames:
+    - __ARGOCD_HOST__
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`__ARGOCD_HOST__`)
+      kind: Rule
+      services:
+        - name: argocd-server
+          port: 80
+  tls:
+    secretName: argocd-server-tls

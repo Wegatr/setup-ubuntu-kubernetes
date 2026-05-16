@@ -44,7 +44,7 @@ seq:
       # Outer SSO gate via apps/login. Seq has no built-in auth in our
       # config (anonymous read), so this is the ONLY gate — actually
       # better than dual-auth for once.
-      traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
+      traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
     tls:
       - secretName: seq-dev-tls
         hosts:

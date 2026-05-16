@@ -1,0 +1,33 @@
+version: 1
+metadata:
+  name: Headlamp OIDC client
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - identifier: headlamp-provider
+    model: authentik_providers_oauth2.oauth2provider
+    attrs:
+      name: Headlamp
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      client_type: confidential
+      client_id: headlamp
+      client_secret: ${IDP_HEADLAMP_CLIENT_SECRET}
+      redirect_uris: |
+        https://kube.${IDP_ENV}.${IDP_DOMAIN}/oidc-callback
+      access_token_validity: hours=1
+      refresh_token_validity: days=30
+      sub_mode: hashed_user_id
+      include_claims_in_id_token: true
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+  - identifier: headlamp-app
+    model: authentik_core.application
+    attrs:
+      name: Headlamp
+      slug: headlamp
+      provider: !KeyOf headlamp-provider
+      meta_launch_url: https://kube.${IDP_ENV}.${IDP_DOMAIN}/
+      open_in_new_tab: true
+      group: Platform

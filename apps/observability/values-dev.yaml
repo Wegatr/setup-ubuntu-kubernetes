@@ -179,16 +179,39 @@ kube-prometheus-stack:
     ingress:
       annotations:
         cert-manager.io/cluster-issuer: "{{ .Values.global.clusterIssuer }}"
-        # Outer SSO gate via apps/login. Grafana keeps its own admin
-        # login after the gate (dual-auth). Phase 2 could wire Grafana
-        # OAuth via headers from oauth2-proxy.
-        traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
+        # No forwardAuth Middleware — Grafana authenticates natively via OIDC
+        # against the platform IdP (Authentik). See `grafana.ini.auth.generic_oauth`
+        # below + the `idp-oidc-grafana` Secret materialized by ESO from
+        # secret/<env>/app/idp/grafana-client-secret.
       hosts:
         - grafana.dev.digitaplatform.com
       tls:
         - secretName: grafana-dev-tls
           hosts:
             - grafana.dev.digitaplatform.com
+
+    # Mount the OIDC client_secret as an env var so the generic_oauth config
+    # below can reference it via $__env{GRAFANA_OAUTH_CLIENT_SECRET} without
+    # writing the secret to the in-cluster ConfigMap.
+    envFromSecret: idp-oidc-grafana
+
+    grafana.ini:
+      auth:
+        disable_login_form: false   # keep admin/password as emergency fallback
+        oauth_auto_login: false     # let users click "Sign in with Authentik" deliberately
+      "auth.generic_oauth":
+        enabled: true
+        name: Authentik
+        allow_sign_up: true
+        client_id: grafana
+        client_secret: $__env{GRAFANA_OAUTH_CLIENT_SECRET}
+        scopes: openid profile email
+        auth_url: https://idp.dev.digitaplatform.com/application/o/authorize/
+        token_url: https://idp.dev.digitaplatform.com/application/o/token/
+        api_url: https://idp.dev.digitaplatform.com/application/o/userinfo/
+        signout_redirect_url: https://idp.dev.digitaplatform.com/application/o/grafana/end-session/
+        use_pkce: true
+        role_attribute_path: contains(groups[*], 'platform-admins') && 'GrafanaAdmin' || 'Viewer'
 
 # ============================================================================
 # Loki / Tempo storage
@@ -210,3 +233,7 @@ tempo:
 grafana-admin-secret:
   externalSecret:
     vaultPath: dev/app/observability
+
+grafana-oidc-secret:
+  externalSecret:
+    vaultPath: dev/app/idp

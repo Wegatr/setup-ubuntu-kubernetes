@@ -28,9 +28,9 @@ dependencies:
 
   # Public Ingress at tekton.<env>.<DOMAIN_SUFFIX>. cert-manager LE cert.
   # Backend = tekton-dashboard Service directly. Auth is gated by a
-  # Traefik forwardAuth Middleware annotation pointing at the shared
-  # login-forwardauth Middleware in the login namespace. Effective only
-  # when dashboard.enabled.
+  # Traefik forwardAuth Middleware annotation pointing at the
+  # `forwardauth` Middleware in the `idp` namespace (cross-namespace ref
+  # `idp-forwardauth@kubernetescrd`). Effective only when dashboard.enabled.
   - name: ingress
     version: 1.0.0
     repository: file://../../charts/ingress

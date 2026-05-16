@@ -224,50 +224,70 @@ auto-update on each install.
     matching `Chart.yaml`'s `appVersion`. Don't switch to the upstream
     `project-zot/helm-charts/zot` chart — our wrapper is consistent with
     the rest of the platform's library-chart pattern.
-- **`apps/login/` is the shared platform auth gateway, DEV-only**:
-  one oauth2-proxy v7 instance at `https://login.<env>.<DOMAIN_SUFFIX>/`,
-  exposed by a Traefik forwardAuth Middleware (`login-forwardauth` in
-  `login` namespace). Other apps gate themselves with a single Ingress
-  annotation referencing `login-forwardauth@kubernetescrd` cross-namespace.
+- **Platform IdP (Authentik) lives in `setup-kubernetes/`, NOT in `apps/`**:
+  the Identity Provider is INFRASTRUCTURE-tier — alongside ArgoCD, Vault,
+  Headlamp. Reason: ArgoCD authenticates via the IdP, so the IdP can't be
+  managed BY ArgoCD without a bootstrap cycle. Files:
+    - `setup-kubernetes/lib/deploy-idp.sh` — generates secrets on first
+      install (saves to `~/secrets/idp-<env>.txt`), idempotent helm
+      upgrade of the upstream `authentik/authentik` chart, renders the
+      Blueprints ConfigMap from `manifests/idp/blueprints/*.yaml`,
+      pre-creates per-consumer K8s Secrets (`argocd-oidc` in argocd,
+      `headlamp-oidc` in kubernetes-dashboard, `vault-oidc` in vault).
+    - `setup-kubernetes/manifests/idp/{values.yaml, ingressroute.yaml,
+       middleware-forwardauth.yaml, blueprints/*.yaml}`.
+    - Dispatcher flag `--deploy-idp`, ordered FIRST in `--deploy-all`
+      (`idp → kube → argocd → vault → seed-vault`).
+    - Hostname `idp.<env>.<DOMAIN_SUFFIX>`. Bundled PostgreSQL +
+      Redis StatefulSets keep Authentik self-contained (NO dep on
+      `apps/postgresql`, which is GitOps-managed).
 
-  Cookie scope is the env apex — `--cookie-domain=.dev.<DOMAIN_SUFFIX>`
-  (leading dot mandatory). One login carries to every gated subdomain
-  in the same env. Cookie name `_platform_session`, 7d expiry, 24h refresh.
+  **OIDC clients (native, no proxy)**: ArgoCD, Headlamp, Vault, Grafana
+  authenticate directly against the IdP via OIDC. One login at
+  `idp.<env>.<DOMAIN_SUFFIX>` → all four signed in (no per-app login).
+  Per-app config:
+    - ArgoCD: `configs.cm.oidc.config` in `setup-kubernetes/manifests/
+      argocd/values.yaml` references K8s Secret `argocd-oidc` (key
+      `clientSecret`).
+    - Headlamp: `config.oidc.secretName: headlamp-oidc` in
+      `manifests/kube/values.yaml` — Secret has `clientID`,
+      `clientSecret`, `issuerURL`.
+    - Vault: OIDC auth method enabled by `enable_vault_oidc()` in
+      `lib/deploy-vault.sh`, reads K8s Secret `vault-oidc`.
+    - Grafana (GitOps): `grafana.grafana.ini.auth.generic_oauth.*` in
+      `apps/observability/values-dev.yaml`; the client_secret comes from
+      Vault via ESO (`apps/observability/Chart.yaml` dep
+      `grafana-oidc-secret`, Vault path `secret/<env>/app/idp/
+      grafana-client-secret`).
 
-  oauth2-proxy upstream is `static://200` (it doesn't reverse-proxy
-  anything — it only serves `/oauth2/*` endpoints + answers Traefik
-  forwardAuth checks at `/`). The Ingress for `login.<env>` points at
-  the oauth2-proxy Service so users can reach the sign-in form directly.
-  Other apps' Ingresses point at THEIR OWN upstream Service (e.g.
-  `tekton-dashboard:9097`); Traefik's forwardAuth Middleware runs
-  before routing → 302 to login.<env> if no cookie, pass-through if OK.
+  **Forward-Auth Outpost (for apps without OIDC)**: Tekton Dashboard,
+  dbgate, Seq don't speak OIDC. They sit behind the Authentik embedded
+  Outpost via a Traefik forwardAuth Middleware annotation:
+    `traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd`
+  The Middleware CR lives in the `idp` namespace and is created by
+  `deploy-idp.sh`. Apex-scoped session cookie (`.dev.<DOMAIN_SUFFIX>`)
+  carries across all gated subdomains. Domain-level Proxy Provider
+  blueprints (`manifests/idp/blueprints/99-proxy-{tekton,dbgate,seq}.yaml`)
+  declare the per-app authorization.
 
-  Auth backend is htpasswd file (Vault keys `htpasswd` + `cookie-secret`
-  at `secret/<env>/app/login`) materialized by ESO into the K8s Secret
-  `login-auth`. CLI placeholders for OIDC provider/client-id/-secret are
-  required by oauth2-proxy validation but never reached because the
-  htpasswd form is the only sign-in path.
+  **Blueprints** declarative YAMLs at `manifests/idp/blueprints/` are
+  mounted via ConfigMap at `/blueprints/local`; Authentik's worker
+  auto-applies on every startup (idempotent). UI changes to blueprint-
+  managed objects get re-overwritten on reconciliation — make changes
+  to the YAML files in git, not the UI.
 
-  Custom sign-in + error templates ship in `charts/oauth2-proxy/files/`
-  (white default + dark toggle), embedded into a ConfigMap and mounted
-  at `/custom-templates`. The default oauth2-proxy sign-in page renders
-  an unused OIDC provider button next to the htpasswd form — the custom
-  templates strip it. WHY NOT `--skip-provider-button=true`: that flag
-  jumps straight to `/oauth2/start` (OIDC redirect to noop.invalid) →
-  browser bounces back to oauth2-proxy → infinite redirect loop with
-  growing URL-encoding layers → ERR_TOO_MANY_REDIRECTS. Keep the
-  sign-in page; the templates handle the visual cleanup.
+  **Traefik cross-namespace flag**: required because IdP Middleware lives
+  in `idp` ns but every gated app Ingress is in its own namespace. The
+  flag `--providers.kubernetescrd.allowCrossNamespace=true` is patched
+  onto the Traefik DaemonSet by `configure_traefik_addon()` in
+  `lib/install-microk8s.sh` (idempotent, runs in --install-microk8s).
 
-- **`apps/tekton/` Dashboard (DEV-only) gates via forwardAuth, not its
-  own oauth2-proxy.** Toggle: `.Values.dashboard.enabled` (DEV: true,
-  TEST/PROD: false). When enabled, the Dashboard Service `tekton-dashboard:9097`
-  is exposed at `tekton.<env>.<DOMAIN_SUFFIX>` with a single annotation:
-    `traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd`
-  No per-app oauth2-proxy, htpasswd, Secret, or Vault entry remains in
-  apps/tekton/. Vendored upstream `release-full.yaml` in
-  `apps/tekton/templates/release-dashboard.yaml` — the `-full` variant
-  deliberately ships `--read-only=false` so operators can kick off manual
-  PipelineRuns; the trimmed `release.yaml` hides the Run button.
+- **All four setup-kubernetes apps use Traefik `IngressRoute`** (CRD),
+  NOT k8s `Ingress` with annotations. IdP, ArgoCD, Headlamp, Vault each
+  ship a `manifests/<app>/ingressroute.yaml` with an explicit
+  `Certificate` CR (cert-manager doesn't auto-annotate IngressRoute).
+  The chart-bundled Ingress is disabled where applicable (e.g.
+  `server.ingress.enabled: false` in ArgoCD values).
 - **PipelineRun retention**: every webhook-spawned PipelineRun carries
   `spec.ttlSecondsAfterFinished: 604800` (7 days), set in
   `apps/image-builder/templates/triggertemplate.yaml`. Manual PRs from
@@ -353,9 +373,11 @@ For the GitOps tree, an additional pre-flight applies:
    public IPv4 same as the others.
 4. **`tekton.dev.<DOMAIN_SUFFIX>`** — DEV-only Tekton Dashboard hostname.
    Required for the LE HTTP-01 cert-manager challenge on first deploy.
-5. **`login.dev.<DOMAIN_SUFFIX>`** — DEV-only platform auth gateway
-   (apps/login). Every gated subdomain (currently tekton.dev, future
-   argocd/dbgate/headlamp/etc) redirects unauth users here. LE cert.
+5. **`idp.<env>.<DOMAIN_SUFFIX>`** — platform Identity Provider
+   (Authentik) installed by setup-kubernetes. Every UI without native
+   OIDC (Tekton Dashboard, dbgate, Seq) and every OIDC client app
+   (ArgoCD, Grafana, Headlamp, Vault) redirects users here for sign-in.
+   LE cert. Must resolve before `--deploy-idp` runs.
 6. **`zot.dev.<DOMAIN_SUFFIX>`** — DEV-only, pointing at the DEV host's
    public IPv4. Serves both the OCI distribution API + Zot's bundled
    web UI from a single hostname. Public-internet access is required

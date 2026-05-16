@@ -52,6 +52,18 @@ deploy_argocd() {
         log_warn "ArgoCD pods not ready yet"
     }
 
+    # Apply our own Cert + IngressRoute (chart's bundled k8s Ingress is
+    # disabled in values.yaml). Same Traefik-CRD pattern as Vault + IdP.
+    local ingressroute_file
+    ingressroute_file=$(render_manifest "${MANIFESTS_DIR}/argocd/ingressroute.yaml")
+    log_info "Applying ArgoCD IngressRoute..."
+    kubectl apply -f "${ingressroute_file}" --request-timeout=30s || {
+        rm -f "${ingressroute_file}"
+        log_error "Failed to apply ArgoCD IngressRoute"
+        return 1
+    }
+    rm -f "${ingressroute_file}"
+
     # Wait for certificate
     wait_for_certificate_ready "${ARGOCD_NAMESPACE}" "argocd-server-tls" || {
         log_warn "Certificate not ready yet (may take a few minutes)"

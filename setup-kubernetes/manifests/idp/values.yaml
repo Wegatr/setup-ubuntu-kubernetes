@@ -1,0 +1,84 @@
+# Authentik Helm values — rendered via render_manifest(): every __IDP_*__
+# placeholder is substituted at install time from configs/config.<env> +
+# the credentials in ~/secrets/idp-<env>.txt.
+#
+# Authentik is deployed under release name "idp" in namespace "idp", so all
+# emitted Services/ServiceAccounts are named "idp-server" / "idp-worker" /
+# etc. The Helm chart is the upstream authentik/authentik chart.
+
+authentik:
+  secret_key: __IDP_SECRET_KEY__
+  error_reporting:
+    enabled: false
+  bootstrap_password: __IDP_BOOTSTRAP_PASSWORD__
+  bootstrap_email: __IDP_BOOTSTRAP_EMAIL__
+  postgresql:
+    password: __IDP_POSTGRES_PASSWORD__
+  redis:
+    password: __IDP_REDIS_PASSWORD__
+
+# Bundled PostgreSQL → keeps Authentik self-contained; NOT dependent on
+# apps/postgresql which is GitOps-managed (would create a bootstrap cycle:
+# ArgoCD needs Authentik for OIDC; apps/postgresql is reconciled BY ArgoCD).
+postgresql:
+  enabled: true
+  auth:
+    password: __IDP_POSTGRES_PASSWORD__
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# Bundled Redis for session/cache.
+redis:
+  enabled: true
+  auth:
+    password: __IDP_REDIS_PASSWORD__
+
+server:
+  replicas: 1
+  # OIDC client_secrets are injected via env var so Blueprints can resolve
+  # them at startup via ${IDP_*_CLIENT_SECRET}.
+  envFrom:
+    - secretRef:
+        name: idp-bootstrap
+  volumes:
+    - name: blueprints-overlay
+      configMap:
+        name: idp-blueprints
+  volumeMounts:
+    - name: blueprints-overlay
+      mountPath: /blueprints/local
+      readOnly: true
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+worker:
+  replicas: 1
+  envFrom:
+    - secretRef:
+        name: idp-bootstrap
+  volumes:
+    - name: blueprints-overlay
+      configMap:
+        name: idp-blueprints
+  volumeMounts:
+    - name: blueprints-overlay
+      mountPath: /blueprints/local
+      readOnly: true
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+# We use our own IngressRoute (manifests/idp/ingressroute.yaml).
+ingress:
+  enabled: false

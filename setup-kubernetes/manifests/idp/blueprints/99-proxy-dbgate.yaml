@@ -1,0 +1,28 @@
+version: 1
+metadata:
+  name: dbgate Forward Auth
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - identifier: dbgate-proxy-provider
+    model: authentik_providers_proxy.proxyprovider
+    attrs:
+      name: dbgate
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      external_host: https://gate.${IDP_ENV}.${IDP_DOMAIN}
+      mode: forward_domain
+      cookie_domain: .${IDP_ENV}.${IDP_DOMAIN}
+      access_token_validity: hours=24
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+  - identifier: dbgate-app
+    model: authentik_core.application
+    attrs:
+      name: dbgate
+      slug: dbgate
+      provider: !KeyOf dbgate-proxy-provider
+      meta_launch_url: https://gate.${IDP_ENV}.${IDP_DOMAIN}/
+      open_in_new_tab: true
+      group: Platform

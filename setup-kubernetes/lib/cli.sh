@@ -157,6 +157,7 @@ init_flag_defaults() {
     VERIFY_ONLY=false
 
     # Deployment flags
+    DEPLOY_IDP=false
     DEPLOY_KUBE=false
     DEPLOY_ARGOCD=false
     DEPLOY_VAULT=false
@@ -164,6 +165,7 @@ init_flag_defaults() {
     FORCE_DEPLOY=false
 
     # Cleanup flags
+    CLEANUP_IDP=false
     CLEANUP_KUBE=false
     CLEANUP_ARGOCD=false
     CLEANUP_VAULT=false
@@ -267,6 +269,11 @@ parse_arguments() {
                 SETUP_ALIASES=false
                 shift
                 ;;
+            --deploy-idp)
+                DEPLOY_IDP=true
+                INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
+                shift
+                ;;
             --deploy-kube)
                 DEPLOY_KUBE=true
                 INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
@@ -283,7 +290,10 @@ parse_arguments() {
                 shift
                 ;;
             --deploy-all)
-                DEPLOY_KUBE=true; DEPLOY_ARGOCD=true; DEPLOY_VAULT=true
+                # IdP MUST come before ArgoCD so the OIDC clientSecret K8s
+                # Secrets are pre-created in each consumer namespace by the
+                # time their helm install runs.
+                DEPLOY_IDP=true; DEPLOY_KUBE=true; DEPLOY_ARGOCD=true; DEPLOY_VAULT=true
                 INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
                 shift
                 ;;
@@ -296,6 +306,10 @@ parse_arguments() {
                 INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
                 shift
                 ;;
+            --install-idp) # alias for --deploy-idp
+                DEPLOY_IDP=true
+                INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
+                shift ;;
             --install-kube) # alias for --deploy-kube
                 DEPLOY_KUBE=true
                 INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
@@ -308,9 +322,11 @@ parse_arguments() {
                 DEPLOY_VAULT=true
                 INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
                 shift ;;
+            --uninstall-idp) CLEANUP_IDP=true; shift ;;
             --uninstall-kube) CLEANUP_KUBE=true; shift ;;
             --uninstall-argocd) CLEANUP_ARGOCD=true; shift ;;
             --uninstall-vault) CLEANUP_VAULT=true; shift ;;
+            --upgrade-idp) UPGRADE_APP="idp"; shift ;;
             --upgrade-kube) UPGRADE_APP="kube"; shift ;;
             --upgrade-argocd) UPGRADE_APP="argocd"; shift ;;
             --upgrade-vault) UPGRADE_APP="vault"; shift ;;
@@ -385,10 +401,11 @@ parse_arguments() {
 
 # Re-evaluate hostnames after DEPLOY_ENV is set by argument parsing
 apply_environment() {
+    IDP_HOST="${IDP_HOST_PREFIX:-idp}.${DEPLOY_ENV}.${DOMAIN_SUFFIX}"
     KUBE_HOST="${KUBE_HOST_PREFIX}.${DEPLOY_ENV}.${DOMAIN_SUFFIX}"
     ARGOCD_HOST="${ARGOCD_HOST_PREFIX}.${DEPLOY_ENV}.${DOMAIN_SUFFIX}"
     VAULT_HOST="${VAULT_HOST_PREFIX}.${DEPLOY_ENV}.${DOMAIN_SUFFIX}"
-    log_info "Environment: ${DEPLOY_ENV} (hosts: ${KUBE_HOST}, ${ARGOCD_HOST}, ${VAULT_HOST})"
+    log_info "Environment: ${DEPLOY_ENV} (hosts: ${IDP_HOST}, ${KUBE_HOST}, ${ARGOCD_HOST}, ${VAULT_HOST})"
 }
 
 # Render a manifest file by replacing placeholders with the current environment's values.
@@ -401,9 +418,15 @@ render_manifest() {
         -e "s|__KUBE_HOST__|${KUBE_HOST}|g" \
         -e "s|__ARGOCD_HOST__|${ARGOCD_HOST}|g" \
         -e "s|__VAULT_HOST__|${VAULT_HOST}|g" \
+        -e "s|__IDP_HOST__|${IDP_HOST:-}|g" \
         -e "s|__CLUSTER_ISSUER__|${CLUSTER_ISSUER_NAME}|g" \
         -e "s|__CLUSTER_NAME__|${CLUSTER_NAME}|g" \
         -e "s|__VAULT_STORAGE_SIZE__|${VAULT_STORAGE_SIZE}|g" \
+        -e "s|__IDP_SECRET_KEY__|${IDP_SECRET_KEY:-}|g" \
+        -e "s|__IDP_BOOTSTRAP_PASSWORD__|${IDP_BOOTSTRAP_PASSWORD:-}|g" \
+        -e "s|__IDP_BOOTSTRAP_EMAIL__|${IDP_BOOTSTRAP_EMAIL:-}|g" \
+        -e "s|__IDP_POSTGRES_PASSWORD__|${IDP_POSTGRES_PASSWORD:-}|g" \
+        -e "s|__IDP_REDIS_PASSWORD__|${IDP_REDIS_PASSWORD:-}|g" \
         "${source_file}" > "${tmp_file}"
     echo "${tmp_file}"
 }

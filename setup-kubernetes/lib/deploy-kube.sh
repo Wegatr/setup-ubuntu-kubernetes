@@ -110,16 +110,17 @@ deploy_kube() {
         return 1
     }
 
-    # Apply ingress (rendered with current environment hostnames)
-    local ingress_file
-    ingress_file=$(render_manifest "${MANIFESTS_DIR}/kube/ingress.yaml")
-    log_info "Applying Dashboard ingress..."
-    kubectl apply -f "${ingress_file}" --request-timeout=30s || {
-        rm -f "${ingress_file}"
-        log_error "Failed to apply Dashboard ingress"
+    # Apply Cert + IngressRoute (Traefik CRD, replaced the prior k8s Ingress
+    # annotation pattern — see manifests/kube/ingressroute.yaml).
+    local ingressroute_file
+    ingressroute_file=$(render_manifest "${MANIFESTS_DIR}/kube/ingressroute.yaml")
+    log_info "Applying Dashboard IngressRoute..."
+    kubectl apply -f "${ingressroute_file}" --request-timeout=30s || {
+        rm -f "${ingressroute_file}"
+        log_error "Failed to apply Dashboard IngressRoute"
         return 1
     }
-    rm -f "${ingress_file}"
+    rm -f "${ingressroute_file}"
 
     # Wait for deployment
     wait_for_pods_ready "${KUBE_NAMESPACE}" "app.kubernetes.io/name=headlamp" || {

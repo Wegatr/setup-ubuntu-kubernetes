@@ -40,6 +40,9 @@ check_ingress_dns_resolves() {
     public_ipv4=$(curl -4 -s --max-time 5 https://api.ipify.org 2>/dev/null || true)
 
     local unresolved=()
+    if [[ "${ENABLE_IDP:-true}" == "true" ]] && ! getent hosts "${IDP_HOST}" &>/dev/null; then
+        unresolved+=("${IDP_HOST}")
+    fi
     if [[ "${ENABLE_KUBE}" == "true" ]] && ! getent hosts "${KUBE_HOST}" &>/dev/null; then
         unresolved+=("${KUBE_HOST}")
     fi

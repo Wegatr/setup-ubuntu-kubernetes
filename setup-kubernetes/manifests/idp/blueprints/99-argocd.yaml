@@ -1,0 +1,38 @@
+# Authentik blueprint — OAuth2 provider + Application for ArgoCD.
+# Mounted into the Authentik pod at /blueprints/local/99-argocd.yaml via
+# ConfigMap (created by deploy_idp). Authentik's worker auto-applies on
+# startup; idempotent on re-apply. Env-var interpolation resolves
+# ${IDP_*} from the idp-bootstrap Secret mounted as envFrom.
+version: 1
+metadata:
+  name: ArgoCD OIDC client
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - identifier: argocd-provider
+    model: authentik_providers_oauth2.oauth2provider
+    attrs:
+      name: ArgoCD
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      client_type: confidential
+      client_id: argocd
+      client_secret: ${IDP_ARGOCD_CLIENT_SECRET}
+      redirect_uris: |
+        https://argo.${IDP_ENV}.${IDP_DOMAIN}/auth/callback
+      access_token_validity: hours=1
+      refresh_token_validity: days=30
+      sub_mode: hashed_user_id
+      include_claims_in_id_token: true
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+  - identifier: argocd-app
+    model: authentik_core.application
+    attrs:
+      name: ArgoCD
+      slug: argocd
+      provider: !KeyOf argocd-provider
+      meta_launch_url: https://argo.${IDP_ENV}.${IDP_DOMAIN}/
+      open_in_new_tab: true
+      group: Platform

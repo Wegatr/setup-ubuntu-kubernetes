@@ -1,0 +1,37 @@
+# Authentik blueprint — Forward-Auth ProxyProvider + Application for the
+# Tekton Dashboard. Tekton has no native OIDC support, so the upstream
+# pod itself stays unauth'd and the embedded Outpost gates the Ingress
+# in front via Traefik's forwardAuth Middleware (manifests/idp/middleware-
+# forwardauth.yaml).
+#
+# mode: forward_domain → the session cookie is scoped to the env apex
+# (.dev.<DOMAIN>) so one Authentik login carries to every gated subdomain
+# without re-prompting.
+version: 1
+metadata:
+  name: Tekton Dashboard Forward Auth
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - identifier: tekton-proxy-provider
+    model: authentik_providers_proxy.proxyprovider
+    attrs:
+      name: Tekton Dashboard
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      external_host: https://tekton.${IDP_ENV}.${IDP_DOMAIN}
+      mode: forward_domain
+      cookie_domain: .${IDP_ENV}.${IDP_DOMAIN}
+      access_token_validity: hours=24
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+  - identifier: tekton-app
+    model: authentik_core.application
+    attrs:
+      name: Tekton Dashboard
+      slug: tekton-dashboard
+      provider: !KeyOf tekton-proxy-provider
+      meta_launch_url: https://tekton.${IDP_ENV}.${IDP_DOMAIN}/
+      open_in_new_tab: true
+      group: Build

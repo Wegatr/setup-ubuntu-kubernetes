@@ -422,6 +422,21 @@ grafana-admin-secret:
       - secretKey: admin-password
         property: grafana-admin-password
 
+# OIDC client_secret for Grafana's auth.generic_oauth (Authentik). The
+# Grafana pod mounts the resulting K8s Secret via `envFromSecret:
+# idp-oidc-grafana` — `GRAFANA_OAUTH_CLIENT_SECRET` env becomes available
+# to the grafana.ini.auth.generic_oauth.client_secret reference.
+grafana-oidc-secret:
+  externalSecret:
+    enabled: true
+    name: idp-oidc-grafana
+    namespace: observability
+    secretStoreKind: SecretStore
+    targetSecretName: idp-oidc-grafana
+    data:
+      - secretKey: GRAFANA_OAUTH_CLIENT_SECRET
+        property: grafana-client-secret
+
 # Alertmanager sends mail directly via Postfix (in-cluster, no auth required)
 # — no SMTP credentials secret needed.
 

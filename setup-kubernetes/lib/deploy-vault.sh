@@ -192,7 +192,90 @@ deploy_vault() {
         fi
     fi
 
+    # Wire OIDC auth method against the IdP (Authentik). Idempotent: skip if
+    # already enabled. Reads client config from the `vault-oidc` K8s Secret
+    # pre-created in this namespace by deploy_idp.
+    enable_vault_oidc || log_warn "Vault OIDC configuration incomplete (browser UI gates will fall back to token login)"
+
     log_ok "Vault deployed successfully"
     log_info "Access at: https://${VAULT_HOST}"
+    return 0
+}
+
+# Enable + configure Vault's OIDC auth method so browser UI logins go
+# through Authentik. The Vault HTTP API stays token-driven (unchanged).
+#
+# Pre-reqs (deploy_idp creates these):
+#   - K8s Secret 'vault-oidc' in this namespace with keys clientID,
+#     clientSecret, issuerURL.
+#   - IdP must be reachable from inside vault-0 (cluster-internal DNS
+#     resolves authentik via the regular service mesh; or the public
+#     issuerURL works via egress).
+#
+# Idempotent: if `vault auth list` already shows oidc/, skip the enable
+# step. Still re-writes the config + role so values stay in sync with
+# the K8s Secret (deploy_idp could have rotated client_secret).
+enable_vault_oidc() {
+    log_info "Wiring Vault OIDC auth method against the IdP..."
+
+    if ! kubectl exec -n "${VAULT_NAMESPACE}" vault-0 -- /bin/true &>/dev/null; then
+        log_warn "vault-0 not exec-able yet — skipping OIDC config"
+        return 0
+    fi
+
+    # Pull the OIDC client config from the K8s Secret deploy_idp created.
+    if ! kubectl -n "${VAULT_NAMESPACE}" get secret vault-oidc &>/dev/null; then
+        log_warn "vault-oidc Secret not found — run --deploy-idp first to create it"
+        return 0
+    fi
+
+    local oidc_client_id oidc_client_secret oidc_issuer_url
+    oidc_client_id=$(kubectl -n "${VAULT_NAMESPACE}" get secret vault-oidc -o jsonpath='{.data.clientID}' | base64 -d)
+    oidc_client_secret=$(kubectl -n "${VAULT_NAMESPACE}" get secret vault-oidc -o jsonpath='{.data.clientSecret}' | base64 -d)
+    oidc_issuer_url=$(kubectl -n "${VAULT_NAMESPACE}" get secret vault-oidc -o jsonpath='{.data.issuerURL}' | base64 -d)
+
+    if [[ -z "${oidc_client_id}" || -z "${oidc_client_secret}" || -z "${oidc_issuer_url}" ]]; then
+        log_warn "vault-oidc Secret incomplete — skipping OIDC config"
+        return 0
+    fi
+
+    # The Vault root token lives in ~/secrets/vault-<env>.txt. Parse it.
+    local root_token
+    root_token=$(awk -F': ' '/^Root Token:/{print $2}' "${CREDENTIALS_DIR}/vault-${DEPLOY_ENV}.txt" 2>/dev/null)
+    if [[ -z "${root_token}" ]]; then
+        log_warn "Vault root token not found in ${CREDENTIALS_DIR}/vault-${DEPLOY_ENV}.txt — skipping OIDC config"
+        return 0
+    fi
+
+    # Run the enable + write in one exec to keep VAULT_TOKEN ephemeral.
+    kubectl exec -n "${VAULT_NAMESPACE}" vault-0 -- \
+        env VAULT_SKIP_VERIFY=true \
+            VAULT_ADDR="https://127.0.0.1:8200" \
+            VAULT_TOKEN="${root_token}" \
+            OIDC_CLIENT_ID="${oidc_client_id}" \
+            OIDC_CLIENT_SECRET="${oidc_client_secret}" \
+            OIDC_ISSUER_URL="${oidc_issuer_url}" \
+            VAULT_HOST_PUB="${VAULT_HOST}" \
+        sh -c '
+            set -e
+            if ! vault auth list 2>/dev/null | grep -q "^oidc/"; then
+                vault auth enable oidc
+            fi
+            vault write auth/oidc/config \
+                oidc_discovery_url="$OIDC_ISSUER_URL" \
+                oidc_client_id="$OIDC_CLIENT_ID" \
+                oidc_client_secret="$OIDC_CLIENT_SECRET" \
+                default_role="default" >/dev/null
+            vault write auth/oidc/role/default \
+                bound_audiences="$OIDC_CLIENT_ID" \
+                user_claim="email" \
+                allowed_redirect_uris="https://${VAULT_HOST_PUB}/ui/vault/auth/oidc/oidc/callback,http://localhost:8250/oidc/callback" \
+                policies="default" >/dev/null
+        ' >/dev/null 2>&1 || {
+        log_warn "vault auth enable/write oidc failed — check vault-0 logs for details"
+        return 1
+    }
+
+    log_ok "Vault OIDC method configured (browser UI logs in via the IdP)"
     return 0
 }

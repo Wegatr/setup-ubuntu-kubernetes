@@ -60,7 +60,7 @@ ingress:
       # now orphaned (still rendered, not referenced) — safe to drop in
       # a follow-up cleanup commit. dbgate itself has no built-in auth,
       # so this annotation IS the gate (no dual-auth).
-      traefik.ingress.kubernetes.io/router.middlewares: login-forwardauth@kubernetescrd
+      traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
     host: 'gate.{{ .Values.global.env }}.{{ .Values.global.domain }}'
     paths:
       - path: /

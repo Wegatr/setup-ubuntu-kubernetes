@@ -37,3 +37,14 @@ settings:
   logsAutoRefreshTimeInterval: 5
   resourceAutoRefreshTimeInterval: 5
   disableAccessDeniedNotifications: false
+
+# OIDC config — values pulled from the `headlamp-oidc` Secret in this
+# namespace (pre-created by deploy_idp). Headlamp's `config.oidc` block
+# wires its `--oidc-*` startup flags from these keys.
+config:
+  oidc:
+    secretName: headlamp-oidc
+    # The Secret has keys: clientID, clientSecret, issuerURL.
+    # Headlamp's chart reads them via valueFrom.secretKeyRef when this
+    # block sets `secretName`.
+    scopes: openid profile email

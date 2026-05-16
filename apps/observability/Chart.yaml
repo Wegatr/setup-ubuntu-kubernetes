@@ -36,6 +36,13 @@ dependencies:
     version: 1.0.0
     repository: file://../../charts/external-secret
     alias: grafana-admin-secret
+  # OIDC client_secret for Grafana auth.generic_oauth (Authentik). Pulled
+  # from secret/<env>/app/idp/grafana-client-secret → K8s Secret
+  # `idp-oidc-grafana` which the Grafana pod mounts via envFromSecret.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: grafana-oidc-secret
   - name: secret-store
     version: 1.0.0
     repository: file://../../charts/secret-store

@@ -42,16 +42,12 @@ spec:
             createNamespace: "true"
             specialOptions: "external-secrets"
 
-          # Wave 2 — Shared platform login gateway (oauth2-proxy + Traefik
-          # forwardAuth Middleware). Must land before any app whose Ingress
-          # references the login-forwardauth Middleware. DEV-only by
-          # omission in test/prod ApplicationSets.
-          - name: login
-            syncWave: "2"
-            namespace: login
-            prune: "true"
-            createNamespace: "true"
-            specialOptions: ""
+          # NOTE: The platform Identity Provider (Authentik) is INFRASTRUCTURE-
+          # tier, not GitOps. It lives at setup-kubernetes/manifests/idp/ and
+          # is installed by the bootstrap script before ArgoCD reconciles this
+          # ApplicationSet — see setup-kubernetes/lib/deploy-idp.sh. Reason:
+          # ArgoCD itself authenticates via the IdP, so it can't be managed BY
+          # ArgoCD (chicken-and-egg). No `login`/`idp` entry here.
 
           # Wave 3 — Tekton operator + CRDs. Must exist before image-builder
           # (wave 25) creates Pipelines / Tasks / EventListeners.

@@ -1,0 +1,33 @@
+# Public Certificate + IngressRoute for the Kubernetes Dashboard (Headlamp).
+# Replaces the previous k8s Ingress + annotation pattern. Auth is handled
+# by Headlamp's own OIDC client talking to the IdP — no Traefik forwardAuth
+# Middleware needed.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dashboard-tls
+  namespace: kubernetes-dashboard
+spec:
+  secretName: dashboard-tls
+  issuerRef:
+    name: __CLUSTER_ISSUER__
+    kind: ClusterIssuer
+  dnsNames:
+    - __KUBE_HOST__
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kubernetes-dashboard
+  namespace: kubernetes-dashboard
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`__KUBE_HOST__`)
+      kind: Rule
+      services:
+        - name: headlamp
+          port: 80
+  tls:
+    secretName: dashboard-tls
