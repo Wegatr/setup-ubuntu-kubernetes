@@ -1,0 +1,105 @@
+# ArgoCD Image Updater — event-driven (webhook-only), no polling.
+#
+# Sibling to apps/image-builder/. The Tekton buildah-build-push task's
+# final step POSTs a dockerhub-format event to the cluster-internal
+# webhook (see templates/webhook-service.yaml) after every successful
+# image push. Image Updater reads the per-Application annotations
+# (rendered by argocd/<env>/apps/applicationset.yaml's templatePatch
+# from each entry's optional `imageUpdater:` block), validates the tag
+# against `allow-tags`, rewrites `apps/<app>/values-<env>.yaml`, commits
+# and pushes via the existing image-builder git PAT, ArgoCD reconciles.
+#
+# End-to-end: ~3-5s from buildah push to running pod with the new tag.
+
+argocd-image-updater:
+  # Cross-namespace setup: controller in this namespace, ArgoCD in `argocd`.
+  config:
+    argocd:
+      serverAddress: argocd-server.argocd
+      insecure: false
+      plaintext: false
+      grpcWeb: false
+    logLevel: info
+    # NOTE: the upstream argocd-image-updater chart does NOT `tpl` the
+    # registries config — it dumps it verbatim to the ConfigMap. So we
+    # cannot use `{{ .Values.global.* }}` here; the literal hostname
+    # MUST live in values-<env>.yaml. See `registries:` in
+    # values-{dev,test,prod}.yaml.
+
+  # Event-only: --interval=0 disables the periodic poll. The webhook
+  # server takes its place.
+  extraArgs:
+    - --interval=0
+    - --enable-webhook
+    - --webhook-port=8080
+
+  # Git auth env: read by the controller for HTTPS write-back.
+  extraEnv:
+    - name: GIT_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: argocd-image-updater-secret
+          key: git-username
+    - name: GIT_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: argocd-image-updater-secret
+          key: git-token
+
+  extraVolumeMounts:
+    - name: image-updater-creds
+      mountPath: /etc/argocd-image-updater-creds
+      readOnly: true
+  extraVolumes:
+    - name: image-updater-creds
+      secret:
+        secretName: argocd-image-updater-secret
+
+  serviceAccount:
+    create: true
+    name: argocd-image-updater
+  rbac:
+    enabled: true
+
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { cpu: 200m, memory: 256Mi }
+
+  metrics:
+    enabled: true
+
+# --- ESO secrets ------------------------------------------------------------
+# Git PAT — extracted from the multi-line gitcredentials store the image-
+# builder pipeline uses. ESO template parses `https://<user>:<pat>@<host>`
+# and emits just the <pat> bit as `git-token`. `git-username` is a static
+# label (any value works for HTTPS+PAT against most providers).
+externalsecret-git-credentials:
+  externalSecret:
+    enabled: true
+    name: argocd-image-updater-secret
+    namespace: image-updater
+    targetSecretName: argocd-image-updater-secret
+    template:
+      engineVersion: v2
+      data:
+        git-username: argocd-image-updater
+        # `{{` escapes Helm so ESO sees a literal Go template at apply time.
+        git-token: '{{ regexFind "https://[^:]+:([^@]+)@" .gitcredentials | regexReplaceAll "https://[^:]+:([^@]+)@" .gitcredentials "${1}" }}'
+    data:
+      - secretKey: gitcredentials
+        property: gitcredentials
+
+# Zot pull-user dockerconfigjson — straight passthrough from the existing
+# Vault property that workload namespaces already consume.
+externalsecret-zot-pull:
+  externalSecret:
+    enabled: true
+    name: argocd-image-updater-zot-creds
+    namespace: image-updater
+    targetSecretName: argocd-image-updater-zot-creds
+    targetType: kubernetes.io/dockerconfigjson
+    data:
+      - secretKey: .dockerconfigjson
+        property: pull-dockerconfigjson
+
+secret-store: {}

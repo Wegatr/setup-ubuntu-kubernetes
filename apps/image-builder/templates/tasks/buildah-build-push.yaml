@@ -159,7 +159,7 @@ spec:
           -H 'Content-Type: application/json' \
           --max-time 10 \
           --data "{\"push_data\":{\"tag\":\"$(params.image-tag)\"},\"repository\":{\"repo_name\":\"$(params.registry)/$(params.image-name)\"}}" \
-          'http://argocd-image-updater-webhook.argocd.svc.cluster.local:8080/api/webhook' \
+          'http://argocd-image-updater-webhook.image-updater.svc.cluster.local:8080/api/webhook' \
           || echo "WARN: webhook POST failed — Image Updater will not auto-bump this build; trigger manually if needed"
       computeResources:
         requests:

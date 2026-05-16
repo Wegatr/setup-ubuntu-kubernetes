@@ -128,6 +128,17 @@ spec:
             createNamespace: "true"
             specialOptions: ""
 
+          # Sibling to image-builder. Listens on a cluster-internal webhook,
+          # auto-bumps tags in apps/<app>/values-dev.yaml on every build,
+          # ArgoCD reconciles. No polling, no manual edits. See apps/image-
+          # updater/values-common.yaml for the controller config.
+          - name: image-updater
+            syncWave: "25"
+            namespace: image-updater
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
           # Wave 30 — UIs + observability stack.
           - name: dbgate
             syncWave: "30"
