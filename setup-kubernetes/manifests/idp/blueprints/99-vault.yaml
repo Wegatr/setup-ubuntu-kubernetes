@@ -1,3 +1,9 @@
+# yaml-language-server: $schema=
+# Authentik blueprint — uses custom YAML tags !Find and !KeyOf that the VS
+# Code YAML linter does not recognize. The schema=null directive above
+# suppresses its "Unresolved tag" errors. Authentik's own blueprint loader
+# (Python yaml.SafeLoader subclass) registers these tags via construct_yaml_str
+# fallbacks — see authentik.blueprints.v1.common.BlueprintLoader.
 version: 1
 metadata:
   name: Vault OIDC client

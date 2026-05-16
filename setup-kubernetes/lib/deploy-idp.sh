@@ -220,6 +220,18 @@ deploy_idp() {
     # / deploy-vault find them ready when they run later in --deploy-all.
     _idp_apply_consumer_oidc_secrets
 
+    # Force the worker to re-discover blueprints. ConfigMap-mount auto-sync
+    # is async and can lag 60–120s; the rollout restart makes blueprint
+    # changes (added entries, fixed identifiers, etc.) take effect within
+    # ~15s of the restart finishing. Idempotent.
+    if kubectl -n "${IDP_NAMESPACE}" get deployment idp-authentik-worker >/dev/null 2>&1; then
+        log_info "Restarting authentik-worker to pick up latest blueprints..."
+        kubectl -n "${IDP_NAMESPACE}" rollout restart deployment idp-authentik-worker >/dev/null
+        kubectl -n "${IDP_NAMESPACE}" rollout status deployment/idp-authentik-worker --timeout=120s >/dev/null 2>&1 || {
+            log_warn "Authentik worker rollout did not complete within 120s"
+        }
+    fi
+
     log_ok "IdP (Authentik) deployed successfully"
     log_info "Access at: https://${IDP_HOST}"
     log_info "Admin user: akadmin (password in ${CREDENTIALS_DIR}/idp-${DEPLOY_ENV}.txt)"
