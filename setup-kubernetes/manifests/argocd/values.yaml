@@ -35,7 +35,17 @@ redis:
 configs:
   params:
     server.insecure: true
+  # Disable the built-in `admin` user — OIDC via Authentik is the sole
+  # login path. The `argocd-initial-admin-secret` K8s Secret is left in
+  # place so emergency CLI access (`argocd login --username admin
+  # --password <pw>`) still works on the host, but the web UI's
+  # password form is removed and admin can't sign in to it.
+  #
+  # Recovery if Authentik is unreachable: set `admin.enabled: "true"`
+  # here and `helm upgrade` (i.e. re-run --deploy-argocd). Or use the
+  # `argocd-cm` ConfigMap directly via kubectl.
   cm:
+    admin.enabled: "false"
     url: https://__ARGOCD_HOST__
     # Custom health check for Ingress on bare-metal (MicroK8s)
     # Default check requires status.loadBalancer.ingress which is never
