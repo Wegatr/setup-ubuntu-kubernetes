@@ -31,7 +31,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`zot.{{ .Values.global.env }}.{{ .Values.global.domain }}`) && HeadersRegexp(`User-Agent`, `^Mozilla`)
+    - match: Host(`zot.{{ .Values.global.env }}.{{ .Values.global.domain }}`) && HeaderRegexp(`User-Agent`, `^Mozilla`)
       kind: Rule
       priority: 100
       middlewares:
