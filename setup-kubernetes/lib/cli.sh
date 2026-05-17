@@ -45,6 +45,7 @@ SETUP:
     --install-microk8s            Install only MicroK8s
     --configure-storage           Configure only storage
     --configure-cert-manager      Configure only cert-manager
+    --configure-traefik           Re-apply Traefik patches (cross-ns + TCP entrypoints)
     --install-cli-tools           Install only CLI tools
     --setup-aliases               Setup only kubectl/helm aliases
     --skip-microk8s / --skip-storage / --skip-cert-manager / --skip-cli-tools / --skip-aliases
@@ -151,6 +152,7 @@ init_flag_defaults() {
     INSTALL_MICROK8S=true
     CONFIGURE_STORAGE=true
     CONFIGURE_CERT_MANAGER=true
+    CONFIGURE_TRAEFIK=false  # standalone re-config of Traefik addon patches
     INSTALL_CLI_TOOLS=true
     SETUP_ALIASES=true
     FORCE_INSTALL=false
@@ -224,6 +226,18 @@ parse_arguments() {
                 INSTALL_MICROK8S=false
                 CONFIGURE_STORAGE=false
                 CONFIGURE_CERT_MANAGER=true
+                INSTALL_CLI_TOOLS=false
+                SETUP_ALIASES=false
+                shift
+                ;;
+            --configure-traefik)
+                # Standalone re-apply of configure_traefik_addon (cross-ns
+                # flag + TRAEFIK_EXTRA_TCP_ENTRYPOINTS). Cheaper than
+                # `--install-microk8s` for just port additions.
+                CONFIGURE_TRAEFIK=true
+                INSTALL_MICROK8S=false
+                CONFIGURE_STORAGE=false
+                CONFIGURE_CERT_MANAGER=false
                 INSTALL_CLI_TOOLS=false
                 SETUP_ALIASES=false
                 shift
@@ -442,6 +456,11 @@ KUBERNETES SETUP OPTIONS:
     --install-microk8s            Install only MicroK8s
     --configure-storage           Configure only storage
     --configure-cert-manager      Configure only cert-manager
+    --configure-traefik           Re-apply Traefik DaemonSet patches:
+                                    1. cross-namespace middleware refs
+                                    2. extra TCP entrypoints from
+                                       TRAEFIK_EXTRA_TCP_ENTRYPOINTS
+                                  Idempotent; force-rolls pod on change.
     --install-cli-tools           Install only CLI tools
     --setup-aliases               Setup only kubectl/helm aliases
     --skip-microk8s              Skip MicroK8s installation

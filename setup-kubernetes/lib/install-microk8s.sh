@@ -345,60 +345,116 @@ enable_addons() {
     return 0
 }
 
-# Append --providers.kubernetescrd.allowCrossNamespace=true to Traefik's args
-# if not already set. Triggers a DaemonSet rollout to pick up the new flag.
+# Patch the Traefik (MicroK8s ingress addon) DaemonSet with platform-level
+# config that the addon doesn't expose: cross-namespace middleware refs +
+# any extra TCP entrypoints declared in `TRAEFIK_EXTRA_TCP_ENTRYPOINTS`.
+# Triggers a DaemonSet rollout (single-node deadlock-safe pattern) when any
+# patch is applied.
 #
-# Why: Traefik (MicroK8s ingress addon) ships with cross-namespace middleware
-# references DISABLED. An Ingress in namespace X cannot reference a Middleware
-# in namespace Y unless this flag is on. We have a single shared forwardAuth
-# Middleware in the `idp` namespace (Authentik), referenced cluster-wide as
-# `idp-forwardauth@kubernetescrd`.
+# Why patch instead of helm upgrade: the addon owns the Helm release; manual
+# `helm upgrade traefik` against the latest chart conflicts on schema diffs
+# (e.g. ports.web.redirections rejected) and silently no-ops. kubectl patch
+# is the supported escape hatch for addon-managed installs and idempotent.
 #
-# Idempotent: the script reads the current container args, skips if the flag
-# is already present, otherwise json-patches it onto the DaemonSet.
+# Patch 1 — cross-namespace middleware refs:
+#   Default Traefik ships with cross-namespace middleware refs DISABLED. An
+#   Ingress in ns X cannot reference a Middleware in ns Y unless this flag
+#   is on. We have a single shared forwardAuth Middleware in the `idp` ns
+#   (Authentik), referenced cluster-wide as `idp-forwardauth@kubernetescrd`.
+#
+# Patch 2 — extra TCP entrypoints (from TRAEFIK_EXTRA_TCP_ENTRYPOINTS array):
+#   Each `name:port` entry adds `--entryPoints.<name>.address=:<port>/tcp`
+#   to args + a `containerPort=<port>, hostPort=<port>` to the pod, so
+#   IngressRouteTCP CRs that reference that entrypoint actually have a
+#   listener to route into. Single-node hostPort exposure (no LoadBalancer
+#   needed). Empty array = patch is a no-op.
+#
+# Idempotent: each patch is gated on a grep of the current container args.
+# Re-runs only patch what's missing. Force-roll only fires if the LIVE pod
+# lags the template.
 configure_traefik_addon() {
     if ! microk8s kubectl -n ingress get daemonset traefik >/dev/null 2>&1; then
-        log_warn "Traefik DaemonSet not found in 'ingress' namespace — skipping cross-namespace patch"
+        log_warn "Traefik DaemonSet not found in 'ingress' namespace — skipping patches"
         return 0
     fi
 
-    # Step 1: ensure the DaemonSet TEMPLATE contains the flag.
+    # Step 1: ensure the DaemonSet TEMPLATE contains every required arg + port.
     local ds_args
     ds_args=$(microk8s kubectl -n ingress get daemonset traefik \
         -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null)
 
+    # 1a — cross-namespace flag
     if ! echo "${ds_args}" | grep -q "allowCrossNamespace=true"; then
         log_info "Patching Traefik DaemonSet — enabling cross-namespace middleware refs..."
         microk8s kubectl -n ingress patch daemonset traefik --type=json \
             -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--providers.kubernetescrd.allowCrossNamespace=true"}]' \
             >/dev/null || {
-            log_error "Failed to patch Traefik DaemonSet"
+            log_error "Failed to patch Traefik DaemonSet (cross-ns flag)"
             return 1
         }
     fi
 
-    # Step 2: ensure the LIVE pod actually has the flag.
+    # 1b — extra TCP entrypoints (loop over TRAEFIK_EXTRA_TCP_ENTRYPOINTS)
+    local entry name port
+    for entry in "${TRAEFIK_EXTRA_TCP_ENTRYPOINTS[@]:-}"; do
+        [[ -z "${entry}" ]] && continue
+        name="${entry%%:*}"
+        port="${entry##*:}"
+        if [[ -z "${name}" || -z "${port}" || "${name}" == "${entry}" ]]; then
+            log_warn "TRAEFIK_EXTRA_TCP_ENTRYPOINTS: skipping malformed entry '${entry}' (expected name:port)"
+            continue
+        fi
+
+        # Skip if entrypoint args already contain this name (idempotent re-run).
+        if echo "${ds_args}" | grep -q "entryPoints\\.${name}\\.address"; then
+            log_ok "Traefik entrypoint '${name}' already in DaemonSet template"
+            continue
+        fi
+
+        log_info "Patching Traefik DaemonSet — adding TCP entrypoint ${name} on :${port}..."
+        microk8s kubectl -n ingress patch daemonset traefik --type=json -p="[
+            {\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--entryPoints.${name}.address=:${port}/tcp\"},
+            {\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/ports/-\",\"value\":{\"name\":\"${name}\",\"containerPort\":${port},\"hostPort\":${port},\"protocol\":\"TCP\"}}
+        ]" >/dev/null || {
+            log_error "Failed to patch Traefik DaemonSet (entrypoint ${name})"
+            return 1
+        }
+    done
+
+    # Step 2: ensure the LIVE pod actually has everything the template specifies.
     #
     # The DaemonSet's default updateStrategy is RollingUpdate with maxSurge=1
     # and maxUnavailable=0 — fine on multi-node, but deadlocks on single-node:
     # the new pod is created BEFORE the old one is killed, but both pods need
-    # host:80 and host:443 → new pod is stuck in Pending forever, old keeps
-    # serving traffic with the OLD args (no cross-namespace).
+    # the same host ports → new pod is stuck in Pending forever, old keeps
+    # serving traffic with the OLD args.
     #
-    # The fix: detect the mismatch and force-roll by deleting both Pending
-    # pods (which are wedged) and the Running pod (old args). The DS controller
-    # recreates a single new pod which grabs the now-free host ports and
-    # comes up with the new args.
-    local live_args
+    # The fix: detect any mismatch (cross-ns flag OR any configured entrypoint
+    # missing) and force-roll by deleting wedged Pending pods + the Running
+    # one. DS controller recreates a single new pod which grabs the now-free
+    # host ports and comes up with the new args.
+    local live_args needs_roll=false
     live_args=$(microk8s kubectl -n ingress get pods -l app.kubernetes.io/name=traefik \
         -o jsonpath='{.items[?(@.status.phase=="Running")].spec.containers[0].args}' 2>/dev/null)
 
-    if echo "${live_args}" | grep -q "allowCrossNamespace=true"; then
-        log_ok "Traefik already configured for cross-namespace middlewares"
+    if ! echo "${live_args}" | grep -q "allowCrossNamespace=true"; then
+        needs_roll=true
+    fi
+    for entry in "${TRAEFIK_EXTRA_TCP_ENTRYPOINTS[@]:-}"; do
+        [[ -z "${entry}" ]] && continue
+        name="${entry%%:*}"
+        [[ -z "${name}" || "${name}" == "${entry}" ]] && continue
+        if ! echo "${live_args}" | grep -q "entryPoints\\.${name}\\.address"; then
+            needs_roll=true
+        fi
+    done
+
+    if [[ "${needs_roll}" != "true" ]]; then
+        log_ok "Traefik live pod fully configured (cross-ns + ${#TRAEFIK_EXTRA_TCP_ENTRYPOINTS[@]:-0} extra TCP entrypoint(s))"
         return 0
     fi
 
-    log_info "Live Traefik pod missing the new flag — force-rolling DaemonSet..."
+    log_info "Live Traefik pod lags the template — force-rolling DaemonSet..."
 
     # Clear any wedged Pending pods first (no grace, no host port held).
     microk8s kubectl -n ingress delete pod -l app.kubernetes.io/name=traefik \
@@ -411,12 +467,12 @@ configure_traefik_addon() {
         --field-selector=status.phase=Running --grace-period=10 \
         >/dev/null 2>&1 || true
 
-    log_info "Waiting for new Traefik pod with cross-namespace flag..."
+    log_info "Waiting for new Traefik pod with full config..."
     microk8s kubectl -n ingress rollout status daemonset/traefik --timeout=90s >/dev/null 2>&1 || {
         log_warn "Traefik rollout did not complete within 90s"
     }
 
-    log_ok "Traefik cross-namespace middleware refs enabled"
+    log_ok "Traefik DaemonSet patched + rolled (cross-ns + ${#TRAEFIK_EXTRA_TCP_ENTRYPOINTS[@]:-0} extra TCP entrypoint(s))"
     return 0
 }
 

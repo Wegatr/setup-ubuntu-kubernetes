@@ -122,6 +122,29 @@ DISABLED_ADDONS=(
     "registry"         # Superseded by GitOps-managed Zot at apps/registry/
 )
 
+# Extra TCP entrypoints to add to the Traefik (MicroK8s ingress addon)
+# DaemonSet. Each entry is `name:port` where:
+#   - name = entrypoint name (must match IngressRouteTCP `entryPoints:` refs)
+#   - port = TCP port to listen on the node (hostPort) AND inside the pod
+#
+# Why this exists: the addon's bundled Traefik only opens HTTP (80) +
+# HTTPS (443) + metrics (9100) + dashboard (8080). App-specific binary or
+# non-HTTP TCP protocols (IoT device protocols, custom services) need
+# their own entrypoint or the IngressRouteTCP CR has nothing to bind to.
+#
+# Applied by configure_traefik_addon() in lib/install-microk8s.sh via two
+# json patches per entry (args + container/host port) and an idempotent
+# force-roll of the DaemonSet pod. Re-runnable.
+#
+# Empty array = no extra entrypoints (only cross-ns flag patch runs).
+#
+# Example (uncomment + adjust for your app):
+#   TRAEFIK_EXTRA_TCP_ENTRYPOINTS=(
+#       "codec8:5027"   # Teltonika GPS Codec-8 binary
+#       "osmand:5055"   # OsmAnd HTTP
+#   )
+TRAEFIK_EXTRA_TCP_ENTRYPOINTS=()
+
 # Upstream DNS resolvers CoreDNS uses for non-cluster lookups.
 # Required on hosts running systemd-resolved (Ubuntu default): the host's
 # /etc/resolv.conf points to 127.0.0.53, which is not reachable from inside pods,

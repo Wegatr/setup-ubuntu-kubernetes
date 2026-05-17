@@ -182,8 +182,8 @@ main() {
     # Check if any installation flags are set
     local installing_k8s=false
     if [[ "${INSTALL_MICROK8S}" == "true" || "${CONFIGURE_STORAGE}" == "true" || \
-          "${CONFIGURE_CERT_MANAGER}" == "true" || "${INSTALL_CLI_TOOLS}" == "true" || \
-          "${SETUP_ALIASES}" == "true" ]]; then
+          "${CONFIGURE_CERT_MANAGER}" == "true" || "${CONFIGURE_TRAEFIK}" == "true" || \
+          "${INSTALL_CLI_TOOLS}" == "true" || "${SETUP_ALIASES}" == "true" ]]; then
         installing_k8s=true
     fi
 
@@ -229,6 +229,13 @@ main() {
     # Configure cert-manager
     if [[ "${CONFIGURE_CERT_MANAGER}" == "true" ]]; then
         configure_cert_manager || log_warn "Cert-manager configuration incomplete"
+    fi
+
+    # Re-apply Traefik DaemonSet patches (cross-ns flag + extra TCP entrypoints
+    # from TRAEFIK_EXTRA_TCP_ENTRYPOINTS). Standalone op — cheaper than
+    # `--install-microk8s` when all you need is to bind a new TCP port.
+    if [[ "${CONFIGURE_TRAEFIK}" == "true" ]]; then
+        configure_traefik_addon || log_warn "Traefik configuration incomplete"
     fi
 
     # Install CLI tools
