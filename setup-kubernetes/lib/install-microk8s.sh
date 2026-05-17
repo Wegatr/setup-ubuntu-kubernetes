@@ -450,7 +450,7 @@ configure_traefik_addon() {
     done
 
     if [[ "${needs_roll}" != "true" ]]; then
-        log_ok "Traefik live pod fully configured (cross-ns + ${#TRAEFIK_EXTRA_TCP_ENTRYPOINTS[@]:-0} extra TCP entrypoint(s))"
+        log_ok "Traefik live pod fully configured (cross-ns + ${#TRAEFIK_EXTRA_TCP_ENTRYPOINTS[@]} extra TCP entrypoint(s))"
         return 0
     fi
 
@@ -472,7 +472,7 @@ configure_traefik_addon() {
         log_warn "Traefik rollout did not complete within 90s"
     }
 
-    log_ok "Traefik DaemonSet patched + rolled (cross-ns + ${#TRAEFIK_EXTRA_TCP_ENTRYPOINTS[@]:-0} extra TCP entrypoint(s))"
+    log_ok "Traefik DaemonSet patched + rolled (cross-ns + ${#TRAEFIK_EXTRA_TCP_ENTRYPOINTS[@]} extra TCP entrypoint(s))"
     return 0
 }
 
