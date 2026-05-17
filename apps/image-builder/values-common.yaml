@@ -14,14 +14,8 @@ pipeline:
 
 # Workspace sizing. The `source` workspace holds the cloned source for the
 # duration of one PipelineRun (PVC-backed; auto-cleaned by Tekton's pruner).
-# The `trivy-db-cache` workspace persists across runs to avoid re-downloading
-# the vulnerability DB (~600MB).
 workspaces:
   sourceSize: 10Gi
-  trivyDbCacheSize: 5Gi
-
-trivyDbCache:
-  enabled: true
 
 # EventListener config — exposed publicly so GitHub / Bitbucket / Azure DevOps
 # can call it on every push.
@@ -133,16 +127,5 @@ monitoring:
                 severity: warning
               annotations:
                 summary: "Image-builder PipelineRun running > 30 minutes"
-                description: "Check for stuck Buildah/Trivy steps."
-
-            - alert: TrivyHighSeverityFinding
-              # Trivy results aren't exposed as Prometheus metrics by Tekton;
-              # this alert fires when a PipelineRun fails with the trivy-scan
-              # step's exit code. Real metric integration is Phase B.
-              expr: increase(tekton_pipelines_controller_pipelinerun_count{status="failed",pipeline="build-pipeline"}[10m]) > 0
-              for: 1m
-              labels:
-                severity: warning
-              annotations:
-                summary: "Build pipeline failed — check trivy-scan task output for HIGH/CRITICAL CVEs"
+                description: "Check for stuck Buildah steps."
 

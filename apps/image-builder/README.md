@@ -1,10 +1,10 @@
 # apps/image-builder/
 
 Tekton-based image build pipeline for the platform. Clones a source repo,
-builds the image with Buildah, scans for vulnerabilities (Trivy) and leaked
-credentials (gitleaks), pushes to the MicroK8s built-in registry, and emits a
-JSON summary. Triggered automatically by Git webhooks (GitHub, Bitbucket,
-Azure DevOps) or manually via `tkn` / `curl` / `kubectl apply`.
+scans for leaked credentials (gitleaks), builds the image with Buildah,
+pushes to the Zot OCI registry, and emits a JSON summary. Triggered
+automatically by Git webhooks (GitHub, Bitbucket, Azure DevOps) or manually
+via `tkn` / `curl` / `kubectl apply`.
 
 ## Table of contents
 
@@ -44,10 +44,9 @@ flowchart LR
     Clone --> Gitleaks[credential-scan]
     Tag --> Build[buildah-build-push]
     Gitleaks --> Build
-    Build --> Trivy[trivy-scan]
-    Trivy --> Summary[logging-summary]
+    Build --> Summary[logging-summary]
 
-    Build -->|push| Registry[(MicroK8s registry<br/>:5000)]
+    Build -->|push| Registry[(Zot OCI registry<br/>zot.dev.&lt;domain&gt;)]
 ```
 
 Public entry point (Phase A — DEV cluster only):
@@ -355,7 +354,6 @@ tkn -n image-builder pipeline start build-pipeline \
   -p git-revision=main \
   -p image-name=myapp \
   -p image-version=1.0.0 \
-  --workspace name=trivy-db-cache,claimName=trivy-db-cache \
   --workspace name=source,volumeClaimTemplateFile=- <<'EOF'
 spec:
   accessModes: [ReadWriteOnce]
@@ -508,17 +506,17 @@ each Trigger's CEL filter:
 - **Buildah storage driver** — Must be `vfs`. The default `overlay` driver
   fails in nested unprivileged container scenarios on MicroK8s.
 
-- **Registry TLS** — MicroK8s registry is HTTP, not HTTPS. Buildah uses
-  `--tls-verify=false`; Trivy uses `--insecure`. Both already set in the
-  Tasks.
+- **Registry TLS** — Zot has a real Let's Encrypt cert via Ingress; Buildah
+  authenticates with `buildah login` using credentials envFrom-injected from
+  the `image-builder-registry-push` Secret (materialized by ESO from Vault).
 
 - **PVC modes** — All workspace PVCs are `ReadWriteOnce`. Single PipelineRun
   pod chain is fine. Parallel PipelineRuns get distinct PVCs (one per run
   via volumeClaimTemplate).
 
-- **Pull from the registry** — Other workloads pull from
-  `registry.container-registry.svc.cluster.local:5000/...` (no auth). Use
-  `imagePullPolicy: Always` if you ever rebuild with the same tag.
+- **Pull from the registry** — Workload namespaces opt in to a Zot pull
+  imagePullSecret via `charts/acr-secret/` (see CLAUDE.md "Pull-from-Zot
+  is on-demand per consumer namespace").
 
 ---
 
@@ -558,17 +556,6 @@ Common causes:
 Bump resource limits in
 [`templates/tasks/buildah-build-push.yaml`](templates/tasks/buildah-build-push.yaml).
 Large Go / Java images often need 4–8Gi.
-
-### Trivy says `DB download failed`
-
-```bash
-kubectl -n image-builder get pvc trivy-db-cache
-# Should be Bound. If Pending: storageClass issue.
-
-# Inside a Trivy step pod, the cluster must reach ghcr.io.
-# Test from a debug pod in the same namespace:
-kubectl -n image-builder run trivy-debug --image=busybox --rm -it -- wget -O- https://ghcr.io
-```
 
 ### gitleaks false positives
 

@@ -106,7 +106,6 @@ auto-update on each install.
 | Tekton Interceptors | `v0.35.0` | same place | |
 | Tekton Dashboard | `v0.68.0` | `apps/tekton/values-common.yaml` `release.dashboardVersion` (informational) + vendored YAML in `apps/tekton/templates/release-dashboard.yaml` | Gated on `.Values.dashboard.enabled` (DEV only). |
 | Buildah (build image) | `quay.io/buildah/stable:v1.43.1` | `apps/image-builder/templates/tasks/buildah-build-push.yaml` step image | |
-| Trivy (scan image) | `aquasec/trivy:0.70.0` | `apps/image-builder/templates/tasks/trivy-scan.yaml` step image | |
 | Prometheus-community mongodb-exporter chart | `3.7.0` | `apps/mongodb/Chart.yaml` | |
 | Prometheus-community redis-exporter chart | `6.5.0` | `apps/redis/Chart.yaml` | |
 | Headlamp / ArgoCD / Vault Helm charts | (no pin — `helm install` latest at deploy time) | `setup-kubernetes/lib/deploy-{kube,argocd,vault}.sh` | Re-running `--deploy-<app>` after a chart release picks up the new version. |
@@ -177,11 +176,6 @@ auto-update on each install.
   Phase A ships with this limitation; see
   [`apps/image-builder/README.md`](apps/image-builder/README.md) "Security
   hardening" for the two clean fixes.
-- **`apps/image-builder/templates/trivy-db-cache-warmer.yaml`** keeps the
-  `trivy-db-cache` PVC bound at all times. The cluster default
-  StorageClass `microk8s-hostpath` is `WaitForFirstConsumer`, so without
-  a consumer the PVC sits in Pending. The warmer is a 1-replica pause
-  container; it co-mounts RWO with Tekton TaskRuns on the same node.
 - **`apps/dbgate/values-common.yaml`** Ingress + connection FQDNs use
   Helm `tpl` to compose `gate.<env>.<domain>` and the database Service
   names (`mongodb-<env>-headless.mongodb.svc.cluster.local`, etc.) from
@@ -297,14 +291,6 @@ auto-update on each install.
   prunes the PR + child TaskRuns + pods after the window. To extend or
   per-status-retain, switch to a TektonPruner CRD (separate operator,
   not currently installed).
-- **trivy-scan emits TaskRun results**: `apps/image-builder/templates/
-  tasks/trivy-scan.yaml` runs trivy twice — once with `--format json
-  --exit-code 0` to extract CVE counts (jq, `--format json` output to
-  /tmp), once with `--format table --exit-code 1` for the gate + step
-  logs. Three results emitted (`cve-critical`, `cve-high`, `cve-summary`)
-  visible in Tekton Dashboard's PR detail panel at-a-glance. Don't move
-  the result-writing AFTER the gating pass — gate exits non-zero and
-  Tekton wouldn't capture the results.
 - **MicroK8s built-in `registry` addon is disabled**: the snap's HTTP-only
   `:32000` registry is superseded by the GitOps-managed Zot above. The
   cleanup happens via `DISABLED_ADDONS=("registry")` in
@@ -331,15 +317,13 @@ auto-update on each install.
 - **image-builder push topology**: `pipeline.registry` is rendered from
   `.Values.global.domain` via Helm `tpl` at every chart-render —
   `apps/image-builder/values-common.yaml` has the literal
-  `'zot.dev.{{ .Values.global.domain }}'`. The buildah-build-push and
-  trivy-scan tasks both `tpl`-render this on the Pipeline param default,
-  and `envFrom: secretRef` load `REGISTRY_USERNAME` / `REGISTRY_PASSWORD`
-  from the `image-builder-registry-push` Secret materialized by ESO from
-  Vault path `<env>/app/registry` (properties `push-user` + `push-password`).
-  Buildah does `buildah login` before bud/push; Trivy re-exports those
-  vars as `TRIVY_USERNAME` / `TRIVY_PASSWORD` (its built-in env names).
-  Don't put `--tls-verify=false` or `--insecure` back — Zot has a real LE
-  cert.
+  `'zot.dev.{{ .Values.global.domain }}'`. The buildah-build-push task
+  `tpl`-renders this on the Pipeline param default, and `envFrom: secretRef`
+  loads `REGISTRY_USERNAME` / `REGISTRY_PASSWORD` from the
+  `image-builder-registry-push` Secret materialized by ESO from Vault path
+  `<env>/app/registry` (properties `push-user` + `push-password`). Buildah
+  does `buildah login` before bud/push. Don't put `--tls-verify=false` back
+  — Zot has a real LE cert.
 - **Pull-from-Zot is on-demand per consumer namespace**: existing apps
   (mongodb / postgresql / redis / postfix / seq / dbgate / observability)
   pull from public registries (docker.io / bitnamicharts / etc.) and do

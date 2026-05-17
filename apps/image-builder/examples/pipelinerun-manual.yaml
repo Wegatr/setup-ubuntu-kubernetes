@@ -37,9 +37,6 @@ spec:
             requests:
               storage: 10Gi
           # storageClassName resolves to the platform default (microk8s-hostpath).
-    - name: trivy-db-cache
-      persistentVolumeClaim:
-        claimName: trivy-db-cache
   # Note: git auth is HTTPS+PAT. Credentials come from the `image-builder-git-https`
   # Secret in this namespace (materialized by ESO from Vault); the git-clone Task
   # envFrom-mounts it, no workspace declaration needed.

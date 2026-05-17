@@ -4,8 +4,7 @@ TriggerTemplate — common shape consumed by all three provider Triggers. Each
 binding feeds the same five params; the template spawns a PipelineRun.
 
 Workspaces:
-  - source         : volumeClaimTemplate (10Gi) — fresh per run
-  - trivy-db-cache : pre-provisioned PVC (trivy-db-cache, see trivy-db-pvc.yaml)
+  - source : volumeClaimTemplate (10Gi) — fresh per run
 
 Git auth is HTTPS+PAT, materialized as a Secret in this namespace by ESO
 (externalsecret-git-https) and consumed via `envFrom secretRef` inside
@@ -70,7 +69,4 @@ spec:
                   requests:
                     storage: {{ .Values.workspaces.sourceSize | quote }}
                 storageClassName: {{ .Values.global.storageClass | quote }}
-          - name: trivy-db-cache
-            persistentVolumeClaim:
-              claimName: trivy-db-cache
 {{- end }}
