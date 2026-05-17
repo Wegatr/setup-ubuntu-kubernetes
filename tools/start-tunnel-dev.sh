@@ -71,26 +71,40 @@ clear_port() {
     fi
 }
 
-# Replace server URL with localhost tunnel target, drop CA data + add
-# insecure-skip-tls-verify (cert isn't valid for `localhost`), rename
-# context/cluster/user to `dev`. Same sed pattern as the proven original.
-process_kubeconfig() {
+# Rewrite the raw `microk8s config` output so the local kubectl talks to
+# the SSH tunnel and the context has a sane name. Done via kubectl itself
+# (no regex) — kubectl knows YAML, can rename contexts cleanly, and is
+# immune to CRLF / encoding quirks. Mirrors the pwsh version 1:1.
+# Writes the resulting kubeconfig to $4 (out_path).
+rewrite_kubeconfig() {
     local raw_config="$1"
     local local_port="$2"
-    local remote_port="$3"
-    local context_name="$4"
-    # tr -d '\r' is a safety: Linux ssh delivers LF (no-op), but ensures
-    # the `$` end-anchors still match if someone ever runs this on a host
-    # where the remote shell adds CR.
-    echo "$raw_config" | tr -d '\r' | sed \
-        -e "s|^\(\s*\)server:\s*https://[^:]*:${remote_port}|\1server: https://localhost:${local_port}\n\1insecure-skip-tls-verify: true|" \
-        -e '/^\s*certificate-authority-data:/d' \
-        -e "s|name: microk8s-cluster|name: ${context_name}|g" \
-        -e "s|cluster: microk8s-cluster|cluster: ${context_name}|g" \
-        -e "s|name: microk8s$|name: ${context_name}|" \
-        -e "s|name: admin|name: ${context_name}-admin|g" \
-        -e "s|user: admin|user: ${context_name}-admin|g" \
-        -e "s|current-context:.*|current-context: ${context_name}|"
+    local context_name="$3"
+    local out_path="$4"
+
+    # 1. Persist raw to the working file.
+    printf '%s' "$raw_config" > "$out_path"
+
+    # 2. Discover the names microk8s used (context=microk8s, cluster=
+    #    microk8s-cluster on current versions; cheap drift insurance for
+    #    future microk8s changes).
+    local orig_ctx orig_cluster
+    orig_ctx=$(kubectl --kubeconfig "$out_path" config current-context 2>/dev/null)
+    orig_cluster=$(kubectl --kubeconfig "$out_path" config view --raw \
+        -o jsonpath="{.contexts[?(@.name==\"${orig_ctx}\")].context.cluster}" 2>/dev/null)
+
+    # 3. Rename context to $context_name. Cluster + user refs inside the
+    #    context follow automatically.
+    if [[ "${orig_ctx}" != "${context_name}" ]]; then
+        kubectl --kubeconfig "$out_path" config rename-context "$orig_ctx" "$context_name" >/dev/null
+    fi
+
+    # 4. Point cluster at local tunnel + skip-TLS (remote cert isn't valid
+    #    for `localhost`). set-cluster auto-drops CA data when
+    #    --insecure-skip-tls-verify is set.
+    kubectl --kubeconfig "$out_path" config set-cluster "$orig_cluster" \
+        --server="https://localhost:${local_port}" \
+        --insecure-skip-tls-verify=true >/dev/null
 }
 
 # Step 1: free the local port
@@ -128,17 +142,16 @@ if [[ -z "$RAW_DEV_CONFIG" ]]; then
 fi
 echo -e "   ${GREEN}DEV kubeconfig retrieved${NC}"
 
-# Step 5: rewrite for localhost tunnel
+# Step 5: rewrite raw config for localhost tunnel using kubectl
 echo ""
 echo "Processing DEV kubeconfig..."
-PROCESSED_DEV=$(process_kubeconfig "$RAW_DEV_CONFIG" "$DEV_K8S_LOCAL_PORT" "$DEV_K8S_REMOTE_PORT" "dev")
+TMP_DEV_CONFIG=$(mktemp)
+rewrite_kubeconfig "$RAW_DEV_CONFIG" "$DEV_K8S_LOCAL_PORT" "dev" "$TMP_DEV_CONFIG"
 echo -e "   ${GREEN}Server -> https://localhost:${DEV_K8S_LOCAL_PORT}, context -> dev${NC}"
 
 # Step 6: merge into ~/.kube/config and write the per-context file
 echo ""
 echo "Merging kubeconfig..."
-TMP_DEV_CONFIG=$(mktemp)
-echo "$PROCESSED_DEV" > "$TMP_DEV_CONFIG"
 
 if [[ -f "$KUBECONFIG_PATH" ]]; then
     # Merge with existing (preserves other contexts). Write to a sibling
