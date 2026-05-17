@@ -47,9 +47,17 @@ spec:
                 : 'Containerfile'
         - name: filter
           # Bitbucket payload: each push has changes[].new.name = branch.
+          # Also skip pushes where every commit is from `image-builder@platform`
+          # (the app-pipeline bot author for version-bump + tag-bump
+          # write-back). Bitbucket exposes author as `raw: "Name <email>"`,
+          # so we check the raw string contains the bot email. Without this
+          # the bump commit would re-trigger a build → infinite loop.
           value: >-
             body.push.changes.exists(c, c.new != null && c.new.type == 'branch'
-            && c.new.name.matches('{{ .Values.eventListener.triggers.bitbucket.branchFilter }}'))
+            && c.new.name.matches('{{ .Values.eventListener.triggers.bitbucket.branchFilter }}')) &&
+            !body.push.changes.all(c,
+              c.commits.size() > 0 &&
+              c.commits.all(co, co.author.raw.contains('<image-builder@platform>')))
   bindings:
     - ref: bitbucket-binding
   template:

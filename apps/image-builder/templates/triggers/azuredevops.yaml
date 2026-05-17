@@ -46,13 +46,20 @@ spec:
                 : 'Containerfile'
         - name: filter
           # Reject events not bearing the matching shared secret AND restrict
-          # to push events on matching branches.
+          # to push events on matching branches. Also skip pushes where every
+          # commit is authored by `image-builder@platform` (the bot account
+          # used by app pipelines for their version-bump + tag-bump write-back
+          # commits) — without this, every bump commit would re-trigger a
+          # build, creating an infinite loop. Pushes containing AT LEAST ONE
+          # human commit still build.
           value: >-
             header.canonical('Authorization').size() > 0 &&
             body.eventType == 'git.push' &&
             body.resource.refUpdates.exists(r,
               r.name.startsWith('refs/heads/') &&
-              r.name.substring(11).matches('{{ .Values.eventListener.triggers.azuredevops.branchFilter }}'))
+              r.name.substring(11).matches('{{ .Values.eventListener.triggers.azuredevops.branchFilter }}')) &&
+            !(body.resource.commits.size() > 0 &&
+              body.resource.commits.all(c, c.author.email == 'image-builder@platform'))
   bindings:
     - ref: azuredevops-binding
   template:

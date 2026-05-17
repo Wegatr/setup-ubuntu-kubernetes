@@ -335,46 +335,66 @@ auto-update on each install.
   re-running `--seed-vault` after a namespace name change picks up the
   new bound_service_account_namespaces entry.
 - **App-owned build pipelines (the contract)**: the platform's
-  `apps/image-builder/` provides ONLY the EventListener + Trigger plumbing
-  and a shared Task library (`git-clone`, `generate-image-tag`,
-  `credential-scan`, `buildah-build-push`, `yq-git-bump`, `logging-summary`)
-  in the `image-builder` namespace. It does NOT define any Pipeline —
-  Pipelines live in each app's source repo at
+  `apps/image-builder/` is intentionally minimal — it provides ONLY:
+    - the EventListener + Trigger plumbing (per-provider webhook intake)
+    - a 3-Task shared library in the `image-builder` namespace:
+      `git-clone`, `credential-scan`, `buildah-build-push`
+
+  That's all. Everything app-specific — version computation, tag format,
+  write-back target, commit message convention — lives INLINE in each
+  app's own Pipeline via `taskSpec`. Don't add opinion-y "helper" Tasks
+  to the platform library (no `generate-image-tag`, no `yq-git-bump`,
+  no `logging-summary`); they belong in the app's pipeline where the
+  app team can choose semver / calver / semantic-release / whatever.
+
+  Pipelines themselves live in each app's source repo at
   `deploy/pipelines/<image-name>.yaml` and are deployed to the
   `image-builder` namespace by the app's own ArgoCD Application
-  (sibling to its workload chart Application).
+  (multi-source: chart + pipelines from the same repo).
 
-  The EventListener routes webhooks by `image-name`: when an Azure DevOps
-  webhook fires with `X-Image-Name: fleet-backend`, the TriggerTemplate
-  spawns a PipelineRun with `pipelineRef.name: fleet-backend` — which
-  resolves to the Pipeline that fleet-tracker shipped via its
-  `deploy/pipelines/fleet-backend.yaml`. App pipelines reference platform
-  Tasks via Tekton's `cluster` resolver (no auth needed; resolver allows
-  cross-namespace by default — see `tekton-resolvers/cluster-resolver-config`
-  ConfigMap with `allowed-namespaces: ""`).
+  Routing: the EventListener spawns `PipelineRun` with
+  `pipelineRef.name: $(image-name)`. `image-name` comes from the
+  `X-Image-Name` header (or repo name fallback). So a push to
+  fleet-tracker with `X-Image-Name: fleet-backend` resolves to the
+  Pipeline `fleet-backend` in `image-builder` ns — which fleet-tracker
+  shipped via `deploy/pipelines/fleet-backend.yaml`. App pipelines
+  reference the 3 platform Tasks via `cluster` resolver; tasks
+  app-specific go inline in the Pipeline file.
 
-  Tag bumps happen INSIDE the pipeline itself: each app pipeline's final
-  step calls `yq-git-bump` (cluster-resolved from `image-builder` ns) with
-  `{repo-url, branch, file-path, yaml-path, new-value}`. The task clones
-  the target repo with the existing `image-builder-git-https` PAT, runs
-  `yq -i`, commits, pushes back, retries on push-conflict with rebase.
-  ArgoCD picks up the commit and rolls the deployment. No image-updater,
-  no annotations, no controller. End-to-end latency: ~5-10s after the
-  build's `bump` step completes.
+  **Anti-loop**: app pipelines push commits back to their own source
+  repo (version bumps + tag bumps). Without protection, those commits
+  re-trigger the webhook → infinite build loop. Mitigation: the
+  bump-commit author is `image-builder@platform`, and the trigger CEL
+  filter on each provider rejects pushes where every commit is from
+  that author. Pushes containing ≥1 human commit still build. The
+  filter lives in:
+    - `apps/image-builder/templates/triggers/azuredevops.yaml`
+      uses `body.resource.commits[].author.email`
+    - `apps/image-builder/templates/triggers/github.yaml`
+      uses `body.commits[].author.email`
+    - `apps/image-builder/templates/triggers/bitbucket.yaml`
+      uses `body.push.changes[].commits[].author.raw` (Bitbucket exposes
+      author as `"Name <email>"` raw string)
 
   Onboarding a new app:
   1. App repo ships `deploy/pipelines/<image-name>.yaml` per build target
-  2. App repo ships a sibling ArgoCD Application (alongside its workload
-     Application) that syncs `deploy/pipelines/` to `image-builder` ns
+     with inline `taskSpec` for the app-specific bits.
+  2. App's ArgoCD Application uses multi-source: `deploy/chart/` + 
+     `deploy/pipelines/`. Pipelines have explicit `metadata.namespace:
+     image-builder`; ArgoCD honors it.
   3. Webhook subscription on the provider side sets
-     `X-Image-Name: <image-name>` matching the Pipeline filename
+     `X-Image-Name: <image-name>` matching the Pipeline metadata.name.
   4. Image-builder PAT must have Code: Read & Write on the app's repo
-     (for `yq-git-bump` to push back). Add the credential line to the
-     `IMAGE_BUILDER_GIT_CREDENTIALS` heredoc in `configs/secrets.<env>`
-     and re-run `--seed-vault`.
+     (for the pipeline's commit-push step). Add the credential line to
+     the `IMAGE_BUILDER_GIT_CREDENTIALS` heredoc in
+     `configs/secrets.<env>` and re-run `--seed-vault`.
+  5. Pipeline's commit-push step MUST set git author to
+     `image-builder@platform` for the anti-loop filter to work.
 
   See `/home/server/repos/fleet-tracker/deploy/pipelines/` for working
-  examples. fleet-tracker is the reference implementation.
+  examples. fleet-tracker is the reference implementation; inline
+  `bump-version` (jq + package.json patch bump) + `commit-push` (yq +
+  git push with rebase-retry).
 
 ## Pre-flight requirements the script cannot fix
 

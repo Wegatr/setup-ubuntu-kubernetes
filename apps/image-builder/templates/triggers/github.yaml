@@ -52,9 +52,15 @@ spec:
                 : 'Containerfile'
         - name: filter
           # Extract branch from refs/heads/<branch>; match the configured regex.
+          # Also skip pushes where every commit is from `image-builder@platform`
+          # (the app-pipeline bot author for version-bump + tag-bump
+          # write-back). Without this every bump commit would re-trigger a
+          # build → infinite loop. Pushes with ≥1 human commit still build.
           value: >-
             body.ref.startsWith('refs/heads/') &&
-            body.ref.split('/').slice(2).join('/').matches('{{ .Values.eventListener.triggers.github.branchFilter }}')
+            body.ref.split('/').slice(2).join('/').matches('{{ .Values.eventListener.triggers.github.branchFilter }}') &&
+            !(body.commits.size() > 0 &&
+              body.commits.all(c, c.author.email == 'image-builder@platform'))
   bindings:
     - ref: github-binding
   template:

@@ -57,10 +57,21 @@ flowchart LR
     AppRepo --> ArgoCD[ArgoCD reconciles<br/>→ rolling update]
 ```
 
-Task library shipped by this app (referenced by every app pipeline via
+Task library shipped by this app (referenced by app pipelines via
 `resolver: cluster, namespace: image-builder`): `git-clone`,
-`generate-image-tag`, `credential-scan`, `buildah-build-push`,
-`yq-git-bump`, `logging-summary`.
+`credential-scan`, `buildah-build-push`. That's it — by design.
+
+Everything app-specific (version computation, tag format, write-back
+target file, commit message convention) lives INLINE in each app's
+own Pipeline via `taskSpec`. Apps that want semver from package.json
+write that inline; apps that want calver or git-describe write that.
+The image-builder is an image builder, not a version manager.
+
+**Anti-loop**: the trigger CEL filter on each provider rejects pushes
+where every commit is from `image-builder@platform` (the author bot used
+by app pipelines' write-back step). Without this, every bump commit
+would re-trigger a build. Pushes containing at least one human commit
+still build.
 
 Public entry point (Phase A — DEV cluster only):
 
