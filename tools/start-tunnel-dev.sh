@@ -72,16 +72,16 @@ clear_port() {
 }
 
 # Replace server URL with localhost tunnel target, drop CA data + add
-# insecure-skip-tls-verify (the local-port:443 cert isn't valid for
-# `localhost`), rename context/cluster/user to `dev`.
+# insecure-skip-tls-verify (cert isn't valid for `localhost`), rename
+# context/cluster/user to `dev`. Same sed pattern as the proven original.
 process_kubeconfig() {
     local raw_config="$1"
     local local_port="$2"
     local remote_port="$3"
     local context_name="$4"
-    # Strip CR characters first — Windows ssh / non-Linux remotes can ship
-    # CRLF line endings that break the `microk8s$` end-anchor in sed.
-    # `tr -d '\r'` is a no-op on already-clean LF input.
+    # tr -d '\r' is a safety: Linux ssh delivers LF (no-op), but ensures
+    # the `$` end-anchors still match if someone ever runs this on a host
+    # where the remote shell adds CR.
     echo "$raw_config" | tr -d '\r' | sed \
         -e "s|^\(\s*\)server:\s*https://[^:]*:${remote_port}|\1server: https://localhost:${local_port}\n\1insecure-skip-tls-verify: true|" \
         -e '/^\s*certificate-authority-data:/d' \

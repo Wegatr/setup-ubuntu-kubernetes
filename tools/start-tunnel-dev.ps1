@@ -68,31 +68,40 @@ function Clear-Port {
     }
 }
 
-# Replace server URL with localhost tunnel target, drop CA data + add
-# insecure-skip-tls-verify (cert isn't valid for `localhost`), rename
-# context/cluster/user to `dev`.
-function Process-Kubeconfig {
+# Rewrite the raw `microk8s config` output so the local kubectl talks to
+# the SSH tunnel and the context has a sane name. Done via kubectl itself
+# (no regex) — kubectl knows YAML, can rename contexts cleanly, and is
+# immune to CRLF / encoding quirks that bit earlier regex versions.
+function Rewrite-Kubeconfig {
     param(
         [string]$RawConfig,
         [int]$LocalPort,
         [int]$RemotePort,
-        [string]$ContextName
+        [string]$ContextName,
+        [string]$OutPath
     )
-    # Windows ssh client returns CRLF line endings. .NET regex `$` in (?m)
-    # mode anchors before \n only — a trailing \r stays in the match and
-    # breaks anchors like `name: microk8s$`. Normalize to LF first.
-    $RawConfig = $RawConfig -replace "`r`n", "`n" -replace "`r", "`n"
-    $serverPattern = "(?m)^(\s*)server:\s*https://[^:]+:${RemotePort}\s*$"
-    $serverReplace = "`$1server: https://localhost:${LocalPort}`n`$1insecure-skip-tls-verify: true"
-    $result = $RawConfig -replace $serverPattern, $serverReplace
-    $result = $result -replace '(?m)^\s*certificate-authority-data:.*$', ''
-    $result = $result -replace 'name: microk8s-cluster', "name: $ContextName"
-    $result = $result -replace 'cluster: microk8s-cluster', "cluster: $ContextName"
-    $result = $result -replace '(?m)^(\s*)name: microk8s$', "`$1name: $ContextName"
-    $result = $result -replace 'name: admin', "name: $ContextName-admin"
-    $result = $result -replace 'user: admin', "user: $ContextName-admin"
-    $result = $result -replace '(?m)^current-context:.*$', "current-context: $ContextName"
-    return $result
+    # 1. Save raw to a working file. UTF8 no-BOM avoids kubectl YAML parse
+    #    errors on Windows that has historically defaulted to UTF8-BOM.
+    [System.IO.File]::WriteAllText($OutPath, $RawConfig, [System.Text.UTF8Encoding]::new($false))
+
+    # 2. Discover what names microk8s used. Recent versions use
+    #    context=microk8s, cluster=microk8s-cluster, user=admin — but
+    #    parsing is cheap insurance against future drift.
+    $origCtx     = (& kubectl --kubeconfig $OutPath config current-context).Trim()
+    $origCluster = (& kubectl --kubeconfig $OutPath config view --raw -o jsonpath="{.contexts[?(@.name==`"$origCtx`")].context.cluster}").Trim()
+
+    # 3. Rename the context to $ContextName. kubectl handles cluster +
+    #    user references inside the context automatically.
+    if ($origCtx -ne $ContextName) {
+        & kubectl --kubeconfig $OutPath config rename-context $origCtx $ContextName | Out-Null
+    }
+
+    # 4. Point the cluster at the local tunnel + skip-TLS (the remote cert
+    #    isn't valid for `localhost`). set-cluster drops CA data when
+    #    --insecure-skip-tls-verify is set.
+    & kubectl --kubeconfig $OutPath config set-cluster $origCluster `
+        --server="https://localhost:$LocalPort" `
+        --insecure-skip-tls-verify=true | Out-Null
 }
 
 # Step 1: free the local port
@@ -131,17 +140,16 @@ if ([string]::IsNullOrWhiteSpace($RawDevConfig)) {
 }
 Write-Host '   DEV kubeconfig retrieved' -ForegroundColor Green
 
-# Step 5: rewrite for localhost tunnel
+# Step 5: rewrite raw config for localhost tunnel using kubectl
 Write-Host ''
 Write-Host 'Processing DEV kubeconfig...'
-$ProcessedDev = Process-Kubeconfig -RawConfig $RawDevConfig -LocalPort $DevK8sLocalPort -RemotePort $DevK8sRemotePort -ContextName 'dev'
+$Script:TmpConfig = [System.IO.Path]::GetTempFileName()
+Rewrite-Kubeconfig -RawConfig $RawDevConfig -LocalPort $DevK8sLocalPort -RemotePort $DevK8sRemotePort -ContextName 'dev' -OutPath $Script:TmpConfig
 Write-Host "   Server -> https://localhost:$DevK8sLocalPort, context -> dev" -ForegroundColor Green
 
 # Step 6: merge into ~/.kube/config and write the per-context file
 Write-Host ''
 Write-Host 'Merging kubeconfig...'
-$Script:TmpConfig = [System.IO.Path]::GetTempFileName()
-Set-Content -Path $Script:TmpConfig -Value $ProcessedDev -NoNewline
 
 if (Test-Path $KubeConfig) {
     # KUBECONFIG path separator is OS-specific: ';' on Windows, ':' on Linux/macOS.
