@@ -138,12 +138,15 @@ spec:
       # against `allow-tags`, commits the values-<env>.yaml bump,
       # ArgoCD reconciles.
       #
-      # Two transport quirks:
-      #   1. HTTPS not HTTP — chart 1.2.x serves the webhook on TLS
+      # Three transport quirks introduced in v1.2.x:
+      #   1. URL path is `/webhook?type=docker.io` (was `/api/webhook`
+      #      in v0.x/v1.1.x). Without the type= query the handler
+      #      returns HTTP 400 "missing registry type parameter".
+      #   2. HTTPS not HTTP — chart 1.2.x serves the webhook on TLS
       #      with a self-signed cert (no option to disable in v1.2).
       #      `-k` accepts the cert; OK because the Service has no
       #      public Ingress and is only reachable in-cluster.
-      #   2. NetworkPolicy at apps/image-updater/templates/webhook-
+      #   3. NetworkPolicy at apps/image-updater/templates/webhook-
       #      networkpolicy.yaml is required because the chart's
       #      bundled netpol only whitelists the metrics port,
       #      implicitly denying 8080.
@@ -165,7 +168,7 @@ spec:
           -H 'Content-Type: application/json' \
           --max-time 10 \
           --data "{\"push_data\":{\"tag\":\"$(params.image-tag)\"},\"repository\":{\"repo_name\":\"$(params.registry)/$(params.image-name)\"}}" \
-          'https://argocd-image-updater-webhook.image-updater.svc.cluster.local:8080/api/webhook' \
+          'https://argocd-image-updater-webhook.image-updater.svc.cluster.local:8080/webhook?type=docker.io' \
           || echo "WARN: webhook POST failed — Image Updater will not auto-bump this build; trigger manually if needed"
       computeResources:
         requests:
