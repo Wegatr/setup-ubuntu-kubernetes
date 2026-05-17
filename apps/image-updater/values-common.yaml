@@ -90,9 +90,13 @@ externalsecret-git-credentials:
       engineVersion: v2
       data:
         git-username: oauth2
-        # Single-quoted YAML preserves backslashes verbatim, so `\.` reaches
-        # the regex engine as `\.` (escaped literal dot).
-        git-token: '{{ regexReplaceAll "(?s).*https://oauth2:([^@]+)@github\.com.*" .gitcredentials "${1}" }}'
+        # Backticks for the regex pattern: Go template's double-quoted string
+        # literal rules apply Go-string escape processing (\n, \t, etc.), and
+        # `\.` is not a valid Go escape — the template lexer rejects it with
+        # "invalid syntax" BEFORE the regex engine ever sees it. Backticks
+        # are raw string literals: no escape processing, `\.` passes through
+        # to the regex engine intact.
+        git-token: '{{ regexReplaceAll `(?s).*https://oauth2:([^@]+)@github\.com.*` .gitcredentials "${1}" }}'
     data:
       - secretKey: gitcredentials
         property: gitcredentials
