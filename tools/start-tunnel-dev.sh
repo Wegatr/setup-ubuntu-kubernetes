@@ -79,7 +79,10 @@ process_kubeconfig() {
     local local_port="$2"
     local remote_port="$3"
     local context_name="$4"
-    echo "$raw_config" | sed \
+    # Strip CR characters first — Windows ssh / non-Linux remotes can ship
+    # CRLF line endings that break the `microk8s$` end-anchor in sed.
+    # `tr -d '\r'` is a no-op on already-clean LF input.
+    echo "$raw_config" | tr -d '\r' | sed \
         -e "s|^\(\s*\)server:\s*https://[^:]*:${remote_port}|\1server: https://localhost:${local_port}\n\1insecure-skip-tls-verify: true|" \
         -e '/^\s*certificate-authority-data:/d' \
         -e "s|name: microk8s-cluster|name: ${context_name}|g" \

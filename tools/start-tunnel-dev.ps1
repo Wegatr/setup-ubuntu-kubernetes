@@ -78,6 +78,10 @@ function Process-Kubeconfig {
         [int]$RemotePort,
         [string]$ContextName
     )
+    # Windows ssh client returns CRLF line endings. .NET regex `$` in (?m)
+    # mode anchors before \n only — a trailing \r stays in the match and
+    # breaks anchors like `name: microk8s$`. Normalize to LF first.
+    $RawConfig = $RawConfig -replace "`r`n", "`n" -replace "`r", "`n"
     $serverPattern = "(?m)^(\s*)server:\s*https://[^:]+:${RemotePort}\s*$"
     $serverReplace = "`$1server: https://localhost:${LocalPort}`n`$1insecure-skip-tls-verify: true"
     $result = $RawConfig -replace $serverPattern, $serverReplace
