@@ -70,9 +70,16 @@ argocd-image-updater:
 
 # --- ESO secrets ------------------------------------------------------------
 # Git PAT — extracted from the multi-line gitcredentials store the image-
-# builder pipeline uses. ESO template parses `https://<user>:<pat>@<host>`
-# and emits just the <pat> bit as `git-token`. `git-username` is a static
-# label (any value works for HTTPS+PAT against most providers).
+# builder pipeline uses. The file has one `https://<user>:<pat>@<host>` per
+# provider; Image Updater writes back to the GitHub repo, so we pull the
+# GitHub PAT specifically (oauth2 username convention).
+#
+# regexReplaceAll trick: match the WHOLE input (with `(?s)` so `.` crosses
+# newlines), capture just the PAT into group 1, and replace the entire input
+# with the captured group. Sprig's `regexFind` only returns the matched
+# substring (not group), so it can't extract a capture group on its own.
+# `git-username` is a static label — for GitHub HTTPS+PAT auth, "oauth2" or
+# any non-empty username works (GitHub ignores it; the PAT is the auth).
 externalsecret-git-credentials:
   externalSecret:
     enabled: true
@@ -82,9 +89,10 @@ externalsecret-git-credentials:
     template:
       engineVersion: v2
       data:
-        git-username: argocd-image-updater
-        # `{{` escapes Helm so ESO sees a literal Go template at apply time.
-        git-token: '{{ regexFind "https://[^:]+:([^@]+)@" .gitcredentials | regexReplaceAll "https://[^:]+:([^@]+)@" .gitcredentials "${1}" }}'
+        git-username: oauth2
+        # Single-quoted YAML preserves backslashes verbatim, so `\.` reaches
+        # the regex engine as `\.` (escaped literal dot).
+        git-token: '{{ regexReplaceAll "(?s).*https://oauth2:([^@]+)@github\.com.*" .gitcredentials "${1}" }}'
     data:
       - secretKey: gitcredentials
         property: gitcredentials
