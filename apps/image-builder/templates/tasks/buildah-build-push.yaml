@@ -132,34 +132,40 @@ spec:
           memory: 4Gi
 
     - name: notify-image-updater
-      # Event-driven trigger: tell argocd-image-updater (running in
-      # the `argocd` namespace) that a fresh image landed. The
-      # cluster-internal webhook Service has no Ingress — only
-      # reachable from inside the cluster — so no auth header needed
-      # here. Image Updater scans the Application annotations,
-      # validates the new tag against `allow-tags`, commits the
-      # values-<env>.yaml bump, ArgoCD reconciles.
+      # Event-driven trigger: tell argocd-image-updater (in the
+      # `image-updater` ns) that a fresh image landed. Image Updater
+      # scans the Application annotations, validates the new tag
+      # against `allow-tags`, commits the values-<env>.yaml bump,
+      # ArgoCD reconciles.
+      #
+      # Two transport quirks:
+      #   1. HTTPS not HTTP — chart 1.2.x serves the webhook on TLS
+      #      with a self-signed cert (no option to disable in v1.2).
+      #      `-k` accepts the cert; OK because the Service has no
+      #      public Ingress and is only reachable in-cluster.
+      #   2. NetworkPolicy at apps/image-updater/templates/webhook-
+      #      networkpolicy.yaml is required because the chart's
+      #      bundled netpol only whitelists the metrics port,
+      #      implicitly denying 8080.
       #
       # Dockerhub-format payload because Image Updater's webhook
-      # handler accepts that out of the box (the controller routes
-      # by Content-Type / payload shape, not registry hostname).
+      # handler routes by content shape, not registry hostname.
       #
       # `|| true` keeps the pipeline green if the webhook is briefly
-      # unreachable — fallback is the operator manually bumping the
-      # tag, but in practice Image Updater self-recovers on the next
-      # event from a later build.
+      # unreachable — fallback is operator manual bump; next build's
+      # event self-heals.
       image: curlimages/curl:8.18.0
       script: |
         #!/bin/sh
         set -eu
         IMAGE_REF="$(params.registry)/$(params.image-name):$(params.image-tag)"
         echo "Notifying argocd-image-updater of new image: $IMAGE_REF"
-        curl -fsS \
+        curl -fsS -k \
           -X POST \
           -H 'Content-Type: application/json' \
           --max-time 10 \
           --data "{\"push_data\":{\"tag\":\"$(params.image-tag)\"},\"repository\":{\"repo_name\":\"$(params.registry)/$(params.image-name)\"}}" \
-          'http://argocd-image-updater-webhook.image-updater.svc.cluster.local:8080/api/webhook' \
+          'https://argocd-image-updater-webhook.image-updater.svc.cluster.local:8080/api/webhook' \
           || echo "WARN: webhook POST failed — Image Updater will not auto-bump this build; trigger manually if needed"
       computeResources:
         requests:
