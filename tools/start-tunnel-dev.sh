@@ -138,8 +138,20 @@ TMP_DEV_CONFIG=$(mktemp)
 echo "$PROCESSED_DEV" > "$TMP_DEV_CONFIG"
 
 if [[ -f "$KUBECONFIG_PATH" ]]; then
-    # Merge with existing (preserves other contexts).
-    KUBECONFIG="${KUBECONFIG_PATH}:${TMP_DEV_CONFIG}" kubectl config view --flatten > "${KUBECONFIG_PATH}.new"
+    # Merge with existing (preserves other contexts). Write to a sibling
+    # file first so a kubectl error doesn't truncate the real config.
+    if ! KUBECONFIG="${KUBECONFIG_PATH}:${TMP_DEV_CONFIG}" kubectl config view --flatten > "${KUBECONFIG_PATH}.new" 2>&1; then
+        echo -e "${RED}kubectl config view --flatten failed:${NC}"
+        cat "${KUBECONFIG_PATH}.new" || true
+        rm -f "${KUBECONFIG_PATH}.new"
+        echo -e "${YELLOW}Existing ${KUBECONFIG_PATH} may be corrupt — delete it and re-run.${NC}"
+        exit 1
+    fi
+    if [[ ! -s "${KUBECONFIG_PATH}.new" ]]; then
+        echo -e "${RED}Merged config is empty — aborting.${NC}"
+        rm -f "${KUBECONFIG_PATH}.new"
+        exit 1
+    fi
     mv "${KUBECONFIG_PATH}.new" "$KUBECONFIG_PATH"
 else
     cp "$TMP_DEV_CONFIG" "$KUBECONFIG_PATH"

@@ -140,9 +140,19 @@ $Script:TmpConfig = [System.IO.Path]::GetTempFileName()
 Set-Content -Path $Script:TmpConfig -Value $ProcessedDev -NoNewline
 
 if (Test-Path $KubeConfig) {
-    $env:KUBECONFIG = "${KubeConfig}:${Script:TmpConfig}"   # ':' works for kubectl on Win too
-    $merged = & kubectl config view --flatten
+    # KUBECONFIG path separator is OS-specific: ';' on Windows, ':' on Linux/macOS.
+    # ([System.IO.Path]::PathSeparator returns the right char on the current OS.)
+    $sep = [System.IO.Path]::PathSeparator
+    $env:KUBECONFIG = "${KubeConfig}${sep}${Script:TmpConfig}"
+    $merged = & kubectl config view --flatten 2>&1
+    $mergeExit = $LASTEXITCODE
     Remove-Item Env:\KUBECONFIG
+    if ($mergeExit -ne 0 -or [string]::IsNullOrWhiteSpace($merged)) {
+        Write-Host "kubectl config view --flatten failed (exit $mergeExit):" -ForegroundColor Red
+        Write-Host $merged
+        Write-Host "Existing $KubeConfig may be corrupt. Delete it and re-run." -ForegroundColor Yellow
+        exit 1
+    }
     Set-Content -Path $KubeConfig -Value $merged
 } else {
     Copy-Item -Path $Script:TmpConfig -Destination $KubeConfig
