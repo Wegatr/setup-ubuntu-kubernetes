@@ -3,6 +3,19 @@
 TriggerTemplate — common shape consumed by all three provider Triggers. Each
 binding feeds the same five params; the template spawns a PipelineRun.
 
+App-owned pipeline lookup: the Pipeline is NOT defined in this repo. Each
+app ships its own Pipeline manifests in `<source-repo>/deploy/pipelines/
+<image-name>.yaml`, deployed to the `image-builder` namespace by the app's
+own ArgoCD Application. The EventListener simply references the Pipeline
+by name (== image-name == filename basename).
+
+So `X-Image-Name: fleet-backend` looks up Pipeline `fleet-backend` in this
+namespace. fleet-tracker's deploy/pipelines/fleet-backend.yaml provides it.
+
+Platform provides the shared Task library (git-clone, buildah-build-push,
+credential-scan, generate-image-tag, yq-git-bump, logging-summary) in this
+namespace. App pipelines reference those via Tekton's `cluster` resolver.
+
 Workspaces:
   - source : volumeClaimTemplate (10Gi) — fresh per run
 
@@ -22,7 +35,7 @@ spec:
     - name: git-revision
       description: Commit SHA to build.
     - name: image-name
-      description: Image name (no registry, no tag) — typically the repo name OR an X-Image-Name header override for monorepos.
+      description: Image name (no registry, no tag) — typically the repo name OR an X-Image-Name header override for monorepos. MUST match a Pipeline of the same name in this namespace.
     - name: image-version
       description: Semver base; default "0.0.0".
       default: "0.0.0"
@@ -41,8 +54,9 @@ spec:
         namespace: {{ .Release.Namespace }}
         labels:
           app.kubernetes.io/name: image-builder
-          tekton.dev/pipeline: build-pipeline
-          # Filterable by image: `tkn pr list -l image-builder.io/image-name=fleet-backend`
+          # NB: no static `tekton.dev/pipeline` label — the pipeline name
+          # equals image-name dynamically. Filter by image-name:
+          #   tkn pr list -l image-builder.io/image-name=fleet-backend
           image-builder.io/image-name: $(tt.params.image-name)
         annotations:
           # Full repo URL + commit SHA — visible in Dashboard's PR detail.
@@ -54,12 +68,16 @@ spec:
       spec:
         # Auto-prune the PipelineRun + its child TaskRuns + pods 7 days
         # after the run finishes (K8s built-in TTL controller). Prevents
-        # the cluster from accumulating runs indefinitely. To raise/lower:
-        # change the value (in seconds) or adopt a TektonPruner CRD with
-        # per-status retention in a future iteration.
+        # the cluster from accumulating runs indefinitely.
         ttlSecondsAfterFinished: 604800
+        # Pipeline name == image-name (e.g. fleet-backend). Pipeline is
+        # provided by the app's chart (deployed into this namespace by the
+        # app's own ArgoCD Application from <repo>/deploy/pipelines/).
+        # PipelineRun fails fast with "pipelines.tekton.dev not found" if
+        # the app hasn't shipped its pipeline yet — clear signal to fix it
+        # on the app side, not here.
         pipelineRef:
-          name: build-pipeline
+          name: $(tt.params.image-name)
         taskRunTemplate:
           serviceAccountName: {{ .Values.pipeline.serviceAccountName }}
         params:

@@ -5,6 +5,12 @@
 #
 # For repeat builds, prefer the EventListener webhook — this file is only for
 # initial verification / debugging.
+#
+# IMPORTANT: there is no central `build-pipeline` any more. Each app ships its
+# own Pipeline at <source-repo>/deploy/pipelines/<image-name>.yaml, deployed
+# to this namespace via a sibling ArgoCD Application. The `pipelineRef.name`
+# below MUST match an existing Pipeline in this namespace — for fleet, the
+# Pipeline names are `fleet-backend` / `fleet-frontend`.
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
@@ -14,7 +20,7 @@ spec:
   # Auto-prune 7 days after finish — same as webhook-triggered runs.
   ttlSecondsAfterFinished: 604800
   pipelineRef:
-    name: build-pipeline
+    name: fleet-backend          # change to the per-app Pipeline you want to run
   taskRunTemplate:
     serviceAccountName: pipeline-sa
   params:

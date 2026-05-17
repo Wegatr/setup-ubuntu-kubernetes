@@ -10,13 +10,13 @@ MicroK8s specifics:
     config that MicroK8s' default kubelet doesn't expose; vfs is slower but
     just works.
   - BUILDAH_FORMAT=oci. Default docker manifest format works too but oci is
-    the modern default and Trivy handles both.
+    the modern default.
   - privileged: true. Buildah needs CAP_SYS_ADMIN for the underlying chroot
     operations. PodSecurityStandards on MicroK8s default-allow this; if you
     enable PSA, mark the image-builder namespace `privileged`.
 
-The image-digest result is consumed by trivy-scan (scans by digest, not tag,
-to avoid TOCTOU between push and scan).
+The image-digest + image-reference results are consumed by downstream
+write-back tasks (yq-git-bump) in the app's own pipeline.
 */ -}}
 apiVersion: tekton.dev/v1
 kind: Task
@@ -130,50 +130,3 @@ spec:
         limits:
           cpu: "2"
           memory: 4Gi
-
-    - name: notify-image-updater
-      # Event-driven trigger: tell argocd-image-updater (in the
-      # `image-updater` ns) that a fresh image landed. Image Updater
-      # scans the Application annotations, validates the new tag
-      # against `allow-tags`, commits the values-<env>.yaml bump,
-      # ArgoCD reconciles.
-      #
-      # Three transport quirks introduced in v1.2.x:
-      #   1. URL path is `/webhook?type=docker.io` (was `/api/webhook`
-      #      in v0.x/v1.1.x). Without the type= query the handler
-      #      returns HTTP 400 "missing registry type parameter".
-      #   2. HTTPS not HTTP — chart 1.2.x serves the webhook on TLS
-      #      with a self-signed cert (no option to disable in v1.2).
-      #      `-k` accepts the cert; OK because the Service has no
-      #      public Ingress and is only reachable in-cluster.
-      #   3. NetworkPolicy at apps/image-updater/templates/webhook-
-      #      networkpolicy.yaml is required because the chart's
-      #      bundled netpol only whitelists the metrics port,
-      #      implicitly denying 8080.
-      #
-      # Dockerhub-format payload because Image Updater's webhook
-      # handler routes by content shape, not registry hostname.
-      #
-      # `|| true` keeps the pipeline green if the webhook is briefly
-      # unreachable — fallback is operator manual bump; next build's
-      # event self-heals.
-      image: curlimages/curl:8.18.0
-      script: |
-        #!/bin/sh
-        set -eu
-        IMAGE_REF="$(params.registry)/$(params.image-name):$(params.image-tag)"
-        echo "Notifying argocd-image-updater of new image: $IMAGE_REF"
-        curl -fsS -k \
-          -X POST \
-          -H 'Content-Type: application/json' \
-          --max-time 10 \
-          --data "{\"push_data\":{\"tag\":\"$(params.image-tag)\"},\"repository\":{\"repo_name\":\"$(params.registry)/$(params.image-name)\"}}" \
-          'https://argocd-image-updater-webhook.image-updater.svc.cluster.local:8080/webhook?type=docker.io' \
-          || echo "WARN: webhook POST failed — Image Updater will not auto-bump this build; trigger manually if needed"
-      computeResources:
-        requests:
-          cpu: 10m
-          memory: 16Mi
-        limits:
-          cpu: 100m
-          memory: 64Mi

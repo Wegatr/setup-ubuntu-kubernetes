@@ -109,7 +109,6 @@ auto-update on each install.
 | Prometheus-community mongodb-exporter chart | `3.7.0` | `apps/mongodb/Chart.yaml` | |
 | Prometheus-community redis-exporter chart | `6.5.0` | `apps/redis/Chart.yaml` | |
 | Headlamp / ArgoCD / Vault Helm charts | (no pin — `helm install` latest at deploy time) | `setup-kubernetes/lib/deploy-{kube,argocd,vault}.sh` | Re-running `--deploy-<app>` after a chart release picks up the new version. |
-| ArgoCD Image Updater chart (controller) | `1.2.1` / `v1.2.0` | `apps/image-updater/Chart.yaml` deps[argocd-image-updater].version | GitOps-managed, sync wave 25, runs in `image-updater` namespace. Bumps via Chart.yaml + ArgoCD reconcile. |
 | cert-manager / Traefik | MicroK8s addon defaults | snap addon | Tied to MicroK8s channel. |
 
 ## Hardcoded constraints — DO NOT change without asking
@@ -335,45 +334,47 @@ auto-update on each install.
   is already populated on every cluster by the unified secrets-seed file;
   re-running `--seed-vault` after a namespace name change picks up the
   new bound_service_account_namespaces entry.
-- **ArgoCD Image Updater is GitOps-managed, OPT-IN per app, EVENT-DRIVEN**:
-  the controller lives at `apps/image-updater/` (sync wave 25, sibling to
-  `apps/image-builder/`) — NOT in `setup-kubernetes/`. Helm release runs in
-  a dedicated `image-updater` namespace. Reuses `IMAGE_BUILDER_GIT_CREDENTIALS`
-  for git write-back (ESO extracts the PAT from the multi-line
-  git-credentials-store value via `regexFind` template) and pulls Zot creds
-  from Vault path `<env>/app/registry`. No new secret rotation surface.
+- **App-owned build pipelines (the contract)**: the platform's
+  `apps/image-builder/` provides ONLY the EventListener + Trigger plumbing
+  and a shared Task library (`git-clone`, `generate-image-tag`,
+  `credential-scan`, `buildah-build-push`, `yq-git-bump`, `logging-summary`)
+  in the `image-builder` namespace. It does NOT define any Pipeline —
+  Pipelines live in each app's source repo at
+  `deploy/pipelines/<image-name>.yaml` and are deployed to the
+  `image-builder` namespace by the app's own ArgoCD Application
+  (sibling to its workload chart Application).
 
-  Architecturally safe as GitOps (unlike Authentik / Vault / ArgoCD itself):
-  Image Updater doesn't gate any login or block the bootstrap, so its
-  failure mode is "tag bumps stop happening" — never "cluster recovery
-  blocked." Add `image-updater` to `EXTERNAL_ESO_NAMESPACES` in
-  `configs/config.<env>` so ESO inside the namespace can authenticate
-  against Vault.
+  The EventListener routes webhooks by `image-name`: when an Azure DevOps
+  webhook fires with `X-Image-Name: fleet-backend`, the TriggerTemplate
+  spawns a PipelineRun with `pipelineRef.name: fleet-backend` — which
+  resolves to the Pipeline that fleet-tracker shipped via its
+  `deploy/pipelines/fleet-backend.yaml`. App pipelines reference platform
+  Tasks via Tekton's `cluster` resolver (no auth needed; resolver allows
+  cross-namespace by default — see `tekton-resolvers/cluster-resolver-config`
+  ConfigMap with `allowed-namespaces: ""`).
 
-  **Event-driven, NOT polling**: the controller runs with `--interval=0
-  --enable-webhook --webhook-port=8080`. The cluster-internal Service
-  `argocd-image-updater-webhook.image-updater.svc.cluster.local:8080`
-  exposes `/api/webhook` for in-cluster callers ONLY (no Ingress, no
-  public hostname). The Tekton `buildah-build-push` task POSTs a
-  dockerhub-format event after every successful push (final step
-  `notify-image-updater`), Image Updater reads the Application
-  annotations, rewrites `apps/<app>/values-<env>.yaml`, commits + pushes
-  to git, ArgoCD reconciles. End-to-end latency: a few seconds, vs
-  minutes with the default poll interval. Failure mode: if the webhook
-  is briefly unreachable, the pipeline step logs a warning but stays
-  green — operator retriggers manually or the NEXT build's event
-  self-heals.
+  Tag bumps happen INSIDE the pipeline itself: each app pipeline's final
+  step calls `yq-git-bump` (cluster-resolved from `image-builder` ns) with
+  `{repo-url, branch, file-path, yaml-path, new-value}`. The task clones
+  the target repo with the existing `image-builder-git-https` PAT, runs
+  `yq -i`, commits, pushes back, retries on push-conflict with rebase.
+  ArgoCD picks up the commit and rolls the deployment. No image-updater,
+  no annotations, no controller. End-to-end latency: ~5-10s after the
+  build's `bump` step completes.
 
-  The webhook Service is defined at `apps/image-updater/templates/
-  webhook-service.yaml` (the upstream chart's bundled Service only carries
-  the metrics port; we add the sibling :8080 one). `serverAddress:
-  argocd-server.argocd` in `values-common.yaml` points the controller
-  cross-namespace at ArgoCD.
+  Onboarding a new app:
+  1. App repo ships `deploy/pipelines/<image-name>.yaml` per build target
+  2. App repo ships a sibling ArgoCD Application (alongside its workload
+     Application) that syncs `deploy/pipelines/` to `image-builder` ns
+  3. Webhook subscription on the provider side sets
+     `X-Image-Name: <image-name>` matching the Pipeline filename
+  4. Image-builder PAT must have Code: Read & Write on the app's repo
+     (for `yq-git-bump` to push back). Add the credential line to the
+     `IMAGE_BUILDER_GIT_CREDENTIALS` heredoc in `configs/secrets.<env>`
+     and re-run `--seed-vault`.
 
-  Per-app annotation block syntax lives under "When you change the GitOps
-  tree" below; only apps that consume Zot-built images add the
-  `imageUpdater:` field. Apps pinning upstream Bitnami / Grafana /
-  public-registry versions stay manual (default).
+  See `/home/server/repos/fleet-tracker/deploy/pipelines/` for working
+  examples. fleet-tracker is the reference implementation.
 
 ## Pre-flight requirements the script cannot fix
 
@@ -517,34 +518,14 @@ Same idempotency rule. Specific patterns to model:
   Chart.yaml + values + templates structure, then append one element to
   every `argocd/<env>/apps/applicationset.yaml` list. No new ArgoCD
   Application file per app — the ApplicationSet generates them.
-- **Auto-tag-bump for a Zot-built image** — if the new app consumes an
-  image pushed by `apps/image-builder/` to Zot, add an `imageUpdater:`
-  block to its ApplicationSet entry to have the platform's Image Updater
-  controller (GitOps-managed at `apps/image-updater/`, running in the
-  `image-updater` namespace) auto-commit tag bumps back to
-  `apps/<name>/values-<env>.yaml`. Example:
-  ```yaml
-  - name: fleet
-    syncWave: "40"
-    namespace: fleet
-    prune: "true"
-    createNamespace: "true"
-    specialOptions: ""
-    imageUpdater:
-      images:
-        - alias: backend
-          repository: zot.dev.digitaplatform.com/fleet-backend
-          helmImageName: images.backend.repository
-          helmImageTag: images.backend.tag
-        - alias: frontend
-          repository: zot.dev.digitaplatform.com/fleet-frontend
-          helmImageName: images.frontend.repository
-          helmImageTag: images.frontend.tag
-  ```
-  Apps without an `imageUpdater:` block are NOT watched (default opt-in).
-  Apps that pin upstream Bitnami / Grafana / public-registry versions
-  (mongodb / postgresql / redis / observability / etc.) MUST NOT add the
-  block — auto-update would pull breaking changes from upstream.
+- **Auto-tag-bump for a Zot-built image** — not handled in this repo any
+  more. App pipelines bump themselves: each app's
+  `<repo>/deploy/pipelines/<image-name>.yaml` ends with a `yq-git-bump`
+  Task call that commits the new tag back to the app's own values file.
+  See the "App-owned build pipelines (the contract)" section under
+  Hardcoded constraints above, and
+  `/home/server/repos/fleet-tracker/deploy/pipelines/fleet-backend.yaml`
+  as the reference implementation.
 - **Adding a new platform constant** — add it under `global:` in
   `platform/values-common.yaml` (or per-env if env-specific). Reference
   via `.Values.global.<key>` in chart templates. For upstream charts that

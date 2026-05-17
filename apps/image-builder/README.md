@@ -28,6 +28,12 @@ via `tkn` / `curl` / `kubectl apply`.
 
 ## Architecture
 
+The platform owns webhook routing + a shared Task library. The Pipeline
+that wires those Tasks together lives in each **app's** source repo at
+`deploy/pipelines/<image-name>.yaml` and is applied to this namespace by
+the app's own ArgoCD Application. The EventListener resolves the Pipeline
+by name (== image-name).
+
 ```mermaid
 flowchart LR
     Webhook["Git push<br/>(GitHub / Bitbucket / Azure DevOps)"] --> EL[EventListener<br/>build.&lt;env&gt;.&lt;domain&gt;]
@@ -37,17 +43,24 @@ flowchart LR
     TG --> TT[TriggerTemplate<br/>image-build]
     TB --> TT
     TA --> TT
-    TT -->|spawn| PR[PipelineRun]
+    TT -->|spawn PipelineRun<br/>pipelineRef.name=image-name| PR[App-owned Pipeline<br/>e.g. fleet-backend]
 
-    PR --> Clone[git-clone]
-    Clone --> Tag[generate-image-tag]
-    Clone --> Gitleaks[credential-scan]
-    Tag --> Build[buildah-build-push]
+    PR --> Clone["clone<br/><i>cluster-resolver →<br/>image-builder/git-clone</i>"]
+    Clone --> Tag["tag<br/><i>generate-image-tag</i>"]
+    Clone --> Gitleaks["gitleaks<br/><i>credential-scan</i>"]
+    Tag --> Build["build<br/><i>buildah-build-push</i>"]
     Gitleaks --> Build
-    Build --> Summary[logging-summary]
+    Build --> Bump["bump<br/><i>yq-git-bump<br/>commits new tag<br/>to app's values.yaml</i>"]
 
-    Build -->|push| Registry[(Zot OCI registry<br/>zot.dev.&lt;domain&gt;)]
+    Build -->|push image| Registry[(Zot OCI registry<br/>zot.dev.&lt;domain&gt;)]
+    Bump -->|git push| AppRepo[(app source repo<br/>deploy/chart/values.yaml)]
+    AppRepo --> ArgoCD[ArgoCD reconciles<br/>→ rolling update]
 ```
+
+Task library shipped by this app (referenced by every app pipeline via
+`resolver: cluster, namespace: image-builder`): `git-clone`,
+`generate-image-tag`, `credential-scan`, `buildah-build-push`,
+`yq-git-bump`, `logging-summary`.
 
 Public entry point (Phase A — DEV cluster only):
 
@@ -347,12 +360,16 @@ Expected: HTTP 202; PipelineRun appears within ~5s.
 
 ### Via `tkn`
 
+Replace `<image-name>` with whichever Pipeline you want to run — the Pipeline
+must already exist in this namespace, deployed by the app's own ArgoCD
+Application from `<source-repo>/deploy/pipelines/<image-name>.yaml`.
+
 ```bash
-tkn -n image-builder pipeline start build-pipeline \
+tkn -n image-builder pipeline start <image-name> \
   --serviceaccount pipeline-sa \
   -p git-url=https://github.com/org/repo.git \
   -p git-revision=main \
-  -p image-name=myapp \
+  -p image-name=<image-name> \
   -p image-version=1.0.0 \
   --workspace name=source,volumeClaimTemplateFile=- <<'EOF'
 spec:

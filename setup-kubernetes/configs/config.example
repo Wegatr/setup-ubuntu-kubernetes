@@ -251,13 +251,6 @@ IDP_BOOTSTRAP_EMAIL="user@example.com"
 # `--seed-vault` appends these to `bound_service_account_namespaces` on the
 # `external-secrets` Vault role. Re-run --seed-vault whenever the list changes.
 # Empty array = none (default).
-#
-# Common entries:
-#   - `image-updater` — the GitOps-managed apps/image-updater/ controller
-#     reads git PAT + Zot pull creds via ESO. Add this to every host that
-#     deploys apps/image-updater/ (DEV today; test/prod when extended).
-#   - `<tenant-app>` — a workload managed by a separate GitOps repo that
-#     needs Vault-backed secrets.
 EXTERNAL_ESO_NAMESPACES=()
 
 # Vault PersistentVolumeClaim size.
