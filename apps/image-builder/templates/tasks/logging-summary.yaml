@@ -35,11 +35,17 @@ spec:
       default: success
   steps:
     - name: summarize
-      image: alpine/jq:1.7.1
+      # alpine/jq was deleted from Docker Hub (May 2026 — namespace
+      # 404s on the v2 API). Plain alpine + `apk add jq` is the same
+      # pattern other tasks use and isn't tied to a maintainer-orphaned
+      # image. apk install is sub-second on the alpine base layer.
+      image: alpine:3.21
       workingDir: /workspace/source
       script: |
         #!/usr/bin/env sh
         set -eu
+
+        apk add --no-cache --quiet jq >/dev/null
 
         jq -n \
           --arg git_url        "$(params.git-url)" \
