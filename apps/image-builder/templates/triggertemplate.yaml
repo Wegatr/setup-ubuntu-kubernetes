@@ -33,11 +33,24 @@ spec:
     - apiVersion: tekton.dev/v1
       kind: PipelineRun
       metadata:
-        generateName: build-
+        # Embed image-name in the PR name so `tkn pr list` and Tekton
+        # Dashboard's list view make it obvious which app each run builds
+        # — e.g. `build-fleet-frontend-abc12` instead of `build-abc12`.
+        # K8s name limit is 253; image-name is typically <30 chars.
+        generateName: build-$(tt.params.image-name)-
         namespace: {{ .Release.Namespace }}
         labels:
           app.kubernetes.io/name: image-builder
           tekton.dev/pipeline: build-pipeline
+          # Filterable by image: `tkn pr list -l image-builder.io/image-name=fleet-backend`
+          image-builder.io/image-name: $(tt.params.image-name)
+        annotations:
+          # Full repo URL + commit SHA — visible in Dashboard's PR detail.
+          # Annotations (not labels) because git-url contains slashes/colons
+          # which aren't valid label values, and full SHAs are 40 chars
+          # which is fine for either but cleaner as annotations.
+          image-builder.io/git-url: $(tt.params.git-url)
+          image-builder.io/git-revision: $(tt.params.git-revision)
       spec:
         # Auto-prune the PipelineRun + its child TaskRuns + pods 7 days
         # after the run finishes (K8s built-in TTL controller). Prevents
