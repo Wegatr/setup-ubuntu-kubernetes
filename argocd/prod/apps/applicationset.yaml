@@ -31,6 +31,7 @@ spec:
           # below — the bundled SecretStore CRD's OpenAPI schema exceeds
           # the 262 KB last-applied-configuration annotation limit.
           - name: external-secrets
+            project: core
             syncWave: "1"
             namespace: external-secrets
             prune: "true"
@@ -38,6 +39,7 @@ spec:
             specialOptions: "external-secrets"
 
           - name: coredns
+            project: core
             syncWave: "5"
             namespace: kube-system
             prune: "false"
@@ -45,6 +47,7 @@ spec:
             specialOptions: ""
 
           - name: mongodb
+            project: data
             syncWave: "10"
             namespace: mongodb
             prune: "true"
@@ -52,6 +55,7 @@ spec:
             specialOptions: ""
 
           - name: postgresql
+            project: data
             syncWave: "10"
             namespace: postgresql
             prune: "true"
@@ -59,6 +63,7 @@ spec:
             specialOptions: ""
 
           - name: postfix
+            project: services
             syncWave: "20"
             namespace: postfix
             prune: "true"
@@ -66,6 +71,7 @@ spec:
             specialOptions: ""
 
           - name: redis
+            project: data
             syncWave: "20"
             namespace: redis
             prune: "true"
@@ -73,6 +79,7 @@ spec:
             specialOptions: ""
 
           - name: seq
+            project: services
             syncWave: "20"
             namespace: seq
             prune: "true"
@@ -80,6 +87,7 @@ spec:
             specialOptions: ""
 
           - name: dbgate
+            project: services
             syncWave: "30"
             namespace: dbgate
             prune: "true"
@@ -87,6 +95,7 @@ spec:
             specialOptions: ""
 
           - name: observability
+            project: observability
             syncWave: "30"
             namespace: observability
             prune: "true"
@@ -102,7 +111,7 @@ spec:
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
-      project: default
+      project: "{{ .project }}"
       sources:
         # `&repo` / `&branch` anchors are reused by the second source below —
         # the repo URL literal appears once per ApplicationSet.

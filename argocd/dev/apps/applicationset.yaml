@@ -36,6 +36,7 @@ spec:
           # schema is ~580 KB which exceeds the 262 KB
           # last-applied-configuration annotation limit on client-side apply.
           - name: external-secrets
+            project: core
             syncWave: "1"
             namespace: external-secrets
             prune: "true"
@@ -52,6 +53,7 @@ spec:
           # Wave 3 — Tekton operator + CRDs. Must exist before image-builder
           # (wave 25) creates Pipelines / Tasks / EventListeners.
           - name: tekton
+            project: cicd
             syncWave: "3"
             namespace: tekton
             prune: "true"
@@ -60,6 +62,7 @@ spec:
 
           # Wave 5 — DNS must resolve before any ESO/SecretStore tries Vault.
           - name: coredns
+            project: core
             syncWave: "5"
             namespace: kube-system
             prune: "false"
@@ -74,6 +77,7 @@ spec:
           # seeded into their own Vaults. Must be Ready before any wave-10+
           # workload that pulls a private image.
           - name: registry
+            project: cicd
             syncWave: "7"
             namespace: registry
             prune: "true"
@@ -82,6 +86,7 @@ spec:
 
           # Wave 10 — Core data stores. Independent peers.
           - name: mongodb
+            project: data
             syncWave: "10"
             namespace: mongodb
             prune: "true"
@@ -89,6 +94,7 @@ spec:
             specialOptions: ""
 
           - name: postgresql
+            project: data
             syncWave: "10"
             namespace: postgresql
             prune: "true"
@@ -97,6 +103,7 @@ spec:
 
           # Wave 20 — Adjacent platform services.
           - name: postfix
+            project: services
             syncWave: "20"
             namespace: postfix
             prune: "true"
@@ -104,6 +111,7 @@ spec:
             specialOptions: ""
 
           - name: redis
+            project: data
             syncWave: "20"
             namespace: redis
             prune: "true"
@@ -111,6 +119,7 @@ spec:
             specialOptions: ""
 
           - name: seq
+            project: services
             syncWave: "20"
             namespace: seq
             prune: "true"
@@ -122,6 +131,7 @@ spec:
           # logging available; before wave-30 UIs that may consume newly-
           # built images.
           - name: image-builder
+            project: cicd
             syncWave: "25"
             namespace: image-builder
             prune: "true"
@@ -130,6 +140,7 @@ spec:
 
           # Wave 30 — UIs + observability stack.
           - name: dbgate
+            project: services
             syncWave: "30"
             namespace: dbgate
             prune: "true"
@@ -139,6 +150,7 @@ spec:
           # observability triggers extra patch (ignoreDifferences + ServerSideApply)
           # in templatePatch below.
           - name: observability
+            project: observability
             syncWave: "30"
             namespace: observability
             prune: "true"
@@ -154,7 +166,7 @@ spec:
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
-      project: default
+      project: "{{ .project }}"
       sources:
         # Values-only source: makes `$values/...` resolvable inside the chart
         # source's helm.valueFiles list below. The `&repo` / `&branch` YAML
