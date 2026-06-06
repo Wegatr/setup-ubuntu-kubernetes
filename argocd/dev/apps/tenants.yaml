@@ -1,0 +1,57 @@
+# ArgoCD AppProjects for TENANT apps (DEV cluster).
+#
+# This cluster is multi-tenant across MULTIPLE TEAMS — business apps deployed
+# on top of the platform, each from its own (often external) git repo. Because
+# the teams are independent, every tenant app gets its OWN AppProject so it is
+# isolated from the others: pinned to its own repo, allowed only in its own
+# namespace(s), and unable to create cluster-scoped resources.
+#
+# These are PLATFORM-OWNED on purpose: the permission boundary is defined here,
+# not in the tenant's repo (a tenant must not be able to widen its own scope).
+# The tenant's Application (which lives in the tenant's repo) only REFERENCES
+# the project via spec.project: <name>.
+#
+# Distinct from argocd/<env>/apps/projects.yaml, which groups the PLATFORM's
+# own apps (core/data/services/observability/cicd) — a different concern.
+#
+# Applied by root-app.yaml's directory sync (this file sits in argocd/dev/apps/).
+# sync-wave -1 so the project exists before the tenant Application references it.
+#
+# ── Onboarding a new tenant app ──────────────────────────────────────────────
+# 1. Add an AppProject block below: name = app, sourceRepos = that team's repo
+#    ONLY, destinations = the app's namespace(s) + `image-builder` if it ships
+#    build pipelines, clusterResourceWhitelist: [] (unless it genuinely needs a
+#    CRD — then add that specific kind and review why).
+# 2. Add the app's namespace to EXTERNAL_ESO_NAMESPACES in
+#    setup-kubernetes/configs/config.<env> and re-run `--seed-vault`
+#    (Vault ESO binding — separate from this project).
+# 3. In the tenant's own repo, set the Application's spec.project: <name>.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: fleet
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Tenant — fleet-tracking (simetrix-gmbh). Business app; namespaced only.
+  sourceRepos:
+    - https://dev.azure.com/simetrix-gmbh/fleet-tracker/_git/fleet-tracker
+  destinations:
+    # Helm chart renders into the `fleet` namespace.
+    - server: https://kubernetes.default.svc
+      namespace: fleet
+    # The multi-source Application also applies its build Pipelines, which carry
+    # metadata.namespace: image-builder (deploy/pipelines/*.yaml).
+    - server: https://kubernetes.default.svc
+      namespace: image-builder
+  # Business app: creates nothing cluster-scoped (verified — Deployment/Service/
+  # Ingress/IngressRouteTCP/PVC/SecretStore/SA/ExternalSecret + Tekton Pipelines,
+  # all namespaced).
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
