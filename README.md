@@ -57,9 +57,13 @@ All examples below use `<env>` as a placeholder — replace with one of
     ├── dev/
     │   ├── root-app.yaml         App-of-Apps entry point (kubectl apply once).
     │   └── apps/
-    │       └── applicationset.yaml   Generates one Application per app.
-    ├── test/  (same shape)
-    └── prod/  (same shape)
+    │       ├── applicationset.yaml   Generates one Application per app.
+    │       ├── projects.yaml         AppProjects for the platform's own apps
+    │       │                         (core/data/services/observability/cicd).
+    │       └── tenants.yaml          One AppProject per external tenant app
+    │                                 (e.g. fleet). dev only.
+    ├── test/  (same shape; no cicd/tenant projects)
+    └── prod/  (same shape; no cicd/tenant projects)
 ```
 
 The scripts inside `setup-kubernetes/` compute their own `SCRIPT_DIR`, so you
@@ -410,11 +414,25 @@ hold per-env overrides.
 - `root-app.yaml` — single `Application` resource that points at the
   `argocd/<env>/apps/` directory. Apply once with `kubectl apply -f`.
 - `apps/applicationset.yaml` — `ApplicationSet` with a list generator that
-  enumerates every app + its sync wave, namespace, etc. Generates one
-  `Application` per entry. Uses the `goTemplate: true` syntax + a
+  enumerates every app + its sync wave, namespace, `project`, etc. Generates
+  one `Application` per entry. Uses the `goTemplate: true` syntax + a
   `templatePatch` for per-app conditionals (e.g. observability gets
   `ServerSideApply=true` and `ignoreDifferences` for kube-prometheus-stack
   StatefulSet drift).
+- `apps/projects.yaml` — `AppProject` resources grouping the platform's own
+  apps by blast-radius tier: **core** (external-secrets, coredns), **data**
+  (mongodb, postgresql, redis), **services** (postfix, seq, dbgate),
+  **observability**, **cicd** (tekton, registry, image-builder — dev only).
+  Each pins `sourceRepos` to this repo, `destinations` to the exact namespaces
+  its apps use, and the cluster-scoped resource kinds they may create
+  (`data`/`services`: none). The ApplicationSet sets `project: "{{ .project }}"`
+  per element, so nothing runs in the wide-open `default` project.
+- `apps/tenants.yaml` — one **platform-owned** `AppProject` per external
+  tenant app (apps from other teams, in their own repos — e.g. `fleet`). The
+  tenant's Application lives in the tenant's repo and only references the
+  project by name; defining the boundary platform-side stops a tenant from
+  widening its own scope. `clusterResourceWhitelist: []` keeps tenants
+  namespaced-only even when `destinations` is `'*'`. dev only so far.
 
 The `sources:` array uses ArgoCD's multi-source feature with a `$values` ref
 so every app's chart automatically loads `platform/values-common.yaml` +
@@ -428,7 +446,14 @@ of truth for platform constants, no copy-paste.
 - **Change a per-env Vault URL** — `platform/values-<env>.yaml`.
 - **Add a new app** — drop a new `apps/<name>/` dir following the existing
   pattern, then append one entry to each
-  `argocd/<env>/apps/applicationset.yaml`'s element list.
+  `argocd/<env>/apps/applicationset.yaml`'s element list. Each entry needs a
+  `project:` naming one of the AppProjects in `apps/projects.yaml`
+  (core/data/services/observability/cicd) — there is no `default` fallback.
+- **Onboard an app from another team** — add a platform-owned `AppProject` to
+  `argocd/<env>/apps/tenants.yaml` (sourceRepos = that team's repo,
+  `clusterResourceWhitelist: []`), add its namespace(s) to
+  `EXTERNAL_ESO_NAMESPACES` in `configs/config.<env>` + re-run `--seed-vault`,
+  and have the team's own Application set `spec.project: <tenant>`.
 - **Tune an existing app** — edit its `apps/<name>/values-{common,env}.yaml`.
 
 ## Cross-cluster image distribution

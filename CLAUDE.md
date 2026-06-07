@@ -53,7 +53,13 @@ argocd/{dev,test,prod}/  Per-env GitOps bootstrap: root-app.yaml (App-of-Apps
                          entry point) + apps/applicationset.yaml (single
                          ApplicationSet that generates one Application per
                          app, with sync waves, prune/createNamespace flags,
-                         and a templatePatch for per-app conditionals).
+                         and a templatePatch for per-app conditionals) +
+                         apps/projects.yaml (AppProjects grouping the
+                         platform's OWN apps by blast-radius tier:
+                         core/data/services/observability/cicd) +
+                         apps/tenants.yaml (one platform-owned AppProject per
+                         external tenant app, e.g. fleet). cicd + tenant
+                         projects exist on dev only.
 ```
 
 ## Two-host context (important)
@@ -537,7 +543,41 @@ Same idempotency rule. Specific patterns to model:
 - **Adding a new app** — drop `apps/<name>/` following any existing app's
   Chart.yaml + values + templates structure, then append one element to
   every `argocd/<env>/apps/applicationset.yaml` list. No new ArgoCD
-  Application file per app — the ApplicationSet generates them.
+  Application file per app — the ApplicationSet generates them. Each element
+  MUST carry a `project:` field naming one of the AppProjects in
+  `apps/projects.yaml` (`core` / `data` / `services` / `observability` /
+  `cicd`) — the template sets `project: "{{ .project }}"`, there is NO
+  `default` fallback. Pick the tier by what the app deploys: data stores →
+  `data`, support services → `services`, cluster-foundational (CRDs/RBAC,
+  kube-system) → `core`, monitoring → `observability`, build plane (dev) →
+  `cicd`.
+- **AppProjects (blast-radius + multi-team boundary)** — generated apps are
+  pinned to purpose-scoped AppProjects, never the wide-open `default`.
+  `core` / `observability` / `cicd` whitelist the cluster-scoped kinds their
+  charts actually ship (CRDs, ClusterRole/Binding, admission webhooks, Tekton
+  `ClusterInterceptor`, `Namespace`); `data` / `services` have
+  `clusterResourceWhitelist: []` (namespaced only — the real isolation win).
+  `destinations` lists the exact namespaces each tier deploys to — INCLUDING
+  `kube-system` for `observability` (kube-prometheus-stack's coredns/kubelet
+  scrape Services) and `core` (coredns Corefile). When a chart starts emitting
+  a new cluster-scoped kind or writes to a new namespace, the owning project
+  must allow it or sync fails with `… is not permitted in project`. Always
+  derive the list from the REAL rendered manifests (grep the vendored YAML /
+  `helm template`), not assumptions — that gap is what caused the
+  ClusterInterceptor + kube-system misses on first rollout.
+- **Onboarding a tenant app (multi-team)** — the cluster hosts apps from
+  multiple independent teams, each from its own repo (fleet is the first; see
+  project memory `multi-team-tenant-argocd-projects`). Each tenant gets its
+  OWN platform-owned AppProject in `argocd/<env>/apps/tenants.yaml`:
+  `sourceRepos` pinned to that team's repo, `clusterResourceWhitelist: []`,
+  and `destinations` either the app's explicit namespaces OR `namespace: '*'`
+  for a team that self-services many of its own namespaces (the `'*'` widens
+  NAMESPACE reach, NOT resource KIND — cluster isolation still holds via the
+  empty cluster whitelist). The tenant's own Application(s) set
+  `spec.project: <tenant>`. Defining the project platform-side is deliberate:
+  a tenant must not be able to widen its own boundary. Also add the tenant's
+  namespace(s) to `EXTERNAL_ESO_NAMESPACES` in `configs/config.<env>` +
+  re-run `--seed-vault` (Vault ESO binding, separate from the project).
 - **Auto-tag-bump for a Zot-built image** — not handled in this repo any
   more. App pipelines bump themselves: each app's
   `<repo>/deploy/pipelines/<image-name>.yaml` ends with a `yq-git-bump`
