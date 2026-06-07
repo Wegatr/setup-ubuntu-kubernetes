@@ -41,16 +41,17 @@ spec:
   sourceRepos:
     - https://dev.azure.com/simetrix-gmbh/fleet-tracker/_git/fleet-tracker
   destinations:
-    # Helm chart renders into the `fleet` namespace.
+    # Self-service namespaces: the fleet team owns several namespaces (fleet
+    # workloads, osm map stack, build Pipelines in image-builder, future ones)
+    # and may deploy to ANY namespace it creates — no per-namespace platform
+    # edit. The isolation that matters is kept below: clusterResourceWhitelist
+    # stays empty, so this tenant still cannot create cluster-scoped resources.
     - server: https://kubernetes.default.svc
-      namespace: fleet
-    # The multi-source Application also applies its build Pipelines, which carry
-    # metadata.namespace: image-builder (deploy/pipelines/*.yaml).
-    - server: https://kubernetes.default.svc
-      namespace: image-builder
+      namespace: '*'
   # Business app: creates nothing cluster-scoped (verified — Deployment/Service/
-  # Ingress/IngressRouteTCP/PVC/SecretStore/SA/ExternalSecret + Tekton Pipelines,
-  # all namespaced).
+  # Ingress/IngressRoute/Middleware/Certificate/NetworkPolicy/PVC/SecretStore/
+  # SA/Role/RoleBinding/CronJob/StatefulSet + Tekton Pipelines, all namespaced).
+  # The '*' destination widens NAMESPACE reach, not resource KIND reach.
   clusterResourceWhitelist: []
   namespaceResourceWhitelist:
     - group: "*"
