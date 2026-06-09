@@ -45,7 +45,7 @@ syncs, but be aware on first-time bootstraps where waves race.
    PIPELINES_VERSION=v1.12.0
    TRIGGERS_VERSION=v0.35.0
    INTERCEPTORS_VERSION=v0.35.0
-   DASHBOARD_VERSION=v0.68.0
+   DASHBOARD_VERSION=v0.69.0
 
    curl -fsSL -o apps/tekton/templates/release-pipelines.yaml \
      "https://github.com/tektoncd/pipeline/releases/download/${PIPELINES_VERSION}/release.yaml"

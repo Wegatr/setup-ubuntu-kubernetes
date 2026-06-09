@@ -110,7 +110,7 @@ auto-update on each install.
 | Tekton Pipelines | `v1.12.0` | `apps/tekton/values-common.yaml` `release.pipelinesVersion` (informational) + vendored YAML in `templates/release-pipelines.yaml` | Refresh procedure in `apps/tekton/README.md`. |
 | Tekton Triggers | `v0.35.0` | same place | |
 | Tekton Interceptors | `v0.35.0` | same place | |
-| Tekton Dashboard | `v0.68.0` | `apps/tekton/values-common.yaml` `release.dashboardVersion` (informational) + vendored YAML in `apps/tekton/templates/release-dashboard.yaml` | Gated on `.Values.dashboard.enabled` (DEV only). |
+| Tekton Dashboard | `v0.69.0` | `apps/tekton/values-common.yaml` `release.dashboardVersion` (informational) + vendored YAML in `apps/tekton/templates/release-dashboard.yaml` | Gated on `.Values.dashboard.enabled` (DEV only). |
 | Buildah (build image) | `quay.io/buildah/stable:v1.43.1` | `apps/image-builder/templates/tasks/buildah-build-push.yaml` step image | |
 | Prometheus-community mongodb-exporter chart | `3.7.0` | `apps/mongodb/Chart.yaml` | |
 | Prometheus-community redis-exporter chart | `6.5.0` | `apps/redis/Chart.yaml` | |

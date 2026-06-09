@@ -9,7 +9,7 @@ release:
   pipelinesVersion: "v1.12.0"     # ghcr.io anon-pull (gcr.io retired pre-v0.65)
   triggersVersion: "v0.35.0"      # informational
   interceptorsVersion: "v0.35.0"  # informational
-  dashboardVersion: "v0.68.0"     # informational (only deployed when dashboard.enabled)
+  dashboardVersion: "v0.69.0"     # informational (only deployed when dashboard.enabled)
 
 # ----- Tekton Dashboard (DEV-only) -----------------------------------------
 # Gated by .Values.dashboard.enabled. Defaults to false here; values-dev.yaml
