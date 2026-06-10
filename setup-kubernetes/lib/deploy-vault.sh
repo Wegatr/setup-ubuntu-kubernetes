@@ -258,16 +258,22 @@ enable_vault_oidc() {
     fi
 
     # Run the enable + write in one exec to keep VAULT_TOKEN ephemeral.
-    kubectl exec -n "${VAULT_NAMESPACE}" vault-0 -- \
+    # The two SECRETS (root token + OIDC client secret) travel via stdin,
+    # never via argv/env arguments — `env VAULT_TOKEN=…` would be visible
+    # to any process on the host in `ps` while kubectl runs. Non-secret
+    # parameters stay as env arguments for readability.
+    printf '%s\n%s\n' "${root_token}" "${oidc_client_secret}" | \
+    kubectl exec -i -n "${VAULT_NAMESPACE}" vault-0 -- \
         env VAULT_SKIP_VERIFY=true \
             VAULT_ADDR="https://127.0.0.1:8200" \
-            VAULT_TOKEN="${root_token}" \
             OIDC_CLIENT_ID="${oidc_client_id}" \
-            OIDC_CLIENT_SECRET="${oidc_client_secret}" \
             OIDC_ISSUER_URL="${oidc_issuer_url}" \
             VAULT_HOST_PUB="${VAULT_HOST}" \
         sh -c '
             set -e
+            IFS= read -r VAULT_TOKEN
+            IFS= read -r OIDC_CLIENT_SECRET
+            export VAULT_TOKEN OIDC_CLIENT_SECRET
             if ! vault auth list 2>/dev/null | grep -q "^oidc/"; then
                 vault auth enable oidc
             fi

@@ -266,31 +266,39 @@ main() {
     # If you re-run --deploy-argocd standalone, you can skip --deploy-idp
     # provided the secrets already exist from a prior bootstrap.
     if [[ "${DEPLOY_IDP}" == "true" ]]; then
-        deploy_idp || log_warn "IdP deployment had issues"
+        deploy_idp || { log_warn "IdP deployment had issues"; record_deploy_issue "deploy_idp returned an error — see log above"; }
     fi
 
     if [[ "${DEPLOY_KUBE}" == "true" ]]; then
-        deploy_kube || log_warn "Dashboard deployment had issues"
+        deploy_kube || { log_warn "Dashboard deployment had issues"; record_deploy_issue "deploy_kube returned an error — see log above"; }
     fi
 
     if [[ "${DEPLOY_ARGOCD}" == "true" ]]; then
-        deploy_argocd || log_warn "ArgoCD deployment had issues"
+        deploy_argocd || { log_warn "ArgoCD deployment had issues"; record_deploy_issue "deploy_argocd returned an error — see log above"; }
     fi
 
     if [[ "${DEPLOY_VAULT}" == "true" ]]; then
-        deploy_vault || log_warn "Vault deployment had issues"
+        deploy_vault || { log_warn "Vault deployment had issues"; record_deploy_issue "deploy_vault returned an error — see log above"; }
     fi
 
     # Seed Vault. Runs AFTER deploy_vault when both flags are set so an
     # initial cluster bring-up can do --deploy-vault --seed-vault in one shot.
     # Also runnable standalone against an already-deployed Vault.
     if [[ "${SEED_VAULT}" == "true" ]]; then
-        seed_vault || log_warn "Vault seeding had issues"
+        seed_vault || { log_warn "Vault seeding had issues"; record_deploy_issue "seed_vault returned an error — see log above"; }
     fi
 
     # Print summary
     if [[ "${installing_k8s}" == "true" ]]; then
         print_summary
+    fi
+
+    # Replay every non-fatal issue the run accumulated (cert timeouts,
+    # deploy steps that returned errors, …) and exit non-zero if there were
+    # any — a green exit code must mean everything actually came up.
+    if ! print_deploy_issue_summary; then
+        log_warn "=== MicroK8s Setup Script Completed (with issues) ==="
+        exit 1
     fi
 
     log_info "=== MicroK8s Setup Script Completed ==="

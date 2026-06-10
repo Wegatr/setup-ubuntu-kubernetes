@@ -1,0 +1,15 @@
+apiVersion: v2
+name: common
+version: 1.0.0
+description: >-
+  Shared named templates (name / fullname / chart / labels / selectorLabels)
+  for the library charts in charts/. type: library — renders nothing on its
+  own. IMPORTANT consumption rule: declare this chart as a dependency of the
+  consuming APP (apps/<name>/Chart.yaml), not of the library charts — Helm
+  does not vendor nested file:// dependencies, but template defines are
+  global per release, so one app-level dependency makes the common.* defines
+  visible to every library subchart in that app. Any app that pulls in
+  deployment / ingress / middleware / external-secret / pvc / configmap /
+  cronjob / rbac / acr-secret MUST also list common, or rendering fails loudly
+  with: no template "common.labels".
+type: library

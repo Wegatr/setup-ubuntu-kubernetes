@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "deployment.fullname" . }}
+  name: {{ include "common.fullname" . }}
   labels:
-    {{- include "deployment.labels" . | nindent 4 }}
+    {{- include "common.labels" . | nindent 4 }}
 spec:
   revisionHistoryLimit: 2
   replicas: {{ .Values.replicas }}
@@ -13,11 +13,11 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "deployment.selectorLabels" . | nindent 6 }}
+      {{- include "common.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "deployment.selectorLabels" . | nindent 8 }}
+        {{- include "common.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -36,7 +36,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: {{ include "deployment.name" . }}
+        - name: {{ include "common.name" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- with .Values.command }}

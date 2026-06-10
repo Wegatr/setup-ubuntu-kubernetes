@@ -71,3 +71,12 @@ ingress:
       enabled: true
       secretName: 'dbgate-{{ .Values.global.env }}-tls'
 
+# The IdP-bundled Postgres connection is DEV-only (only values-dev.yaml adds
+# idp_postgres to CONNECTIONS). The chart-of-charts default would be
+# enabled=true, which on TEST/PROD rendered an empty junk ExternalSecret
+# (no name, no vaultPath, no data) — disable here; values-dev.yaml flips
+# it back on with the full config.
+externalsecret-idp-db:
+  externalSecret:
+    enabled: false
+

@@ -68,6 +68,35 @@ die() {
     exit 1
 }
 
+# Deploy-issue collector. Deploy steps deliberately keep going on non-fatal
+# problems (e.g. a Let's Encrypt cert that isn't Ready yet) so one slow
+# component doesn't abort the whole bring-up — but those problems must not
+# vanish into scroll-back. Anything recorded here is replayed as a summary
+# at the end of the run, and the run exits non-zero so "script finished
+# green" really means "everything came up".
+DEPLOY_ISSUES=()
+
+record_deploy_issue() {
+    DEPLOY_ISSUES+=("$1")
+}
+
+print_deploy_issue_summary() {
+    # Returns 0 when there were no issues, 1 otherwise — callers can use
+    # the return code as the script's exit status.
+    if [[ ${#DEPLOY_ISSUES[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    echo
+    log_warn "=== Deployment finished with ${#DEPLOY_ISSUES[@]} unresolved issue(s) ==="
+    local issue
+    for issue in "${DEPLOY_ISSUES[@]}"; do
+        log_warn "  - ${issue}"
+    done
+    log_warn "Re-run the corresponding --deploy-* flag once the cause is fixed (all steps are idempotent)."
+    return 1
+}
+
 # Pre-flight Checks
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -553,14 +582,16 @@ install_helm_chart() {
     local namespace="$3"
     local values_file="${4:-}"
 
-    local helm_cmd="helm upgrade --install ${release} ${chart} -n ${namespace}"
+    # Argument array instead of a string + eval: spaces/globs in any value
+    # (e.g. a path with a space) can never be re-split or re-expanded.
+    local -a helm_args=(upgrade --install "${release}" "${chart}" -n "${namespace}")
 
     if [[ -n "${values_file}" && -f "${values_file}" ]]; then
-        helm_cmd="${helm_cmd} -f ${values_file}"
+        helm_args+=(-f "${values_file}")
     fi
 
     log_info "Installing Helm chart: ${chart} as ${release} in ${namespace}"
-    eval "${helm_cmd}" || {
+    helm "${helm_args[@]}" || {
         log_error "Failed to install Helm chart"
         return 1
     }
@@ -581,14 +612,14 @@ upgrade_helm_release() {
         return $?
     fi
 
-    local helm_cmd="helm upgrade ${release} ${chart} -n ${namespace}"
+    local -a helm_args=(upgrade "${release}" "${chart}" -n "${namespace}")
 
     if [[ -n "${values_file}" && -f "${values_file}" ]]; then
-        helm_cmd="${helm_cmd} -f ${values_file}"
+        helm_args+=(-f "${values_file}")
     fi
 
     log_info "Upgrading Helm release: ${release} in ${namespace}"
-    eval "${helm_cmd}" || {
+    helm "${helm_args[@]}" || {
         log_error "Failed to upgrade Helm release"
         return 1
     }
@@ -742,6 +773,9 @@ wait_for_certificate_ready() {
 
     log_warn "Certificate '${cert_name}' did not become ready within ${timeout}s"
     log_warn "This may be normal for Let's Encrypt validation (check manually)"
+    # Deliberately non-fatal (callers continue the deploy), but recorded so
+    # the end-of-run summary surfaces it and the script exits non-zero.
+    record_deploy_issue "Certificate ${namespace}/${cert_name} not Ready after ${timeout}s — check DNS + inbound port 80, then re-run the deploy step"
     return 1
 }
 

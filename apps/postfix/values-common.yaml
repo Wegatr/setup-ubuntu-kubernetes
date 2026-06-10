@@ -13,6 +13,11 @@ mail:
       TZ: "Europe/Amsterdam"
       LOG_FORMAT: "json"
       DKIM_SELECTOR: "mail"
+      # Mirrors .Values.global.domain (platform/values-common.yaml). Same
+      # caveat as TZ above: the bokysan chart does not tpl this value, so
+      # it is literal here — keep in sync with the platform domain. Shared
+      # by all envs (the sender domain is the apex, not per-env).
+      ALLOWED_SENDER_DOMAINS: "digitaplatform.com"
     postfix:
       smtp_tls_security_level: "may"
       smtp_tls_CApath: "/etc/ssl/certs"

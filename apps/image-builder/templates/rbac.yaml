@@ -1,10 +1,26 @@
 {{- /*
-Minimum RBAC for the pipeline-sa ServiceAccount. The Tekton controllers in
-tekton already have cluster-wide rights to manage Pods/TaskRuns —
-this Role only covers what the PipelineRun's own steps need to do:
-  - read mounted Secrets (image-builder-git-https, dockerconfig, webhook-secrets)
-  - create/delete the workspace PVCs Tekton provisions per-run
-  - list TaskRuns / PipelineRuns to assemble the logging-summary task output
+RBAC is split across TWO ServiceAccounts so that PipelineRun pods (which
+execute app-owned, partially tenant-authored task code) never hold API
+read access to the namespace's Secrets:
+
+  pipeline-sa (pipeline.serviceAccountName)
+    Runs every PipelineRun pod. Steps consume Secrets exclusively via
+    envFrom / volume mounts — kubelet mounts those with NO API permission
+    needed — so this SA gets no secrets/configmaps access at all. It keeps:
+      - create/delete on the workspace PVCs Tekton provisions per-run
+      - read on TaskRuns / PipelineRuns for inline tasks that inspect
+        run state
+    Tenant pipelines run under this SA too (triggertemplate.yaml) — keep
+    it minimal; a tenant task that needs a Secret must mount it.
+
+  eventlistener-sa (pipeline.eventListenerServiceAccountName)
+    Runs the EventListener pod only. Binds to Tekton Triggers' built-in
+    ClusterRoles (namespaced via RoleBinding):
+      - tekton-triggers-eventlistener-roles: read Trigger* CRs +
+        configmaps, create PipelineRuns, impersonate ServiceAccounts
+      - tekton-triggers-eventlistener-clusterroles: read
+        ClusterTriggerBindings / ClusterInterceptors + namespace Secrets
+        (interceptor secretRef resolution for webhook HMAC verification)
 */ -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -12,9 +28,6 @@ metadata:
   name: {{ .Values.pipeline.serviceAccountName }}
   namespace: {{ .Release.Namespace }}
 rules:
-  - apiGroups: [""]
-    resources: ["secrets", "configmaps"]
-    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "create", "delete"]
@@ -35,26 +48,15 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ .Values.pipeline.serviceAccountName }}
-{{- /*
-Tekton Triggers' EventListener pod needs its own ServiceAccount with
-permission to create PipelineRuns + TaskRuns. The controller installs this
-RBAC cluster-wide when Triggers itself is installed, but the EventListener's
-SA must exist in our namespace and bind to the appropriate ClusterRole.
-
-We reuse pipeline-sa for the EventListener — it already has list rights on
-pipelineruns; the create right comes from the ClusterRoleBinding below, which
-binds to Tekton Triggers' built-in `tekton-triggers-eventlistener-roles`
-ClusterRole.
-*/}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ .Values.pipeline.serviceAccountName }}-triggers
+  name: {{ .Values.pipeline.eventListenerServiceAccountName }}-triggers
   namespace: {{ .Release.Namespace }}
 subjects:
   - kind: ServiceAccount
-    name: {{ .Values.pipeline.serviceAccountName }}
+    name: {{ .Values.pipeline.eventListenerServiceAccountName }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -64,11 +66,11 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ .Values.pipeline.serviceAccountName }}-triggers-clusterinterceptors
+  name: {{ .Values.pipeline.eventListenerServiceAccountName }}-triggers-clusterinterceptors
   namespace: {{ .Release.Namespace }}
 subjects:
   - kind: ServiceAccount
-    name: {{ .Values.pipeline.serviceAccountName }}
+    name: {{ .Values.pipeline.eventListenerServiceAccountName }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io

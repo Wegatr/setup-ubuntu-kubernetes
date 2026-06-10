@@ -16,7 +16,7 @@ metadata:
     app.kubernetes.io/name: image-builder
     app.kubernetes.io/component: eventlistener
 spec:
-  serviceAccountName: {{ .Values.pipeline.serviceAccountName }}
+  serviceAccountName: {{ .Values.pipeline.eventListenerServiceAccountName }}
   triggers:
     {{- if .Values.eventListener.triggers.github.enabled }}
     - triggerRef: github-push

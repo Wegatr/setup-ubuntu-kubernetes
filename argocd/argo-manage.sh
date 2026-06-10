@@ -479,13 +479,26 @@ action_set_repo_url() {
     # a word-boundary match so it catches both the bare form
     # (`targetRevision: master`) and the YAML-anchor form used by the
     # ApplicationSet template (`targetRevision: &branch master`).
+    local backup sed_failed=0
     while IFS= read -r -d '' f; do
-      cp -p "$f" "$BACKUP_DIR/$(basename "$f").$(date +%s).bak"
-      sed -i \
+      backup="$BACKUP_DIR/$(basename "$f").$(date +%s).bak"
+      cp -p "$f" "$backup"
+      # A failed in-place sed may leave the file half-written — restore the
+      # backup and stop instead of reporting success on a corrupt tree.
+      if ! sed -i \
         -e "/repoURL:/ s|$current_repo|$new_repo|g" \
         -e "/targetRevision:/ s|\\b$current_branch\\b|$new_branch|g" \
-        "$f"
+        "$f"; then
+        log_error "sed failed on $f — restoring backup, aborting."
+        cp -p "$backup" "$f"
+        sed_failed=1
+        break
+      fi
     done < <(find "$(env_dir)" -name '*.yaml' -print0)
+    if (( sed_failed )); then
+      log_error "No commit offered — fix the failure and re-run. Backups in $BACKUP_DIR/"
+      pause_for_key; return
+    fi
     log_success "Files updated. Backups in $BACKUP_DIR/"
     echo
     log_info "Next step: commit + push so ArgoCD picks them up."
@@ -646,12 +659,22 @@ toggle_app_in_appset() {
 
   cp -p "$file" "$backup"
 
+  # A failed in-place yq can leave the file truncated/corrupt — restore the
+  # backup and bail instead of showing a success message over a broken tree.
   if [[ $new_state == true ]]; then
     # Remove the `enabled: false` field (default is enabled).
-    yq -i "(.spec.generators[0].list.elements[] | select(.name == \"$app\")) |= del(.enabled)" "$file"
+    if ! yq -i "(.spec.generators[0].list.elements[] | select(.name == \"$app\")) |= del(.enabled)" "$file"; then
+      log_error "yq failed on $file — restoring backup."
+      cp -p "$backup" "$file"
+      pause_for_key; return 1
+    fi
     log_success "Removed 'enabled: false' from $app — app re-enabled on next ArgoCD reconcile."
   else
-    yq -i "(.spec.generators[0].list.elements[] | select(.name == \"$app\")) |= .enabled = false" "$file"
+    if ! yq -i "(.spec.generators[0].list.elements[] | select(.name == \"$app\")) |= .enabled = false" "$file"; then
+      log_error "yq failed on $file — restoring backup."
+      cp -p "$backup" "$file"
+      pause_for_key; return 1
+    fi
     log_success "Set $app.enabled = false in the ApplicationSet."
     log_warn "Note: the AppSet template still generates the Application unless you also patch the AppSet's generator filter (see Settings → Add 'enabled' filter to AppSet)."
   fi
@@ -798,10 +821,17 @@ action_toggle_autosync_global() {
     log_info "Current state: auto-sync IS enabled (templatePatch contains 'automated:')."
     log_warn "Disabling will require manual sync for every app in this env."
     if confirm "Disable global auto-sync?"; then
-      cp -p "$file" "$BACKUP_DIR/applicationset.yaml.$(date +%s).bak"
+      local backup
+      backup="$BACKUP_DIR/applicationset.yaml.$(date +%s).bak"
+      cp -p "$file" "$backup"
       # Replace `automated: { prune: …, selfHeal: true }` block with an empty
-      # syncPolicy — apps stop auto-syncing on next reconcile.
-      yq -i '.spec.templatePatch |= sub("(?s)automated:\\s*\\n\\s*prune:.*?selfHeal:\\s*true", "")' "$file"
+      # syncPolicy — apps stop auto-syncing on next reconcile. Restore the
+      # backup if yq fails so we never leave a half-written AppSet behind.
+      if ! yq -i '.spec.templatePatch |= sub("(?s)automated:\\s*\\n\\s*prune:.*?selfHeal:\\s*true", "")' "$file"; then
+        log_error "yq failed on $file — restoring backup."
+        cp -p "$backup" "$file"
+        pause_for_key; return
+      fi
       log_success "Removed 'automated:' block from templatePatch."
     else
       return

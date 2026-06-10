@@ -37,3 +37,9 @@ dependencies:
   - name: secret-store
     version: 1.0.0
     repository: file://../../charts/secret-store
+  # Shared named templates (common.labels etc.) used by every library chart
+  # above. Declared at APP level because Helm doesn't vendor nested file://
+  # deps — see charts/common/Chart.yaml for the consumption rule.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

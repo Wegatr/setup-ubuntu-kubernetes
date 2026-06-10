@@ -4,7 +4,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: {{ .Values.pvc.name }}
   labels:
-    {{- include "pvc.labels" . | nindent 4 }}
+    {{- include "common.labels" . | nindent 4 }}
 spec:
   accessModes:
     {{- toYaml .Values.pvc.accessModes | nindent 4 }}

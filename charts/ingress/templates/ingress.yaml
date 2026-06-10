@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "ingress.fullname" . }}
+  name: {{ include "common.fullname" . }}
   labels:
-    {{- include "ingress.labels" . | nindent 4 }}
+    {{- include "common.labels" . | nindent 4 }}
   annotations:
     {{- /*
     cert-manager ClusterIssuer is centralized — pick (in order of precedence):
@@ -32,12 +32,12 @@ spec:
   {{- if .Values.ingress.host }}
   - hosts:
     - {{ tpl .Values.ingress.host . }}
-    secretName: {{ tpl (.Values.ingress.tls.secretName | default (printf "%s-tls" (include "ingress.fullname" .))) . }}
+    secretName: {{ tpl (.Values.ingress.tls.secretName | default (printf "%s-tls" (include "common.fullname" .))) . }}
   {{- else }}
   {{- range .Values.ingress.hosts }}
   - hosts:
     - {{ tpl . $ }}
-    secretName: {{ tpl ($.Values.ingress.tls.secretName | default (printf "%s-tls" (include "ingress.fullname" $))) $ }}
+    secretName: {{ tpl ($.Values.ingress.tls.secretName | default (printf "%s-tls" (include "common.fullname" $))) $ }}
   {{- end }}
   {{- end }}
   {{- end }}

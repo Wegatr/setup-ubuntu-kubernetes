@@ -225,3 +225,7 @@ grafana-admin-secret:
   externalSecret:
     vaultPath: test/app/observability
 
+grafana-oidc-secret:
+  externalSecret:
+    vaultPath: test/system/idp
+

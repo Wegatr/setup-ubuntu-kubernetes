@@ -41,7 +41,17 @@ platform/                Central Helm globals (one source of truth for the
 charts/                  Reusable Helm library charts (chart-of-charts):
                          deployment / ingress / middleware / pvc / rbac /
                          configmap / cronjob / acr-secret / external-secret /
-                         secret-store / monitoring.
+                         secret-store / monitoring. Plus charts/common
+                         (type: library) — the single copy of the shared
+                         named templates (common.name / fullname / chart /
+                         labels / selectorLabels) every library chart calls.
+                         CONSUMPTION RULE: `common` must be declared as a
+                         dependency of the consuming APP chart (not of the
+                         library charts) because Helm doesn't vendor nested
+                         file:// deps; defines are release-global, so the
+                         app-level dep makes common.* visible to all its
+                         library subcharts. Forgetting it fails loudly at
+                         render ("no template common.labels").
 
 apps/                    Per-app umbrella charts — one dir per app, each with
                          Chart.yaml + values-{common,dev,test,prod}.yaml +
@@ -319,6 +329,15 @@ auto-update on each install.
   — don't reintroduce. Rotate PATs by editing the single
   `IMAGE_BUILDER_GIT_CREDENTIALS` heredoc in `configs/secrets.<env>` and
   re-running `--seed-vault`.
+- **image-builder ServiceAccount split**: the EventListener pod runs as
+  `eventlistener-sa` (carries the Tekton Triggers ClusterRole RoleBindings,
+  incl. namespace Secret read for webhook HMAC interceptor secretRefs);
+  PipelineRun pods run as `pipeline-sa`, which deliberately has NO API
+  access to Secrets/ConfigMaps — steps consume credentials via envFrom /
+  volume mounts only (kubelet needs no RBAC for that). Tenant pipelines
+  execute under pipeline-sa too, so this split is the cross-tenant
+  isolation boundary inside the image-builder namespace. Don't re-merge
+  the two SAs and don't point PipelineRuns at eventlistener-sa.
 - **image-builder push topology**: `pipeline.registry` is rendered from
   `.Values.global.domain` via Helm `tpl` at every chart-render —
   `apps/image-builder/values-common.yaml` has the literal
@@ -476,9 +495,12 @@ This is the user's rule. Read live state (`microk8s kubectl get …`,
 `dig @1.1.1.1`, `curl` from the host's perspective) and report the actual
 chain of cause and effect before proposing fixes. Especially:
 
-- The script's `wait_for_certificate_ready` only `log_warn`s on timeout —
-  it does not return an error code. A "successful" deploy run can leave
-  certs Not Ready and Vault uninitialized.
+- `wait_for_certificate_ready` warns on timeout and the deploy CONTINUES
+  (deliberate — one slow LE cert must not abort the bring-up), but every
+  such timeout is recorded via `record_deploy_issue()` and replayed in a
+  summary at the end of the run; the script then exits 1. So a zero exit
+  code now really means "everything came up" — but mid-run output can
+  still look successful while a cert is pending.
 - `save_credential()` always writes the file even on failure paths.
   Presence of `~/secrets/<app>-<env>.txt` does not mean credentials inside
   are real. Read the file to be sure.
@@ -542,7 +564,11 @@ Same idempotency rule. Specific patterns to model:
 
 - **Adding a new app** — drop `apps/<name>/` following any existing app's
   Chart.yaml + values + templates structure, then append one element to
-  every `argocd/<env>/apps/applicationset.yaml` list. No new ArgoCD
+  every `argocd/<env>/apps/applicationset.yaml` list. If the app consumes
+  any library chart that emits common.* labels (deployment / ingress /
+  middleware / external-secret / pvc / configmap / cronjob / rbac /
+  acr-secret), also add `charts/common` to the app's dependencies — see
+  the consumption rule in the Layout section. No new ArgoCD
   Application file per app — the ApplicationSet generates them. Each element
   MUST carry a `project:` field naming one of the AppProjects in
   `apps/projects.yaml` (`core` / `data` / `services` / `observability` /
@@ -594,6 +620,15 @@ Same idempotency rule. Specific patterns to model:
 - **Adding a new library chart** — drop `charts/<name>/` following an
   existing chart's pattern; reference it as a Helm dep with
   `repository: file://../../charts/<name>` from consumer Chart.yamls.
+  Don't add a per-chart `_helpers.tpl` — call the shared `common.*`
+  defines (charts/common) and rely on the consuming app declaring the
+  `common` dependency.
+- **Touching `argocd/<env>/`** — the three env trees are hand-maintained
+  near-copies. After any edit, run `bash argocd/check-env-drift.sh`: it
+  compares the trees structurally (comments stripped, env names
+  normalized) and fails on any asymmetry beyond the documented dev-only
+  extras (tekton / registry / image-builder apps, cicd project,
+  tenants.yaml). Comment-only differences stay legal.
 - **Adding a new secret to Vault** — add a shell variable to
   `configs/secrets.example` (template) AND add a row to its
   `VAULT_SCHEMA` array. Each per-host `secrets.<env>` must mirror both

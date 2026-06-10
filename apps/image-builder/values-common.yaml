@@ -10,7 +10,15 @@ pipeline:
   # `buildah login` against it using REGISTRY_USERNAME / REGISTRY_PASSWORD
   # envFromSecret from the externalsecret-registry-push ExternalSecret.
   registry: 'zot.dev.{{ .Values.global.domain }}'
+  # SA for PipelineRun pods — deliberately has NO API access to Secrets
+  # (steps get them via envFrom / mounts only). Tenant pipelines run
+  # under this SA as well.
   serviceAccountName: pipeline-sa
+  # SA for the EventListener pod only — carries the Tekton Triggers
+  # ClusterRole bindings (incl. namespace Secret read for webhook HMAC
+  # interceptor secretRefs). Split from pipeline-sa so pipeline pods
+  # can't read namespace Secrets through the API. See templates/rbac.yaml.
+  eventListenerServiceAccountName: eventlistener-sa
 
 # Workspace sizing. The `source` workspace holds the cloned source for the
 # duration of one PipelineRun (PVC-backed; auto-cleaned by Tekton's pruner).

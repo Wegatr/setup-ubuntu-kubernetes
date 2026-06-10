@@ -1,7 +1,5 @@
 mail:
   config:
-    general:
-      ALLOWED_SENDER_DOMAINS: "digitaplatform.com"
     postfix:
       myhostname: "mail.digitaplatform.com"
       mydestination: "$myhostname"

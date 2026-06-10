@@ -1,14 +1,25 @@
 {{/*
+Shared helpers for all library charts in charts/. Each define is evaluated
+with the CALLER's context (the consuming chart passes its own `.`), so
+.Chart.Name / .Values.nameOverride resolve per consuming chart — output is
+identical to the per-chart helpers these replaced.
+
+NOTE on selectorLabels: Deployment spec.selector is IMMUTABLE. Changing the
+content of common.selectorLabels recreates every consumer's Deployment.
+Never edit it without a migration plan.
+*/}}
+
+{{/*
 Expand the name of the chart.
 */}}
-{{- define "external-secret.name" -}}
+{{- define "common.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "external-secret.fullname" -}}
+{{- define "common.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -24,16 +35,16 @@ Create a default fully qualified app name.
 {{/*
 Create chart name and version as used by the chart label.
 */}}
-{{- define "external-secret.chart" -}}
+{{- define "common.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels
 */}}
-{{- define "external-secret.labels" -}}
-helm.sh/chart: {{ include "external-secret.chart" . }}
-{{ include "external-secret.selectorLabels" . }}
+{{- define "common.labels" -}}
+helm.sh/chart: {{ include "common.chart" . }}
+{{ include "common.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -43,7 +54,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "external-secret.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "external-secret.name" . }}
+{{- define "common.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "common.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

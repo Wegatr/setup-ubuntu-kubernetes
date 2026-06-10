@@ -228,3 +228,7 @@ grafana-admin-secret:
   externalSecret:
     vaultPath: prod/app/observability
 
+grafana-oidc-secret:
+  externalSecret:
+    vaultPath: prod/system/idp
+

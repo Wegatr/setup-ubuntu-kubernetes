@@ -4,7 +4,7 @@ kind: ConfigMap
 metadata:
   name: {{ .Values.configmap.name }}
   labels:
-    {{- include "configmap.labels" . | nindent 4 }}
+    {{- include "common.labels" . | nindent 4 }}
 {{- with .Values.configmap.data }}
 data:
   {{- /*

@@ -601,3 +601,9 @@ kubectl -n image-builder logs deploy/el-image-builder | grep -i 'forbidden\|cann
 If you see "cannot create resource pipelineruns" — the ServiceAccount
 RoleBindings in [`templates/rbac.yaml`](templates/rbac.yaml) didn't apply.
 Re-sync the app from ArgoCD.
+
+Note the SA split: the EventListener pod runs as `eventlistener-sa`
+(carries the Tekton Triggers ClusterRole bindings, incl. namespace Secret
+read for webhook HMAC verification); PipelineRun pods run as `pipeline-sa`,
+which deliberately has NO API access to Secrets — steps get credentials
+via envFrom / mounts only.

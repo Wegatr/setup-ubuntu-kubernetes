@@ -34,3 +34,10 @@ dependencies:
   - name: ingress
     version: 1.0.0
     repository: file://../../charts/ingress
+
+  # Shared named templates (common.labels etc.) used by the ingress library
+  # chart above. Declared at APP level because Helm doesn't vendor nested
+  # file:// deps — see charts/common/Chart.yaml.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common
