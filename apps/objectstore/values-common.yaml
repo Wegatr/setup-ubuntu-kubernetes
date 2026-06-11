@@ -350,11 +350,24 @@ externalsecret-garage:
 # properties. The {{ .x }} expressions below are ESO templating, NOT Helm —
 # values files are data, so they pass through Helm untouched. Filestash merges
 # defaults for any section missing here on first save.
-#   auth.admin            — bcrypt hash gating the /admin console.
-#   connections[0]        — the S3 backend tile users land on: endpoint is the
-#                           stable in-cluster Service (HTTP — no TLS inside
-#                           the cluster), path-style is forced by Filestash's
-#                           S3 backend, "path" roots the UI at the bucket.
+#
+#   auth.admin       — bcrypt hash gating the /admin console.
+#   middleware       — Filestash's "Authentication middleware": identity
+#                      provider `passthrough` with strategy `direct` renders a
+#                      self-submitting empty form (ZERO user input), and
+#                      attribute_mapping injects the fixed S3 session params
+#                      for the `documents` connection. This is the ONLY way to
+#                      skip Filestash's credential form: presets inside
+#                      connections[] are NOT exported to the login page and
+#                      NOT merged server-side (verified in server/ctrl/
+#                      session.go — submitted form goes straight to
+#                      model.NewBackend). Authentik's forwardAuth in front of
+#                      the Ingress remains the actual auth gate.
+#   Both middleware *.params values are JSON-encoded STRINGS (Filestash
+#   json.Unmarshals Config.Get("...params").String()) — hence the escaped
+#   quotes. The {{ .x }} inside are ESO templating; after rendering only
+#   constant values remain, so Filestash's own TmplExec passes them through.
+#
 # NOTE the bucket name "documents" + region "garage" are hardcoded here AND in
 # garage.env/garage.toml above — ESO templates can't read Helm values; keep in
 # sync manually (single place each).
@@ -378,14 +391,19 @@ externalsecret-filestash:
               {
                 "label": "documents",
                 "type": "s3",
-                "advanced": true,
-                "endpoint": "http://garage-s3.objectstore.svc.cluster.local:3900",
-                "access_key_id": "{{ .access_key_id }}",
-                "secret_access_key": "{{ .secret_access_key }}",
-                "region": "garage",
-                "path": "documents"
+                "advanced": true
               }
-            ]
+            ],
+            "middleware": {
+              "identity_provider": {
+                "type": "passthrough",
+                "params": "{\"strategy\": \"direct\"}"
+              },
+              "attribute_mapping": {
+                "related_backend": "documents",
+                "params": "{\"documents\": {\"type\": \"s3\", \"endpoint\": \"http://garage-s3.objectstore.svc.cluster.local:3900\", \"access_key_id\": \"{{ .access_key_id }}\", \"secret_access_key\": \"{{ .secret_access_key }}\", \"region\": \"garage\", \"path\": \"documents\"}}"
+              }
+            }
           }
     data:
       - secretKey: admin_hash

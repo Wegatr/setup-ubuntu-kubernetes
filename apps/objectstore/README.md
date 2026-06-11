@@ -95,9 +95,11 @@ console.log(await res.Body.transformToString()); // "it works"
 1. Open `https://files.<env>.<DOMAIN_SUFFIX>` → Traefik's forwardAuth
    middleware redirects to the platform IdP (`idp.<env>.…`) unless the apex
    session cookie is already present (one login covers dbgate/seq/tekton/files).
-2. After SSO, Filestash shows the preconfigured **documents** connection —
-   click it to browse/upload/download (Office files, PDFs, images preview
-   in-browser).
+2. After SSO, Filestash's passthrough middleware (`strategy: direct` +
+   `attribute_mapping`, see the seed config in `values-common.yaml`)
+   auto-connects the session to the **documents** bucket — no credentials, no
+   clicks. Browse/upload/download directly (Office files, PDFs, images
+   preview in-browser).
 3. The **admin console** (`/admin`) is separately protected by the bcrypt
    admin password (`filestash-admin-password` in Vault). Use it to tweak UI
    settings; changes persist on the `filestash-state` PVC.
