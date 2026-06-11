@@ -57,7 +57,12 @@ spec:
       namespace: redis
     - server: https://kubernetes.default.svc
       namespace: objectstore
-  clusterResourceWhitelist: []
+  # Namespace is the ONE permitted cluster-scoped kind — required by
+  # CreateNamespace=true when the namespace does not exist yet (first hit by
+  # objectstore). See argocd/dev/apps/projects.yaml for the full rationale.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"

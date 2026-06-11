@@ -82,11 +82,16 @@ spec:
       namespace: redis
     - server: https://kubernetes.default.svc
       namespace: objectstore
-  # Empty = no cluster-scoped resources permitted. These charts create only
-  # namespaced objects (StatefulSet, PVC, Service, SA, Secret, ServiceMonitor,
-  # PrometheusRule). A chart change that tried to add a ClusterRole would be
-  # blocked at sync time.
-  clusterResourceWhitelist: []
+  # Namespace is the ONE permitted cluster-scoped kind: the ApplicationSet
+  # sets CreateNamespace=true and ArgoCD validates the auto-created Namespace
+  # against this whitelist whenever the namespace does NOT exist yet. The
+  # mongodb/postgresql/redis namespaces predate the projects so the check
+  # never fired for them — objectstore (first NEW data namespace) hit it:
+  # "resource :Namespace is not permitted in project data". Everything else
+  # (ClusterRole, CRDs, webhooks, ...) stays blocked.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
