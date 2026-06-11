@@ -2,7 +2,17 @@ seq:
   # Accept EULA
   acceptEULA: "Y"
 
-  # Admin password from ExternalSecret-managed k8s secret
+  # Admin password from ExternalSecret-managed k8s secret.
+  #
+  # NOTE on Seq's OWN login: this secret only seeds the admin account on
+  # FIRST RUN. On DEV the operator DISABLED Seq's built-in authentication via
+  # the Seq UI on 2026-06-12 — the Authentik forwardAuth gate on the Ingress
+  # (idp-forwardauth, see values-dev.yaml) is the single login, dbgate-style.
+  # That switch is runtime state on Seq's PVC, NOT in git: after a fresh
+  # install (PVC wiped) Seq starts with authentication enabled again
+  # (admin + SEQ_ADMIN_PASSWORD from Vault) and must be re-disabled in the
+  # UI if single-login is wanted. Log shippers are unaffected either way —
+  # they ingest in-cluster with SEQ_API_KEY.
   firstRunAdminPasswordSecret:
     name: seq-credentials
     key: admin-password

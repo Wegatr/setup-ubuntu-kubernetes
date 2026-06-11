@@ -206,6 +206,14 @@ auto-update on each install.
   `.Values.global.clusterIssuer` inside seq's values. The literal
   `letsencrypt-prod` is in `apps/seq/values-{dev,test,prod}.yaml`.
   Must match the platform-global manually.
+- **`apps/seq` built-in login is DISABLED on DEV (runtime state, not git)**:
+  the operator turned Seq's own authentication off in the Seq UI
+  (2026-06-12) so the Authentik forwardAuth gate is the single login
+  (dbgate pattern). `SEQ_ADMIN_PASSWORD` only seeds the admin on FIRST RUN —
+  after a PVC wipe / reinstall Seq comes back WITH its own login enabled
+  and must be re-disabled in the UI. A Seq login screen appearing after a
+  reinstall is therefore expected, not a regression. Ingestion always works
+  via `SEQ_API_KEY` regardless. test/prod still run with Seq auth enabled.
 - **Storage class centralization is partial**: subchart values blocks
   (Bitnami mongodb / redis / postgresql / kube-prometheus-stack PVCs)
   intentionally omit `storageClass` so they fall back to either
