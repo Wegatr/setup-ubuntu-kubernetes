@@ -206,14 +206,27 @@ auto-update on each install.
   `.Values.global.clusterIssuer` inside seq's values. The literal
   `letsencrypt-prod` is in `apps/seq/values-{dev,test,prod}.yaml`.
   Must match the platform-global manually.
-- **`apps/seq` built-in login is DISABLED on DEV (runtime state, not git)**:
-  the operator turned Seq's own authentication off in the Seq UI
-  (2026-06-12) so the Authentik forwardAuth gate is the single login
-  (dbgate pattern). `SEQ_ADMIN_PASSWORD` only seeds the admin on FIRST RUN —
-  after a PVC wipe / reinstall Seq comes back WITH its own login enabled
-  and must be re-disabled in the UI. A Seq login screen appearing after a
-  reinstall is therefore expected, not a regression. Ingestion always works
-  via `SEQ_API_KEY` regardless. test/prod still run with Seq auth enabled.
+- **`apps/seq` built-in login is OFF by design (ALL envs, declarative)**:
+  `firstRunAdminPasswordSecret` was removed from
+  `apps/seq/values-common.yaml` (2026-06-12) — without a first-run admin
+  password a fresh Seq starts WITHOUT its own authentication, so the
+  Authentik forwardAuth gate is the single login (dbgate pattern), and this
+  survives PVC wipes / reinstalls. Don't re-add the block unless Seq-side
+  user management is explicitly wanted (it creates a SECOND login).
+  `SEQ_ADMIN_PASSWORD` stays in the Vault schema but is unused; shippers
+  ingest with `SEQ_API_KEY` regardless. Existing instances that already
+  HAVE auth enabled in their metastore keep it until disabled in the Seq UI
+  once (or their PVC is recreated).
+- **Deleting an ArgoCD Application cascades into its PVCs** (the
+  resources-finalizer deletes ALL managed resources). seq-dev was deleted
+  once on 2026-06-11 and its UNPROTECTED PVC — with all DEV log data — went
+  with it. Only `apps/objectstore` PVCs carry
+  `argocd.argoproj.io/sync-options: Prune=false,Delete=false` so far. The
+  CLAUDE.md-documented "delete the Application to fix the comparedTo quirk"
+  trick is therefore SAFE only for apps whose data lives in
+  StatefulSet volumeClaimTemplates (mongodb/postgresql/redis) or protected
+  PVCs — NOT for seq/dbgate. Prefer Hard Refresh; protect more PVCs via
+  the pvc chart's `annotations` passthrough where charts allow it.
 - **Storage class centralization is partial**: subchart values blocks
   (Bitnami mongodb / redis / postgresql / kube-prometheus-stack PVCs)
   intentionally omit `storageClass` so they fall back to either

@@ -2,20 +2,25 @@ seq:
   # Accept EULA
   acceptEULA: "Y"
 
-  # Admin password from ExternalSecret-managed k8s secret.
-  #
-  # NOTE on Seq's OWN login: this secret only seeds the admin account on
-  # FIRST RUN. On DEV the operator DISABLED Seq's built-in authentication via
-  # the Seq UI on 2026-06-12 — the Authentik forwardAuth gate on the Ingress
-  # (idp-forwardauth, see values-dev.yaml) is the single login, dbgate-style.
-  # That switch is runtime state on Seq's PVC, NOT in git: after a fresh
-  # install (PVC wiped) Seq starts with authentication enabled again
-  # (admin + SEQ_ADMIN_PASSWORD from Vault) and must be re-disabled in the
-  # UI if single-login is wanted. Log shippers are unaffected either way —
-  # they ingest in-cluster with SEQ_API_KEY.
-  firstRunAdminPasswordSecret:
-    name: seq-credentials
-    key: admin-password
+  # Seq's OWN login is deliberately DISABLED (platform decision 2026-06-12,
+  # all envs): the Authentik forwardAuth gate on the Ingress (idp-forwardauth,
+  # see values-<env>.yaml) is the ONE AND ONLY login — dbgate-style. This is
+  # declarative and survives PVC wipes / reinstalls (the previous approach —
+  # disabling auth in the Seq UI — was runtime state on the PVC and died
+  # with it when seq-dev's Application was once deleted).
+  # Upstream marks this flag "not suitable for production" — that caveat
+  # targets UNPROTECTED deployments; here every route to Seq goes through
+  # the IdP gate first.
+  # Consequences:
+  #   - anyone past the IdP gate is full admin in Seq (single-operator: ok)
+  #   - log shippers keep ingesting in-cluster with SEQ_API_KEY
+  #   - SEQ_ADMIN_PASSWORD stays in Vault/secrets schema but is unused; to
+  #     ever re-enable Seq-side user management, set
+  #     firstRunNoAuthentication: false and restore:
+  #       firstRunAdminPasswordSecret:
+  #         name: seq-credentials
+  #         key: admin-password
+  firstRunNoAuthentication: true
 
   # Persistence configuration
   persistence:
