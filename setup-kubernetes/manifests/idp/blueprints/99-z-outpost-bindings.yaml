@@ -1,17 +1,17 @@
 # yaml-language-server: $schema=
-# Authentik blueprint — binds the 3 ProxyProviders (Tekton, dbgate, Seq)
-# to Authentik's built-in `authentik Embedded Outpost`. Without this,
-# the Outpost's `/outpost.goauthentik.io/auth/traefik` endpoint that
+# Authentik blueprint — binds the 4 ProxyProviders (Tekton, dbgate, Seq,
+# Filestash) to Authentik's built-in `authentik Embedded Outpost`. Without
+# this, the Outpost's `/outpost.goauthentik.io/auth/traefik` endpoint that
 # Traefik's forwardauth middleware hits has NO providers registered →
 # it doesn't know how to authenticate requests to gate.<env>, log.<env>,
-# tekton.<env> → returns redirect to a generic login but the session
-# cookie doesn't bind to a specific app → forwardauth loop / 404 / etc.
+# tekton.<env>, files.<env> → returns redirect to a generic login but the
+# session cookie doesn't bind to a specific app → forwardauth loop / 404 / etc.
 #
-# File name `99-z-*` so this runs AFTER the `99-proxy-{tekton,dbgate,seq}.yaml`
-# blueprints that create the ProxyProviders the !Find queries below
-# look up. If parallel apply enqueues this before the proxy blueprints
-# complete, the conditions block fails (None is falsy) and Authentik
-# skips + retries on next discovery cycle.
+# File name `99-z-*` so this runs AFTER the `99-proxy-{tekton,dbgate,seq,
+# filestash}.yaml` blueprints that create the ProxyProviders the !Find
+# queries below look up. If parallel apply enqueues this before the proxy
+# blueprints complete, the conditions block fails (None is falsy) and
+# Authentik skips + retries on next discovery cycle.
 version: 1
 metadata:
   name: Bind proxy providers to Embedded Outpost
@@ -21,6 +21,7 @@ conditions:
   - !Find [authentik_providers_proxy.proxyprovider, [name, dbgate]]
   - !Find [authentik_providers_proxy.proxyprovider, [name, Tekton Dashboard]]
   - !Find [authentik_providers_proxy.proxyprovider, [name, Seq]]
+  - !Find [authentik_providers_proxy.proxyprovider, [name, filestash]]
 entries:
   - model: authentik_outposts.outpost
     identifiers:
@@ -30,3 +31,4 @@ entries:
         - !Find [authentik_providers_proxy.proxyprovider, [name, dbgate]]
         - !Find [authentik_providers_proxy.proxyprovider, [name, Tekton Dashboard]]
         - !Find [authentik_providers_proxy.proxyprovider, [name, Seq]]
+        - !Find [authentik_providers_proxy.proxyprovider, [name, filestash]]

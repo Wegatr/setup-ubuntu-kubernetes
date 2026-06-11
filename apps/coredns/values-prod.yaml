@@ -1,2 +1,9 @@
-# PROD-specific coredns overrides — none today. Rewrites are declared in
-# values-common.yaml; vault.<env>.<domain> is composed from platform globals.
+# PROD-specific coredns overrides. Rewrites that apply to every env are in
+# values-common.yaml (vault); rewrites here apply ONLY to the PROD cluster.
+extraRewrites:
+  # Garage S3 public hostname (apps/objectstore) — in-cluster S3 clients
+  # using the public https://s3.<env>.<domain> URL get TLS termination at
+  # Traefik instead of hairpinning through the router. In-cluster clients
+  # can also skip TLS via http://garage-s3.objectstore.svc.cluster.local:3900.
+  - from: 's3.{{ .Values.global.env }}.{{ .Values.global.domain }}'
+    to: traefik.ingress.svc.cluster.local

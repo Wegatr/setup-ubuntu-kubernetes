@@ -45,7 +45,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Stateful data stores — MongoDB, PostgreSQL, Redis. Namespaced only; never creates cluster-scoped resources.
+  description: Stateful data stores — MongoDB, PostgreSQL, Redis, Garage objectstore (incl. Filestash UI). Namespaced only; never creates cluster-scoped resources.
   sourceRepos:
     - https://github.com/kartalbas/setup-ubuntu-kubernetes.git
   destinations:
@@ -55,6 +55,8 @@ spec:
       namespace: postgresql
     - server: https://kubernetes.default.svc
       namespace: redis
+    - server: https://kubernetes.default.svc
+      namespace: objectstore
   clusterResourceWhitelist: []
   namespaceResourceWhitelist:
     - group: "*"

@@ -231,6 +231,7 @@ _idp_wait_for_blueprints_converged() {
         "Tekton Dashboard Forward Auth"
         "dbgate Forward Auth"
         "Seq Forward Auth"
+        "Filestash Forward Auth"
         "Bind proxy providers to Embedded Outpost"
     )
 

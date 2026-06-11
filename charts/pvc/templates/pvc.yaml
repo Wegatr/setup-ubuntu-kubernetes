@@ -5,6 +5,10 @@ metadata:
   name: {{ .Values.pvc.name }}
   labels:
     {{- include "common.labels" . | nindent 4 }}
+  {{- with .Values.pvc.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   accessModes:
     {{- toYaml .Values.pvc.accessModes | nindent 4 }}

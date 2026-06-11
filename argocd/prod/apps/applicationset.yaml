@@ -62,6 +62,16 @@ spec:
             createNamespace: "true"
             specialOptions: ""
 
+          # objectstore = Garage S3 store + Filestash UI (data tier). PVCs
+          # carry Prune=false,Delete=false — see apps/objectstore/README.md.
+          - name: objectstore
+            project: data
+            syncWave: "10"
+            namespace: objectstore
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
           - name: postfix
             project: services
             syncWave: "20"

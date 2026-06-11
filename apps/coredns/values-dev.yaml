@@ -11,3 +11,11 @@ extraRewrites:
   # (which would need NAT-hairpinning + Traefik to round-trip back in).
   - from: 'zot.dev.{{ .Values.global.domain }}'
     to: traefik.ingress.svc.cluster.local
+
+  # Garage S3 public hostname (apps/objectstore) — same Traefik-bounce
+  # rationale as zot above: in-cluster S3 clients using the public
+  # https://s3.<env>.<domain> URL get TLS termination at Traefik instead of
+  # hairpinning through the router. In-cluster clients can also skip TLS
+  # entirely via http://garage-s3.objectstore.svc.cluster.local:3900.
+  - from: 's3.{{ .Values.global.env }}.{{ .Values.global.domain }}'
+    to: traefik.ingress.svc.cluster.local

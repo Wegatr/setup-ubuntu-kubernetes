@@ -1,0 +1,92 @@
+apiVersion: v2
+name: objectstore
+version: 1.0.0
+description: S3-compatible object storage — Garage (deuxfleurs) S3 store + Filestash web UI in one namespace. Serves the digitalization platform via the S3 API (s3.<env>.<DOMAIN_SUFFIX> + in-cluster Service) and humans via Filestash (files.<env>.<DOMAIN_SUFFIX>, Authentik SSO-gated). Bucket + access key auto-provisioned by Garage v2.3's --default-bucket from ESO-materialized env vars.
+type: application
+appVersion: "v2.3.0"
+
+dependencies:
+  # Garage pod — Deployment via shared library chart. The chart's bundled
+  # Service is DISABLED (service.enabled: false in values); the two raw
+  # Services in templates/garage-services.yaml replace it with stable,
+  # env-independent names (garage-s3 / garage-admin) so the Filestash seed
+  # config and the ServiceMonitor don't need per-env templating.
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: garage
+
+  # Filestash pod — Deployment + ClusterIP Service (objectstore-<env>-filestash).
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: filestash
+
+  # ConfigMap with garage.toml. Mounted at /etc/garage.toml (Garage's default
+  # config path) by the garage Deployment.
+  - name: configmap
+    version: 1.0.0
+    repository: file://../../charts/configmap
+
+  # Garage metadata + object storage. Protected from ArgoCD prune/delete via
+  # pvc.annotations (sync-options Prune=false,Delete=false) — see values.
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+    alias: garage-data
+
+  # Filestash state (/app/data/state — runtime config.json, thumbnails, etc.).
+  # Same prune/delete protection.
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+    alias: filestash-state
+
+  # Public S3 API at s3.<env>.<DOMAIN_SUFFIX>. No auth middleware — Garage
+  # enforces S3 request signatures itself. cert-manager LE cert via the
+  # platform-global ClusterIssuer.
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+    alias: ingress-s3
+
+  # Filestash UI at files.<env>.<DOMAIN_SUFFIX>, gated by the Authentik
+  # forwardAuth Middleware (idp-forwardauth@kubernetescrd) like dbgate/seq.
+  - name: ingress
+    version: 1.0.0
+    repository: file://../../charts/ingress
+    alias: ingress-files
+
+  # ExternalSecret pulling Garage's secrets from Vault into the `garage-env`
+  # Secret (consumed as env vars: rpc secret, admin token, default key pair).
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-garage
+
+  # ExternalSecret assembling Filestash's first-boot config.json (admin bcrypt
+  # hash + preconfigured S3 connection) via ESO v2 templating into the
+  # `filestash-seed` Secret.
+  - name: external-secret
+    version: 1.0.0
+    repository: file://../../charts/external-secret
+    alias: externalsecret-filestash
+
+  # Per-namespace ESO SecretStore (vault-backend). The `objectstore` namespace
+  # is added to Vault's external-secrets role bound_service_account_namespaces
+  # automatically by --seed-vault (VAULT_SCHEMA category=app/name=objectstore).
+  - name: secret-store
+    version: 1.0.0
+    repository: file://../../charts/secret-store
+
+  # ServiceMonitor (Garage admin endpoint /metrics on :3903) + alert rules.
+  - name: monitoring
+    version: 2.0.0
+    repository: file://../../charts/monitoring
+
+  # Shared named templates (common.labels etc.) used by every library chart
+  # above. Declared at APP level because Helm doesn't vendor nested file://
+  # deps — see charts/common/Chart.yaml for the consumption rule.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

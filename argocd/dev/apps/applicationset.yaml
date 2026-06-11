@@ -101,6 +101,19 @@ spec:
             createNamespace: "true"
             specialOptions: ""
 
+          # objectstore = Garage S3 store + Filestash UI in one namespace.
+          # Data tier: the Garage bucket is the system of record for the
+          # digitalization platform's documents; Filestash is its co-located
+          # viewer. PVCs carry Prune=false,Delete=false — removing this
+          # element never deletes stored objects (see apps/objectstore/README.md).
+          - name: objectstore
+            project: data
+            syncWave: "10"
+            namespace: objectstore
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
           # Wave 20 — Adjacent platform services.
           - name: postfix
             project: services

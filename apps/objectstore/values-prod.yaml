@@ -1,0 +1,8 @@
+# PROD-specific objectstore config — only the Vault paths differ per env.
+externalsecret-garage:
+  externalSecret:
+    vaultPath: prod/app/objectstore
+
+externalsecret-filestash:
+  externalSecret:
+    vaultPath: prod/app/objectstore

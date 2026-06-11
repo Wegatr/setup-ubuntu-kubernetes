@@ -1,6 +1,12 @@
 pvc:
   enabled: true
   name: ""
+  # Optional metadata.annotations map. Use case: data-bearing PVCs that must
+  # survive ArgoCD prune / Application deletion set
+  #   argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  # (see apps/objectstore). Default empty = no annotations block emitted, so
+  # existing consumers render byte-identically.
+  annotations: {}
   storageClassName: ""
   accessModes:
     - ReadWriteOnce

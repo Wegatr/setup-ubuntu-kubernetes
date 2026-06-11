@@ -56,8 +56,9 @@ charts/                  Reusable Helm library charts (chart-of-charts):
 apps/                    Per-app umbrella charts — one dir per app, each with
                          Chart.yaml + values-{common,dev,test,prod}.yaml +
                          templates/. Apps: coredns, mongodb, postgresql,
-                         redis, postfix, seq, dbgate, observability, tekton,
-                         image-builder.
+                         redis, objectstore (Garage S3 + Filestash UI),
+                         postfix, seq, dbgate, observability, tekton,
+                         registry, image-builder.
 
 argocd/{dev,test,prod}/  Per-env GitOps bootstrap: root-app.yaml (App-of-Apps
                          entry point) + apps/applicationset.yaml (single
@@ -116,6 +117,8 @@ auto-update on each install.
 | Bitnami postgresql (chart / DB) | `18.6.6` / `18.4.0` | `apps/postgresql/Chart.yaml` deps[postgresql].version | 17.x is gone from bitnamicharts + bitnamilegacy. |
 | Bitnami redis (chart / DB) | `25.5.3` / `8.6.3` | `apps/redis/Chart.yaml` deps[redis].version | |
 | DBGate | `7.1.11` | `apps/dbgate/Chart.yaml` appVersion + `values-common.yaml` `app.image.tag` | Two places — must match. |
+| Garage | `v2.3.0` | `apps/objectstore/Chart.yaml` appVersion + `values-common.yaml` `garage.image.tag` | Two places — must match. v2.3 is the minimum: `--single-node` + `--default-bucket` provisioning flags appeared there. |
+| Filestash | `latest@sha256:03990d…` (digest pin, 2026-06-11) | `apps/objectstore/values-common.yaml` `filestash.image.tag` | Upstream publishes NO version tags — only a moving `latest`. Refresh procedure in `apps/objectstore/README.md`. |
 | External-Secrets chart + operator | `2.4.1` / `v2.4.1` | `apps/external-secrets/Chart.yaml` deps[external-secrets].version | Operator + chart numbers track 1:1 from v2.x onward. |
 | Tekton Pipelines | `v1.12.0` | `apps/tekton/values-common.yaml` `release.pipelinesVersion` (informational) + vendored YAML in `templates/release-pipelines.yaml` | Refresh procedure in `apps/tekton/README.md`. |
 | Tekton Triggers | `v0.35.0` | same place | |
@@ -234,6 +237,48 @@ auto-update on each install.
     matching `Chart.yaml`'s `appVersion`. Don't switch to the upstream
     `project-zot/helm-charts/zot` chart — our wrapper is consistent with
     the rest of the platform's library-chart pattern.
+- **`apps/objectstore/` (Garage S3 + Filestash) runs on ALL envs**, one
+  combined app in the `objectstore` namespace, AppProject `data`, wave 10.
+  - **Provisioning is declarative**: Garage v2.3 starts with
+    `--single-node --default-bucket`; the layout, the `documents` bucket
+    and ONE access key are auto-created from env vars
+    (`GARAGE_DEFAULT_{BUCKET,ACCESS_KEY,SECRET_KEY}` + `GARAGE_RPC_SECRET`
+    + `GARAGE_ADMIN_TOKEN`, ESO-materialized from Vault
+    `<env>/app/objectstore`). NO provisioning Job — don't add one.
+  - **One shared key** for the Node.js consumers AND Filestash (deliberate;
+    split via `garage key import` only if auditing demands it).
+  - **db_engine = sqlite, NOT lmdb** (upstream default): lmdb is documented
+    corruption-prone on unclean shutdowns; single-node rf=1 has no replica
+    to rebuild from. Don't "fix" it back to lmdb.
+  - **replication_factor = 1 only** — rf>1 needs multi-node + StatefulSet +
+    manual `garage layout`, unsupported on these single-node clusters.
+  - **PVCs (`garage-data`, `filestash-state`) carry
+    `argocd.argoproj.io/sync-options: Prune=false,Delete=false`** (via the
+    optional `pvc.annotations` passthrough added to `charts/pvc/`).
+    Removing the app NEVER deletes data; deletion is an explicit
+    `kubectl delete pvc`. Don't strip the annotations.
+  - **Stable raw Services** `garage-s3` (:3900) + `garage-admin`
+    (:3903 metrics) in `apps/objectstore/templates/garage-services.yaml`
+    replace the deployment-chart Service (disabled) — the Filestash seed
+    config.json is rendered by ESO templating which can't see Helm values,
+    so it needs an env-independent DNS name. Don't re-enable the lib
+    Service or rename these.
+  - **Filestash image is digest-pinned** (`latest@sha256:…`) because
+    upstream has no version tags. Its first-boot config.json (admin bcrypt
+    hash + preconfigured S3 connection) is seeded by a `/bin/sh` command
+    wrapper that copies from the ESO-rendered `filestash-seed` Secret ONLY
+    when the file is absent — UI changes persist on the PVC and survive
+    re-syncs. Bucket name `documents` + region `garage` are hardcoded in
+    BOTH the garage env block and the ESO template (ESO can't read Helm
+    values) — keep in sync manually.
+  - **Filestash UI is IdP-gated** (`idp-forwardauth@kubernetescrd`, dbgate
+    pattern). IdP-side: `manifests/idp/blueprints/99-proxy-filestash.yaml`
+    + the filestash entries in `99-z-outpost-bindings.yaml` + the
+    "Filestash Forward Auth" row in deploy-idp.sh's `expected_names` —
+    three touchpoints, keep them consistent; re-run `--deploy-idp` after
+    changes.
+  - **CoreDNS rewrite** `s3.<env>.<domain>` → Traefik exists in every env's
+    `apps/coredns/values-<env>.yaml` (zot hairpin pattern).
 - **Platform IdP (Authentik) lives in `setup-kubernetes/`, NOT in `apps/`**:
   the Identity Provider is INFRASTRUCTURE-tier — alongside ArgoCD, Vault,
   Headlamp. Reason: ArgoCD authenticates via the IdP, so the IdP can't be
@@ -455,7 +500,12 @@ For the GitOps tree, an additional pre-flight applies:
    itself, CoreDNS has a rewrite (`apps/coredns/values-dev.yaml`
    `extraRewrites`) that points zot.dev at the Traefik service for
    in-cluster traffic; this is invisible to external clients.
-7. **Vault data + auth config**: handled by `setup-kubernetes.sh
+7. **`s3.<env>.<DOMAIN_SUFFIX>` + `files.<env>.<DOMAIN_SUFFIX>`** — the
+   Garage S3 API and the Filestash UI (apps/objectstore, every env). Both
+   need LE certs via HTTP-01 on first sync; a wildcard
+   `*.<env>.<DOMAIN_SUFFIX>` record covers them. CoreDNS rewrites
+   s3.<env> onto Traefik for in-cluster clients (zot pattern).
+8. **Vault data + auth config**: handled by `setup-kubernetes.sh
    --<env> --seed-vault`. This step is built into the installer now
    (`lib/seed-vault.sh`):
    - sources `configs/secrets.<env>` (gitignored per-host file with the

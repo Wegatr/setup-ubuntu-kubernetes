@@ -1,0 +1,8 @@
+# DEV-specific objectstore config — only the Vault paths differ per env.
+externalsecret-garage:
+  externalSecret:
+    vaultPath: dev/app/objectstore
+
+externalsecret-filestash:
+  externalSecret:
+    vaultPath: dev/app/objectstore

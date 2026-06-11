@@ -1,0 +1,444 @@
+# Object storage — shared values across DEV / TEST / PROD.
+#
+# Two pods in one namespace:
+#   garage    — S3-compatible object store (deuxfleurs Garage, single node)
+#   filestash — web file manager for humans, wired to the Garage bucket
+#
+# Consumers:
+#   - Node.js apps:  S3 API at http://garage-s3.objectstore.svc.cluster.local:3900
+#                    (in-cluster) or https://s3.<env>.<DOMAIN_SUFFIX> (public).
+#   - Humans:        https://files.<env>.<DOMAIN_SUFFIX> (Authentik SSO via
+#                    forwardAuth; lands in the `documents` bucket).
+#
+# Provisioning is fully declarative: Garage v2.3's `--single-node` flag
+# auto-creates the cluster layout, and `--default-bucket` auto-creates ONE
+# access key + ONE bucket from the GARAGE_DEFAULT_* env vars below (values
+# come from Vault via ESO). That single key is shared by the Node.js app and
+# Filestash — tradeoff: shared rotation, no per-consumer audit trail. If
+# per-consumer keys are ever needed, import a second key with `garage key
+# import` (admin CLI inside the pod) — not automated today.
+#
+# See apps/objectstore/README.md for endpoints, the Node.js snippet, the
+# uninstall procedure, and the Filestash image-pin refresh procedure.
+
+# ----- Garage pod (Deployment via charts/deployment, alias `garage`) --------
+garage:
+  image:
+    # Single static binary, FROM-scratch image (no shell). Tag MUST match
+    # Chart.yaml appVersion.
+    repository: dxflrs/garage
+    tag: "v2.3.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # Recreate (not RollingUpdate) — garage-data is RWO and the metadata DB
+  # (sqlite) must never be open from two pods at once.
+  strategy:
+    type: Recreate
+  containerPort: 3900
+  # The library chart's Service is replaced by the two raw Services in
+  # templates/garage-services.yaml (stable names garage-s3 / garage-admin,
+  # no env suffix) so the Filestash seed config + ServiceMonitor need no
+  # per-env templating.
+  service:
+    enabled: false
+
+  # Binary lives at /garage in the image. `--single-node` auto-creates the
+  # layout (valid here: every env is a single-node MicroK8s cluster — a
+  # replication_factor > 1 setup would need a StatefulSet + manual `garage
+  # layout assign/apply` and is out of scope). `--default-bucket` creates
+  # the access key + bucket from the GARAGE_DEFAULT_* env vars on startup
+  # (idempotent no-op once they exist).
+  command:
+    - "/garage"
+  args:
+    - "server"
+    - "--single-node"
+    - "--default-bucket"
+
+  env:
+    # Name of the auto-created bucket. NOT a secret. If you change it, also
+    # change the hardcoded `"path": "documents"` in the Filestash seed
+    # config.json under externalsecret-filestash below (ESO templates can't
+    # see Helm values — same class of manual sync as apps/seq's clusterIssuer).
+    - name: GARAGE_DEFAULT_BUCKET
+      value: "documents"
+    # Secrets from Vault (<env>/app/objectstore) via the garage-env Secret.
+    # Garage reads these env vars natively (equivalents of the rpc_secret /
+    # admin_token config keys, deliberately NOT in garage.toml so the
+    # ConfigMap stays secret-free).
+    - name: GARAGE_RPC_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: garage-env
+          key: GARAGE_RPC_SECRET
+    - name: GARAGE_ADMIN_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: garage-env
+          key: GARAGE_ADMIN_TOKEN
+    - name: GARAGE_DEFAULT_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: garage-env
+          key: GARAGE_DEFAULT_ACCESS_KEY
+    - name: GARAGE_DEFAULT_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: garage-env
+          key: GARAGE_DEFAULT_SECRET_KEY
+
+  volumeMounts:
+    # garage.toml from the ConfigMap below — /etc/garage.toml is Garage's
+    # default config path.
+    - name: config
+      mountPath: /etc/garage.toml
+      subPath: garage.toml
+      readOnly: true
+    # One PVC, two directories: metadata DB + object blobs.
+    - name: data
+      mountPath: /var/lib/garage/meta
+      subPath: meta
+    - name: data
+      mountPath: /var/lib/garage/data
+      subPath: data
+
+  volumes:
+    - name: config
+      configMap:
+        name: garage-config
+    - name: data
+      persistentVolumeClaim:
+        claimName: garage-data
+
+  # Plain TCP probe — the S3 endpoint requires request signatures, so a TCP
+  # connect is the simplest "process is listening" indicator.
+  livenessProbe:
+    tcpSocket:
+      port: 3900
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    tcpSocket:
+      port: 3900
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "512Mi"
+    limits:
+      # Uploads/GC of large objects can burst; one core is plenty for a
+      # single-node document store.
+      cpu: "1"
+      memory: "1Gi"
+
+# ----- Filestash pod (Deployment via charts/deployment, alias `filestash`) --
+filestash:
+  image:
+    # Upstream publishes NO stable version tags — `latest` is the only
+    # maintained multi-arch tag, so we pin it BY DIGEST (immutable). Refresh
+    # procedure in apps/objectstore/README.md. Digest pulled 2026-06-11.
+    repository: machines/filestash
+    tag: "latest@sha256:03990d17041624000acb31e89ae21b86318c3ab28b5928c9e7e1b30a647310fb"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # RWO state PVC + runtime-rewritten config.json — never two pods at once.
+  strategy:
+    type: Recreate
+  containerPort: 8334
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 8334
+
+  # First-boot config seeding: the image has no initContainer support in our
+  # library chart, so a /bin/sh wrapper (debian-slim base has sh) copies the
+  # ESO-rendered seed config.json into the state PVC ONLY when absent, then
+  # execs the real binary (CMD of the image is /app/filestash). Idempotent:
+  # restarts and admin-console edits (persisted on the PVC) are never
+  # clobbered. To force a re-seed, delete the file or the PVC.
+  command:
+    - "/bin/sh"
+    - "-c"
+  args:
+    - >-
+      mkdir -p /app/data/state/config;
+      [ -f /app/data/state/config/config.json ] || cp /seed/config.json /app/data/state/config/config.json;
+      exec /app/filestash
+
+  # The image runs as the non-root `filestash` user. fsGroup makes the state
+  # volume group-writable for the pod's supplementary group. (On
+  # microk8s-hostpath this is belt-and-braces — the provisioner creates
+  # world-writable dirs — but it keeps the chart correct on any real CSI
+  # StorageClass.)
+  podSecurityContext:
+    fsGroup: 1000
+
+  volumeMounts:
+    - name: state
+      mountPath: /app/data/state
+    - name: seed
+      mountPath: /seed
+      readOnly: true
+
+  volumes:
+    - name: state
+      persistentVolumeClaim:
+        claimName: filestash-state
+    - name: seed
+      secret:
+        secretName: filestash-seed
+
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 15
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+# ----- garage.toml (mounted into the garage pod) -----------------------------
+# Secret-free by design: rpc_secret + admin_token come via env (GARAGE_RPC_SECRET
+# / GARAGE_ADMIN_TOKEN above). The configmap library chart applies Helm `tpl`
+# to the data block, so root_domain composes from the platform globals.
+configmap:
+  configmap:
+    enabled: true
+    name: garage-config
+    data:
+      garage.toml: |
+        # Object blobs live directly on the filesystem under data_dir —
+        # db_engine concerns METADATA only (bucket/key tables + object index).
+        metadata_dir = "/var/lib/garage/meta"
+        data_dir = "/var/lib/garage/data"
+
+        # sqlite over the upstream default (lmdb), deliberately: lmdb is
+        # documented as corruption-prone on unclean shutdowns and recommended
+        # for clusters with replication_factor >= 2. A single hostpath pod at
+        # rf=1 has no replica to rebuild from, so crash-durable sqlite wins;
+        # its lower throughput is irrelevant at this scale.
+        db_engine = "sqlite"
+
+        # Single-node cluster. Raising this is NOT supported by this chart
+        # (needs multiple nodes, a StatefulSet and manual `garage layout`).
+        replication_factor = 1
+
+        # RPC is node-to-node only; with one node it talks to itself.
+        rpc_bind_addr = "[::]:3901"
+        rpc_public_addr = "127.0.0.1:3901"
+
+        [s3_api]
+        # Region S3 clients must send (aws-sdk: region: "garage").
+        s3_region = "garage"
+        api_bind_addr = "[::]:3900"
+        root_domain = ".s3.{{ .Values.global.env }}.{{ .Values.global.domain }}"
+
+        [admin]
+        # /metrics + admin API. admin_token comes from env; metrics_token is
+        # deliberately UNSET so Prometheus can scrape /metrics without auth —
+        # the admin port is cluster-internal only (garage-admin Service, no
+        # Ingress).
+        api_bind_addr = "[::]:3903"
+
+# ----- PVCs ------------------------------------------------------------------
+# Both PVCs are excluded from ArgoCD prune AND from Application-deletion
+# cascade (Prune=false,Delete=false): removing the app NEVER deletes data.
+# Actual deletion is an explicit opt-in:
+#   microk8s kubectl -n objectstore delete pvc garage-data filestash-state
+garage-data:
+  pvc:
+    enabled: true
+    name: garage-data
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    accessModes:
+      - ReadWriteOnce
+    # storageClassName omitted — falls back to .Values.global.storageClass.
+    storageSize: "50Gi"
+
+filestash-state:
+  pvc:
+    enabled: true
+    name: filestash-state
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    accessModes:
+      - ReadWriteOnce
+    storageSize: "1Gi"
+
+# ----- Public S3 API (s3.<env>.<DOMAIN_SUFFIX>) ------------------------------
+# For S3 clients OUTSIDE the cluster (e.g. the Node.js app during local
+# development, or other clusters). In-cluster clients should prefer the
+# ClusterIP Service (http://garage-s3.objectstore.svc.cluster.local:3900);
+# a CoreDNS rewrite additionally maps this public hostname onto Traefik for
+# pods that use the public URL (apps/coredns values, zot pattern). No auth
+# middleware: Garage itself rejects unsigned/invalid S3 requests.
+ingress-s3:
+  ingress:
+    enabled: true
+    className: public
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    host: 's3.{{ .Values.global.env }}.{{ .Values.global.domain }}'
+    paths:
+      - path: /
+        pathType: Prefix
+        serviceName: garage-s3
+        servicePort: 3900
+    tls:
+      enabled: true
+      secretName: 'objectstore-s3-{{ .Values.global.env }}-tls'
+
+# ----- Filestash UI (files.<env>.<DOMAIN_SUFFIX>) ----------------------------
+# Authentik forwardAuth gate (same SSO as dbgate / seq / tekton). The IdP-side
+# ProxyProvider blueprint lives at setup-kubernetes/manifests/idp/blueprints/
+# 99-proxy-filestash.yaml — re-run --deploy-idp after changing it. The apex
+# session cookie carries across all gated subdomains, so one login covers
+# everything. Filestash's own admin console (/admin) is ADDITIONALLY protected
+# by the bcrypt admin password from Vault (seeded config).
+ingress-files:
+  ingress:
+    enabled: true
+    className: public
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
+    host: 'files.{{ .Values.global.env }}.{{ .Values.global.domain }}'
+    paths:
+      - path: /
+        pathType: Prefix
+        serviceName: 'objectstore-{{ .Values.global.env }}-filestash'
+        servicePort: 8334
+    tls:
+      enabled: true
+      secretName: 'objectstore-files-{{ .Values.global.env }}-tls'
+
+# ----- ExternalSecret: Garage env vars from Vault ----------------------------
+# Vault path supplied per-env (vaultPath: <env>/app/objectstore). The
+# secretKeys ARE the env var names so the Deployment's secretKeyRefs read 1:1.
+externalsecret-garage:
+  externalSecret:
+    enabled: true
+    name: garage-env
+    targetSecretName: garage-env
+    data:
+      - secretKey: GARAGE_RPC_SECRET
+        property: rpc-secret
+      - secretKey: GARAGE_ADMIN_TOKEN
+        property: admin-token
+      - secretKey: GARAGE_DEFAULT_ACCESS_KEY
+        property: access-key-id
+      - secretKey: GARAGE_DEFAULT_SECRET_KEY
+        property: secret-access-key
+
+# ----- ExternalSecret: Filestash first-boot config.json ----------------------
+# ESO v2 template assembles the full seed config.json from the Vault
+# properties. The {{ .x }} expressions below are ESO templating, NOT Helm —
+# values files are data, so they pass through Helm untouched. Filestash merges
+# defaults for any section missing here on first save.
+#   auth.admin            — bcrypt hash gating the /admin console.
+#   connections[0]        — the S3 backend tile users land on: endpoint is the
+#                           stable in-cluster Service (HTTP — no TLS inside
+#                           the cluster), path-style is forced by Filestash's
+#                           S3 backend, "path" roots the UI at the bucket.
+# NOTE the bucket name "documents" + region "garage" are hardcoded here AND in
+# garage.env/garage.toml above — ESO templates can't read Helm values; keep in
+# sync manually (single place each).
+externalsecret-filestash:
+  externalSecret:
+    enabled: true
+    name: filestash-seed
+    targetSecretName: filestash-seed
+    template:
+      engineVersion: v2
+      data:
+        config.json: |
+          {
+            "general": {
+              "name": "documents"
+            },
+            "auth": {
+              "admin": "{{ .admin_hash }}"
+            },
+            "connections": [
+              {
+                "label": "documents",
+                "type": "s3",
+                "advanced": true,
+                "endpoint": "http://garage-s3.objectstore.svc.cluster.local:3900",
+                "access_key_id": "{{ .access_key_id }}",
+                "secret_access_key": "{{ .secret_access_key }}",
+                "region": "garage",
+                "path": "documents"
+              }
+            ]
+          }
+    data:
+      - secretKey: admin_hash
+        property: filestash-admin-password-hash
+      - secretKey: access_key_id
+        property: access-key-id
+      - secretKey: secret_access_key
+        property: secret-access-key
+
+# ----- ESO SecretStore in this namespace -------------------------------------
+secret-store:
+  enabled: true
+  name: vault-backend
+  # vaultUrl falls back to .Values.global.vaultUrl (platform per-env values).
+
+# ----- ServiceMonitor + alerts -----------------------------------------------
+monitoring:
+  serviceMonitors:
+    objectstore-garage:
+      enabled: true
+      namespaces:
+        - objectstore
+      # Matches the raw garage-admin Service (templates/garage-services.yaml)
+      # by its static name label — env-independent on purpose (the monitoring
+      # chart does NOT tpl matchLabels).
+      matchLabels:
+        app.kubernetes.io/name: garage-admin
+      endpoints:
+        - port: metrics
+          path: /metrics
+          interval: 30s
+  prometheusRules:
+    objectstore:
+      enabled: true
+      groups:
+        - name: objectstore
+          interval: 60s
+          rules:
+            - alert: GarageDown
+              expr: up{job=~".*garage.*"} == 0
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Garage S3 store has been unreachable for 5+ minutes"
+                description: "Document uploads/downloads are failing (Node.js app + Filestash). Check `microk8s kubectl -n objectstore get pods,events`."
+
+            - alert: GarageStorageFillingUp
+              expr: (kubelet_volume_stats_available_bytes{persistentvolumeclaim="garage-data"}
+                     / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim="garage-data"}) < 0.20
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Garage object-store PVC has < 20% free space"
+                description: "Grow the PVC or clean up old objects. Usage check: kubectl -n objectstore exec deploy/objectstore-<env>-garage -- /garage stats"

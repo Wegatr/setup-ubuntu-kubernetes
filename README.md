@@ -50,8 +50,9 @@ All examples below use `<env>` as a placeholder — replace with one of
 │                         secret-store, monitoring.
 │
 ├── apps/                 Per-app umbrella Helm charts (one dir per app):
-│                         coredns, mongodb, postgresql, redis, postfix, seq,
-│                         dbgate, observability, tekton, image-builder.
+│                         coredns, mongodb, postgresql, redis, objectstore
+│                         (Garage S3 + Filestash UI), postfix, seq, dbgate,
+│                         observability, tekton, registry, image-builder.
 │
 └── argocd/               Per-env GitOps bootstrap:
     ├── dev/
@@ -379,7 +380,7 @@ Eleven library charts that other apps pull in as Helm dependencies:
 | `deployment` | Deployment + Service (env vars `tpl`'d at render time) |
 | `ingress` | Ingress with auto-injected `cert-manager.io/cluster-issuer` and `tpl`'d host / serviceName / tls.secretName |
 | `middleware` | Traefik `Middleware` CRD (BasicAuth, rate-limit, …) |
-| `pvc` | PVC defaulting to `global.storageClass` |
+| `pvc` | PVC defaulting to `global.storageClass`; optional `annotations` (e.g. ArgoCD `Prune=false,Delete=false` data protection) |
 | `rbac` | ServiceAccount + Role + RoleBinding scaffold |
 | `configmap` | Generic ConfigMap |
 | `cronjob` | CronJob scaffold |
@@ -398,6 +399,7 @@ Eleven library charts that other apps pull in as Helm dependencies:
 | `registry` | 7 | **DEV-only.** Zot OCI registry at `zot.dev.<DOMAIN_SUFFIX>` — single platform-wide private image registry; TEST + PROD pull from this over the public internet. |
 | `mongodb` | 10 | Bitnami mongodb (3-node ReplicaSet) + prometheus-mongodb-exporter |
 | `postgresql` | 10 | Bitnami postgresql (standalone) + built-in metrics exporter |
+| `objectstore` | 10 | Garage S3-compatible object store (`s3.<env>.<DOMAIN_SUFFIX>` + in-cluster Service) + Filestash web file manager (`files.<env>.<DOMAIN_SUFFIX>`, IdP-gated). See [`apps/objectstore/README.md`](apps/objectstore/README.md) |
 | `postfix` | 20 | Send-only SMTP relay (bokysan chart) with DKIM/SPF/DMARC |
 | `redis` | 20 | Bitnami redis (standalone, AOF on, no auth) + redis exporter |
 | `seq` | 20 | Datalust Seq structured-log UI |
@@ -421,7 +423,7 @@ hold per-env overrides.
   StatefulSet drift).
 - `apps/projects.yaml` — `AppProject` resources grouping the platform's own
   apps by blast-radius tier: **core** (external-secrets, coredns), **data**
-  (mongodb, postgresql, redis), **services** (postfix, seq, dbgate),
+  (mongodb, postgresql, redis, objectstore), **services** (postfix, seq, dbgate),
   **observability**, **cicd** (tekton, registry, image-builder — dev only).
   Each pins `sourceRepos` to this repo, `destinations` to the exact namespaces
   its apps use, and the cluster-scoped resource kinds they may create
@@ -544,6 +546,46 @@ push-user credentials. For a consumer workload to **pull** from
   their ExternalSecret is force-synced (annotate with `force-sync=`).
   Image-builder picks up the new push-user creds on its next pod restart.
 
+## Object storage (Garage S3 + Filestash)
+
+Every env runs `apps/objectstore/` — an S3-compatible object store for
+application documents (Office files, PDFs, images) with a human-facing web UI.
+Full documentation (provisioning model, uninstall, version refresh) lives in
+[`apps/objectstore/README.md`](apps/objectstore/README.md).
+
+- **Garage** (deuxfleurs, AGPL) serves the S3 API. In-cluster workloads use
+  `http://garage-s3.objectstore.svc.cluster.local:3900`; external clients use
+  `https://s3.<env>.<DOMAIN_SUFFIX>` (LE cert). The `documents` bucket + one
+  access key are auto-created on first boot from Vault-seeded env vars —
+  no manual `garage` CLI steps.
+- **Filestash** at `https://files.<env>.<DOMAIN_SUFFIX>` — browse / upload /
+  download via the browser, behind the platform IdP (same single sign-on as
+  dbgate / Seq / Tekton). Its S3 connection to Garage is preconfigured.
+
+New config/secret surface:
+
+- DNS pre-flight: `s3.<env>.<DOMAIN_SUFFIX>` + `files.<env>.<DOMAIN_SUFFIX>`
+  → host public IPv4 (covered by a wildcard record).
+- `configs/secrets.<env>`: the `objectstore` section (`OBJECTSTORE_*` vars —
+  RPC secret, admin token, S3 key pair, Filestash admin password + hash);
+  re-run `--seed-vault` after filling it in.
+- IdP: blueprint `manifests/idp/blueprints/99-proxy-filestash.yaml` —
+  re-run `--deploy-idp` once per host so the SSO gate exists.
+
+Node.js connection (`@aws-sdk/client-s3`):
+
+```js
+const s3 = new S3Client({
+  endpoint: "https://s3.<env>.<DOMAIN_SUFFIX>", // or the in-cluster Service URL
+  region: "garage",
+  forcePathStyle: true,
+  credentials: { accessKeyId: "GK…", secretAccessKey: "…" }, // vault kv get secret/<env>/app/objectstore
+});
+```
+
+Full PutObject/GetObject round-trip example:
+[`apps/objectstore/README.md`](apps/objectstore/README.md).
+
 ## Resource footprint
 
 Each env (DEV / TEST / PROD) runs on its **own** cluster — never co-located.
@@ -567,6 +609,8 @@ etc.); memory uses binary IEC suffixes. "req → lim" is request → limit.
 | postgresql | postgres-exporter (sidecar) | – | `50m → 200m` | `64Mi → 256Mi` | – |
 | redis | redis master | 1 | `500m → 2` | `2Gi → 6Gi` | `10 Gi` |
 | redis | redis-exporter | 1 | `50m → 200m` | `64Mi → 256Mi` | — |
+| objectstore | garage (S3) | 1 | `100m → 1` | `512Mi → 1Gi` | `50 Gi` |
+| objectstore | filestash | 1 | `100m → 1` | `256Mi → 1Gi` | `1 Gi` |
 | postfix | mail | 1 | `50m → 250m` | `64Mi → 256Mi` | `1 Gi` |
 | seq | seq | 1 | `250m → 1` | `1Gi → 4Gi` | `50 Gi` |
 | dbgate | app | 1 | `100m → 500m` | `256Mi → 1Gi` | `1 Gi` |
@@ -594,9 +638,9 @@ DEV totals (always-running, request-side only — limits are typically 4× highe
 
 | | Sum |
 |---|---|
-| CPU requests | ~ `3.0 vCPU` (excl. Tekton + observability chart defaults) |
-| Memory requests | ~ `8.4 GiB` (excl. Tekton + observability chart defaults) |
-| PVC provisioned | ~ `254 GiB` (60 mongo + 20 pg + 10 redis + 1 postfix + 50 seq + 1 dbgate + 30 prom + 2 alertmanager + 5 grafana + 50 loki + 20 tempo + 5 trivy) |
+| CPU requests | ~ `3.2 vCPU` (excl. Tekton + observability chart defaults) |
+| Memory requests | ~ `9.2 GiB` (excl. Tekton + observability chart defaults) |
+| PVC provisioned | ~ `305 GiB` (60 mongo + 20 pg + 10 redis + 50 garage + 1 filestash + 1 postfix + 50 seq + 1 dbgate + 30 prom + 2 alertmanager + 5 grafana + 50 loki + 20 tempo + 5 trivy) |
 
 ### TEST
 
@@ -615,6 +659,8 @@ Identical to DEV **with two exceptions**:
 | postgresql | postgres-exporter (sidecar) | – | `50m → 200m` | `64Mi → 256Mi` | – |
 | redis | redis master | 1 | `500m → 2` | `2Gi → 6Gi` | `10 Gi` |
 | redis | redis-exporter | 1 | `50m → 200m` | `64Mi → 256Mi` | — |
+| objectstore | garage (S3) | 1 | `100m → 1` | `512Mi → 1Gi` | `50 Gi` |
+| objectstore | filestash | 1 | `100m → 1` | `256Mi → 1Gi` | `1 Gi` |
 | postfix | mail | 1 | `50m → 250m` | `64Mi → 256Mi` | `1 Gi` |
 | seq | seq | 1 | `250m → 1` | `1Gi → 4Gi` | `50 Gi` |
 | dbgate | app | 1 | `100m → 500m` | `256Mi → 1Gi` | `1 Gi` |
@@ -625,7 +671,7 @@ Identical to DEV **with two exceptions**:
 | observability | tempo | 1 | chart default | chart default | `20 Gi` |
 | observability | alloy | DaemonSet | chart default | chart default | — |
 
-TEST totals: ~ `2.9 vCPU` requests, ~ `8.4 GiB` memory requests, **~ `249 GiB` PVC**.
+TEST totals: ~ `3.1 vCPU` requests, ~ `9.2 GiB` memory requests, **~ `300 GiB` PVC**.
 
 ### PROD
 
@@ -642,6 +688,8 @@ Identical to TEST **with one exception**:
 | postgresql | postgres-exporter (sidecar) | – | `50m → 200m` | `64Mi → 256Mi` | – |
 | redis | redis master | 1 | `500m → 2` | `2Gi → 6Gi` | `10 Gi` |
 | redis | redis-exporter | 1 | `50m → 200m` | `64Mi → 256Mi` | — |
+| objectstore | garage (S3) | 1 | `100m → 1` | `512Mi → 1Gi` | `50 Gi` |
+| objectstore | filestash | 1 | `100m → 1` | `256Mi → 1Gi` | `1 Gi` |
 | postfix | mail | 1 | `50m → 250m` | `64Mi → 256Mi` | `1 Gi` |
 | seq | seq | 1 | `250m → 1` | `1Gi → 4Gi` | `50 Gi` |
 | dbgate | app | 1 | `100m → 500m` | `256Mi → 1Gi` | `1 Gi` |
@@ -652,7 +700,7 @@ Identical to TEST **with one exception**:
 | observability | tempo | 1 | chart default | chart default | `20 Gi` |
 | observability | alloy | DaemonSet | chart default | chart default | — |
 
-PROD totals: ~ `3.2 vCPU` requests, ~ `8.9 GiB` memory requests, **~ `279 GiB` PVC**
+PROD totals: ~ `3.4 vCPU` requests, ~ `9.7 GiB` memory requests, **~ `330 GiB` PVC**
 (postgresql `20 Gi → 50 Gi` is the only delta from TEST).
 
 ### Adjusting per-env resources

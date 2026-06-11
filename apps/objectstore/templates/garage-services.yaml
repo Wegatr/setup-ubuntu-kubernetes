@@ -1,0 +1,53 @@
+{{- /*
+Stable, env-independent Services for the Garage pod (the deployment library
+chart's bundled Service is disabled in values-common.yaml — its name would
+carry the release/env prefix, but the Filestash seed config.json is rendered
+by ESO templating which cannot see Helm values, so it needs a constant
+in-namespace DNS name).
+
+  garage-s3     :3900  — S3 API. Consumed by Filestash, in-cluster Node.js
+                         apps, and the ingress-s3 Ingress backend.
+  garage-admin  :3903  — admin API + Prometheus /metrics. Cluster-internal
+                         only (no Ingress); carries the static name label the
+                         monitoring ServiceMonitor selects on.
+
+Selectors match the pod labels the deployment library chart stamps
+(common.selectorLabels with .Chart.Name = the dependency alias `garage`).
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-s3
+  labels:
+    app.kubernetes.io/name: garage-s3
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 3900
+      targetPort: 3900
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: garage
+    app.kubernetes.io/instance: {{ .Release.Name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-admin
+  labels:
+    app.kubernetes.io/name: garage-admin
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 3903
+      targetPort: 3903
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: garage
+    app.kubernetes.io/instance: {{ .Release.Name }}
