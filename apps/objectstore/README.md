@@ -40,8 +40,8 @@ the Node.js app and Filestash — simplest declarative setup; tradeoff is shared
 rotation and no per-consumer audit. Need separation later? `garage key import`
 a second key via the admin CLI inside the pod and grant it on the bucket.
 
-Secrets are authored in `setup-kubernetes/configs/secrets.<env>` (see the
-`objectstore` section in `configs/secrets.example` for generation commands)
+Secrets are authored in `setup-kubernetes/secrets/secrets.<env>` (see the
+`objectstore` section in `secrets/secrets.example` for generation commands)
 and pushed with `sudo ./setup-kubernetes.sh --<env> --seed-vault`, which also
 adds the `objectstore` namespace to Vault's ESO role.
 
@@ -52,7 +52,7 @@ vault kv get -field=access-key-id     secret/<env>/app/objectstore
 vault kv get -field=secret-access-key secret/<env>/app/objectstore
 ```
 
-(Or read them straight from your `configs/secrets.<env>` file.)
+(Or read them straight from your `secrets/secrets.<env>` file.)
 
 ## Node.js usage (@aws-sdk/client-s3)
 
@@ -140,7 +140,7 @@ ESO templates can't read Helm values — keep them in sync when changing.
    microk8s kubectl -n objectstore delete pvc garage-data filestash-state
    microk8s kubectl delete namespace objectstore
    ```
-3. Optional cleanup: drop the `objectstore` rows from `configs/secrets.<env>`
+3. Optional cleanup: drop the `objectstore` rows from `secrets/secrets.<env>`
    + re-run `--seed-vault`, remove the CoreDNS `s3.<env>` rewrite, and remove
    the Filestash IdP blueprint + outpost-binding entry + `--deploy-idp`.
 

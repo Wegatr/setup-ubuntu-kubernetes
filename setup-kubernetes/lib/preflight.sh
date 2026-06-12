@@ -30,7 +30,7 @@ validate_config() {
 # HTTP-01 challenge runs a self-check that resolves the ingress hostname via
 # CoreDNS → public upstream resolvers; if the name doesn't resolve, the
 # Challenge stays "pending" forever and the per-app deploy_* functions
-# eventually time out and save a failure placeholder to ~/secrets/<app>-<env>.txt
+# eventually time out and save a failure placeholder to setup-kubernetes/secrets/<app>-<env>.txt
 # (most importantly: vault never gets initialized, so the unseal keys are lost).
 #
 # Fail fast here with the host's detected public IPv4 so the user can fix DNS

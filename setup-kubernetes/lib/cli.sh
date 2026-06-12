@@ -55,7 +55,7 @@ INFRASTRUCTURE:
     --install-idp / --install-kube / --install-argocd / --install-vault (aliases)
     --uninstall-idp / --uninstall-kube / --uninstall-argocd / --uninstall-vault
     --upgrade-idp / --upgrade-kube / --upgrade-argocd / --upgrade-vault
-    --seed-vault                  Write secrets from configs/secrets.<env>
+    --seed-vault                  Write secrets from secrets/secrets.<env>
                                   into Vault (KV-v2). Re-runnable: each call
                                   replaces the latest version of each entry.
 
@@ -186,8 +186,13 @@ init_flag_defaults() {
     SHOW_CONFIG=false
     RUN_CHECK=false
 
-    # CREDENTIALS_DIR depends on MICROK8S_USER (set by the config file).
-    CREDENTIALS_DIR="/home/${MICROK8S_USER}/secrets"
+    # CREDENTIALS_DIR is the directory generated credential files
+    # ({vault,argocd,kube,idp}-<env>.txt) are WRITTEN to. Consolidated into the
+    # repo-local SECRETS_DIR (setup-kubernetes/secrets) alongside the seed
+    # inputs — one place for every secret, backup/restore-able as a unit.
+    # The legacy /home/${MICROK8S_USER}/secrets layout is still READ via
+    # resolve_secret_file() (lib/lifecycle.sh) on hosts not yet migrated.
+    CREDENTIALS_DIR="${SECRETS_DIR}"
 }
 
 # Parse command-line arguments
@@ -485,7 +490,7 @@ INFRASTRUCTURE DEPLOYMENT OPTIONS:
     --upgrade-vault               Upgrade Vault to latest version
     --seed-vault                  Configure Vault prereqs (kv-v2, kubernetes
                                   auth, external-secrets policy + role) and
-                                  write configs/secrets.<env> into Vault.
+                                  write secrets/secrets.<env> into Vault.
                                   Idempotent — safe to re-run; each call
                                   supersedes the previous KV-v2 version.
                                   Composes with --deploy-vault for a one-shot

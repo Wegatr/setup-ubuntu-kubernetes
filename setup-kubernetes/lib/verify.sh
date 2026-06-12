@@ -327,10 +327,11 @@ run_health_check() {
     echo
 
     # --- Credentials ---
+    # Resolved via resolve_secret_file so this works whether the files live in
+    # the consolidated secrets/ dir or the legacy ~/secrets on an un-migrated host.
     log_info "--- Credentials ---"
-    local cred_dir="/home/${MICROK8S_USER}/secrets"
-    for app in kube argocd vault; do
-        local cred_file="${cred_dir}/${app}-${DEPLOY_ENV}.txt"
+    for app in kube argocd vault idp; do
+        local cred_file; cred_file="$(resolve_secret_file "${app}-${DEPLOY_ENV}.txt")"
         if [[ -f "${cred_file}" ]]; then
             _pass "${app}-${DEPLOY_ENV}.txt exists"
         else

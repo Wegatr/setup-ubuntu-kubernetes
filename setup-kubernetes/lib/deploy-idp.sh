@@ -11,7 +11,7 @@
 # What this function does:
 #   1. Generate first-time secrets (admin password, secret_key, 4 OIDC
 #      client_secrets, postgres+redis passwords) and save them all to
-#      ~/secrets/idp-<env>.txt. On re-run, READ them back from that file so
+#      setup-kubernetes/secrets/idp-<env>.txt. On re-run, READ them back from that file so
 #      no values rotate.
 #   2. Create a ConfigMap from manifests/idp/blueprints/*.yaml (mounted
 #      into Authentik pods at /blueprints/local; auto-applied at startup).
@@ -39,7 +39,10 @@
 # back so secrets DON'T rotate (rotating secret_key would invalidate all
 # existing OIDC sessions + JWT signatures).
 _idp_generate_or_load_secrets() {
-    local cred_file="${CREDENTIALS_DIR}/idp-${DEPLOY_ENV}.txt"
+    # Prefer the consolidated secrets/ dir; fall back to legacy ~/secrets on an
+    # un-migrated host. save_credential() below always (re)writes into
+    # SECRETS_DIR, so the file lands in its new home on first run.
+    local cred_file; cred_file="$(resolve_secret_file "idp-${DEPLOY_ENV}.txt")"
 
     if [[ -f "${cred_file}" ]]; then
         log_info "Found existing ${cred_file} — reading current values"
@@ -276,7 +279,7 @@ deploy_idp() {
     update_helm_repos || return 1
     create_namespace_if_not_exists "${IDP_NAMESPACE}" || return 1
 
-    # Generate-or-load all the random values, save to ~/secrets/idp-<env>.txt.
+    # Generate-or-load all the random values, save to setup-kubernetes/secrets/idp-<env>.txt.
     _idp_generate_or_load_secrets
 
     # Mount the secrets + env for Blueprint interpolation.

@@ -6,10 +6,11 @@
 #                   KUBE_*, ARGOCD_*, VAULT_*.
 [[ -z "${_COMMON_KUBERNETES_LOADED:-}" ]] && { echo "lib/lifecycle.sh requires common-kubernetes.sh" >&2; exit 1; }
 
-# Save credentials to a per-app file: ~/secrets/<app>-<env>.txt
+# Save credentials to a per-app file: setup-kubernetes/secrets/<app>-<env>.txt
+# (CREDENTIALS_DIR is repointed to the repo-local SECRETS_DIR — see lib/cli.sh).
 # Usage: save_credential "app-name" "key=value" ...
 # Bug-fixed: chowns the directory too — without this, the script-as-root
-# leaves /home/<user>/secrets/ owned by root, and any later non-root write
+# leaves the secrets dir owned by root, and any later non-root write
 # (e.g. running deploy_vault outside sudo) silently fails the redirect.
 save_credential() {
     local app="$1"
@@ -34,6 +35,32 @@ save_credential() {
     chown "${MICROK8S_USER}:${MICROK8S_USER}" "${cred_file}"
     chmod 600 "${cred_file}"
     log_info "Credentials saved to: ${cred_file}"
+}
+
+# resolve_secret_file <basename> — print the path of an EXISTING secret or seed
+# file, preferring the consolidated SECRETS_DIR (setup-kubernetes/secrets) but
+# falling back to the legacy locations so a host whose files have not yet been
+# moved keeps working:
+#   1. ${SECRETS_DIR}/<f>                     (new home — creds + seed inputs)
+#   2. /home/${MICROK8S_USER}/secrets/<f>     (legacy generated-credential dir)
+#   3. ${CONFIGS_DIR}/<f>                      (legacy seed-input dir)
+# If none exist it returns the canonical SECRETS_DIR path, so a caller's
+# "not found" error points at the new layout.
+#
+# READ-ONLY: this never moves anything. It is a TRANSITIONAL compat shim for the
+# secrets consolidation — once every host's files live under SECRETS_DIR the two
+# fallback branches can be deleted.
+resolve_secret_file() {
+    local f="$1"
+    if [[ -f "${SECRETS_DIR}/${f}" ]]; then
+        printf '%s\n' "${SECRETS_DIR}/${f}"
+    elif [[ -f "/home/${MICROK8S_USER}/secrets/${f}" ]]; then
+        printf '%s\n' "/home/${MICROK8S_USER}/secrets/${f}"
+    elif [[ -f "${CONFIGS_DIR}/${f}" ]]; then
+        printf '%s\n' "${CONFIGS_DIR}/${f}"
+    else
+        printf '%s\n' "${SECRETS_DIR}/${f}"
+    fi
 }
 
 uninstall_idp() {
@@ -62,17 +89,17 @@ uninstall_idp() {
     kubectl delete secret -n kubernetes-dashboard headlamp-oidc --ignore-not-found
     kubectl delete secret -n vault vault-oidc --ignore-not-found
 
-    # Credentials file ~/secrets/idp-<env>.txt is DELIBERATELY preserved (same
+    # Credentials file secrets/idp-<env>.txt is DELIBERATELY preserved (same
     # pattern as Vault unseal keys). It is the source of truth; the next
     # --deploy-idp reads it back and restores Authentik to byte-identical
     # secret_key / bootstrap_password / client_secrets — so consumer apps
     # (argocd-oidc, headlamp-oidc, vault-oidc K8s Secrets + the entries in
-    # configs/secrets.<env>) STAY VALID across --uninstall + --deploy cycles.
+    # secrets/secrets.<env>) STAY VALID across --uninstall + --deploy cycles.
     # No need to re-update secrets.<env> or re-deploy ArgoCD/Headlamp/Vault.
     #
     # To FORCE fresh secrets (e.g. genuine rotation event), delete the file
     # manually before re-installing:
-    #   rm ~/secrets/idp-${DEPLOY_ENV}.txt
+    #   rm setup-kubernetes/secrets/idp-${DEPLOY_ENV}.txt
     log_ok "IdP (Authentik) uninstalled (credentials in ${CREDENTIALS_DIR}/idp-${DEPLOY_ENV}.txt preserved)"
     log_info "Re-run: sudo ./setup-kubernetes.sh --${DEPLOY_ENV} --deploy-idp"
 }

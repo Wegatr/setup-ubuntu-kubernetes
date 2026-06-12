@@ -131,7 +131,7 @@ deploy_vault() {
         # Don't clobber an existing credentials file: if init succeeded on a
         # previous run, the unseal keys are in there and a "Status: Already
         # initialized" placeholder would erase them.
-        local existing_cred="${CREDENTIALS_DIR}/vault-${DEPLOY_ENV}.txt"
+        local existing_cred; existing_cred="$(resolve_secret_file "vault-${DEPLOY_ENV}.txt")"
         if [[ ! -f "${existing_cred}" ]]; then
             save_credential "vault" \
                 "URL: https://${VAULT_HOST}" \
@@ -249,11 +249,13 @@ enable_vault_oidc() {
         return 0
     fi
 
-    # The Vault root token lives in ~/secrets/vault-<env>.txt. Parse it.
+    # The Vault root token lives in setup-kubernetes/secrets/vault-<env>.txt
+    # (legacy ~/secrets is still honoured via resolve_secret_file). Parse it.
+    local vault_cred; vault_cred="$(resolve_secret_file "vault-${DEPLOY_ENV}.txt")"
     local root_token
-    root_token=$(awk -F': ' '/^Root Token:/{print $2}' "${CREDENTIALS_DIR}/vault-${DEPLOY_ENV}.txt" 2>/dev/null)
+    root_token=$(awk -F': ' '/^Root Token:/{print $2}' "${vault_cred}" 2>/dev/null)
     if [[ -z "${root_token}" ]]; then
-        log_warn "Vault root token not found in ${CREDENTIALS_DIR}/vault-${DEPLOY_ENV}.txt — skipping OIDC config"
+        log_warn "Vault root token not found in ${vault_cred} — skipping OIDC config"
         return 0
     fi
 
@@ -281,7 +283,7 @@ enable_vault_oidc() {
             # users via the default role so a single-operator setup can
             # manage all kv-v2 secrets through the UI. Idempotent: vault
             # policy write overwrites whatever is there. Root token still
-            # exists for emergency recovery (~/secrets/vault-<env>.txt).
+            # exists for emergency recovery (setup-kubernetes/secrets/vault-<env>.txt).
             cat <<POLICY | vault policy write admin -
 path "*" {
   capabilities = ["create", "read", "update", "delete", "list", "sudo", "patch"]

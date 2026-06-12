@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lib/seed-vault.sh — Vault seed step. Reads configs/secrets.<env>, configures
+# lib/seed-vault.sh — Vault seed step. Reads secrets/secrets.<env>, configures
 # the prereqs ESO needs (kv-v2 mount, kubernetes auth, external-secrets policy
 # + role with bound app namespaces), then writes one KV-v2 entry per app from
 # VAULT_SCHEMA.
@@ -11,10 +11,11 @@
 #   - `vault kv put` on a KV-v2 mount: creates a new VERSION, the current view
 #     becomes the new values (older versions stay in history for rollback,
 #     Vault keeps the last 10 by default)
-# Re-running with new values in configs/secrets.<env> replaces what apps see.
+# Re-running with new values in secrets/secrets.<env> replaces what apps see.
 #
 # Globals consumed (set by lib/cli.sh):
-#   VAULT_NAMESPACE, VAULT_HOST, DEPLOY_ENV, CONFIGS_DIR, CREDENTIALS_DIR
+#   VAULT_NAMESPACE, VAULT_HOST, DEPLOY_ENV, SECRETS_DIR (+ CONFIGS_DIR /
+#   CREDENTIALS_DIR, still read by resolve_secret_file's legacy fallback)
 [[ -z "${_COMMON_KUBERNETES_LOADED:-}" ]] && { echo "lib/seed-vault.sh requires common-kubernetes.sh" >&2; exit 1; }
 
 # ----------------------------------------------------------------------------
@@ -76,13 +77,15 @@ _seed_vault_build_entry_json() {
 seed_vault() {
     log_step "Seeding Vault..."
 
-    local secrets_file="${CONFIGS_DIR}/secrets.${DEPLOY_ENV}"
-    local creds_file="${CREDENTIALS_DIR}/vault-${DEPLOY_ENV}.txt"
+    # Prefer the consolidated secrets/ dir; resolve_secret_file falls back to
+    # legacy configs/ (seed input) and ~/secrets (creds) on un-migrated hosts.
+    local secrets_file; secrets_file="$(resolve_secret_file "secrets.${DEPLOY_ENV}")"
+    local creds_file; creds_file="$(resolve_secret_file "vault-${DEPLOY_ENV}.txt")"
 
     # --- Sanity checks ------------------------------------------------------
     if [[ ! -f "${secrets_file}" ]]; then
         log_error "Secrets file not found: ${secrets_file}"
-        log_error "Copy setup-kubernetes/configs/secrets.example to ${secrets_file} and fill it in."
+        log_error "Copy setup-kubernetes/secrets/secrets.example to setup-kubernetes/secrets/secrets.${DEPLOY_ENV} and fill it in."
         return 1
     fi
 
@@ -139,7 +142,7 @@ seed_vault() {
     # shellcheck disable=SC1090
     source "${secrets_file}"
 
-    # IDP secrets canonical source: ~/secrets/idp-<env>.txt is what
+    # IDP secrets canonical source: setup-kubernetes/secrets/idp-<env>.txt is what
     # deploy_idp generates/preserves on every install. Override the
     # IDP_* shell vars sourced above so seed-vault always pushes the
     # CURRENT live IdP values to Vault — even if the per-host
@@ -147,7 +150,7 @@ seed_vault() {
     # dbgate idp-postgres, and any other ESO consumer that pulls from
     # `secret/<env>/system/idp/*` end up with a stale client_secret /
     # password and OIDC token exchange fails with `invalid_client`.
-    local idp_file="${CREDENTIALS_DIR}/idp-${DEPLOY_ENV}.txt"
+    local idp_file; idp_file="$(resolve_secret_file "idp-${DEPLOY_ENV}.txt")"
     if [[ -f "${idp_file}" ]]; then
         local v
         v=$(awk -F': ' '/^Admin password:/  {print $2; exit}' "${idp_file}") && [[ -n "$v" ]] && IDP_BOOTSTRAP_PASSWORD="$v"

@@ -44,17 +44,30 @@ OPTIONS:
 EOF
 }
 
-# Expand glob patterns from SECRET_FILES and return matching files
+# Expand the SECRET_FILES globs (relative to SCRIPT_DIR) into existing files,
+# skipping the tracked *.example template. Paths are emitted RELATIVE to
+# SCRIPT_DIR so the tar archive restores into the current repo on any host.
+# Runs in the process-substitution subshell of its callers, so the `cd` does
+# not leak into the main script's working directory.
 resolve_secret_files() {
-    local files=()
+    local files=() pattern expanded f
+    cd "${SCRIPT_DIR}" || return 1
     for pattern in "${SECRET_FILES[@]}"; do
         # shellcheck disable=SC2206
-        local expanded=( ${pattern} )
+        expanded=( ${pattern} )
         for f in "${expanded[@]}"; do
-            [[ -f "$f" ]] && files+=("$f")
+            [[ -f "$f" ]] || continue
+            [[ "$f" == *.example ]] && continue
+            files+=("$f")
         done
     done
-    printf '%s\n' "${files[@]}"
+    # Emit ONLY when non-empty: `printf '%s\n' "${empty[@]}"` would still print a
+    # single newline, which mapfile turns into a 1-element array holding "" — that
+    # silently defeats the callers' `${#files[@]} -eq 0` guard and would make
+    # do_backup run `tar ""` and clobber secrets.enc with garbage.
+    if (( ${#files[@]} )); then
+        printf '%s\n' "${files[@]}"
+    fi
 }
 
 do_backup() {
@@ -87,16 +100,20 @@ do_backup() {
     fi
 
     log_info "Encrypting ${#files[@]} file(s) ..."
-    tar cz --absolute-names "${files[@]}" | \
+    # -C SCRIPT_DIR + relative paths → portable archive (no host-absolute paths).
+    tar -C "${SCRIPT_DIR}" -cz "${files[@]}" | \
         gpg --symmetric --cipher-algo AES256 --batch --passphrase-fd 3 \
         3< <(printf '%s' "${password}") > "${ENCRYPTED_FILE}"
 
     log_ok "Encrypted backup written to ${ENCRYPTED_FILE}"
 
-    # Git add, commit, push
+    # Git add, commit, push. secrets.enc is intentionally NOT gitignored (see
+    # .gitignore) — the encrypted blob is the off-site recovery copy.
     log_info "Committing encrypted backup ..."
     git -C "${SCRIPT_DIR}" add "${ENCRYPTED_FILE}"
-    git -C "${SCRIPT_DIR}" commit -m "Updated encrypted secrets backup"
+    git -C "${SCRIPT_DIR}" \
+        -c user.email='kartalbas@gmail.com' -c user.name='Mehmet Kartalbas' \
+        commit -m "secrets: update encrypted backup (manage-secrets.sh --backup)"
     git -C "${SCRIPT_DIR}" push
 
     log_ok "Backup complete and pushed to origin"
@@ -118,11 +135,13 @@ do_restore() {
     fi
 
     log_info "Decrypting ${ENCRYPTED_FILE} ..."
+    # Archive holds SCRIPT_DIR-relative paths (secrets/...); restore them under
+    # this repo's setup-kubernetes/ regardless of its absolute location.
     gpg --decrypt --batch --passphrase-fd 3 \
         3< <(printf '%s' "${password}") "${ENCRYPTED_FILE}" | \
-        tar xz --absolute-names
+        tar -C "${SCRIPT_DIR}" -xz
 
-    log_ok "Secrets restored"
+    log_ok "Secrets restored into ${SCRIPT_DIR}/secrets/"
 }
 
 do_remove() {
@@ -145,8 +164,11 @@ do_remove() {
         exit 0
     fi
 
+    # files[] are SCRIPT_DIR-relative (resolve_secret_files cd's into SCRIPT_DIR
+    # only inside its subshell), so anchor the rm to SCRIPT_DIR — otherwise a
+    # remove run from another cwd would silently delete nothing.
     for f in "${files[@]}"; do
-        rm -f "$f"
+        rm -f "${SCRIPT_DIR}/$f"
     done
     log_ok "Removed ${#files[@]} file(s)"
 }

@@ -95,7 +95,7 @@ Public entry point (Phase A — DEV cluster only):
    ```
 
 3. **Vault contents** at `dev/app/image-builder` (provision via the
-   `setup-kubernetes/configs/secrets.<env>` schema + `--seed-vault`):
+   `setup-kubernetes/secrets/secrets.<env>` schema + `--seed-vault`):
    - `gitcredentials` — multi-line **git credential-store file**, one
      `https://<user>:<pat>@<host>` record per Git provider the platform
      builds from. The Tekton git-clone Task envFroms this Secret and points

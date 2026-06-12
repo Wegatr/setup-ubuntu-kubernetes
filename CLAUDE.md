@@ -31,6 +31,9 @@ CLAUDE.md                This file.
 
 setup-kubernetes/        Shell installer + per-env configs + control-plane manifests.
                          Run scripts from inside this dir; SCRIPT_DIR is computed.
+                         configs/ holds per-host config.<env> (+ template);
+                         secrets/ holds ALL secrets (generated creds + seed
+                         inputs, gitignored) — see the secrets constraint below.
 
 platform/                Central Helm globals (one source of truth for the
                          platform domain, env name, vaultUrl, alertRecipients,
@@ -89,10 +92,10 @@ This repo is shared between **at least two hosts** that the user operates:
 Each Ubuntu host keeps its own `setup-kubernetes/configs/config.<env>`
 (gitignored). Values like `STORAGE_PATH` differ between them intentionally
 (e.g. `/data` on 26.04, `/mnt/data` on 24.04). **Never unify configs**;
-each is per-host. Same applies to `setup-kubernetes/configs/secrets.<env>`
+each is per-host. Same applies to `setup-kubernetes/secrets/secrets.<env>`
 (also gitignored) — the per-host Vault-seed input file. Updates to the
-checked-in `configs/secrets.example` (template) do NOT propagate to the
-per-host `configs/secrets.<env>` files automatically; the user must
+checked-in `secrets/secrets.example` (template) do NOT propagate to the
+per-host `secrets/secrets.<env>` files automatically; the user must
 hand-update those when the schema grows.
 
 **Any change you push to `main` runs on both hosts** the next time the user
@@ -146,6 +149,27 @@ auto-update on each install.
   host runs on blocks outbound UDP/53 to public resolvers. Leave it on
   unless the user explicitly says the network changed.
 - `STORAGE_PATH=/data` (on this host's `config.dev`) — not `/mnt/data`.
+- **ALL secrets live in one gitignored dir: `setup-kubernetes/secrets/`**
+  (var `SECRETS_DIR`, `setup-kubernetes.sh`; `CREDENTIALS_DIR` in `lib/cli.sh`
+  is repointed to it). It holds BOTH the generated control-plane credential
+  files (`{vault,argocd,kube,idp}-<env>.txt`, written by `save_credential()`)
+  AND the hand-authored Vault-seed inputs (`secrets.<env>`, `secrets.<env>.pub.txt`)
+  + the tracked `secrets.example` template. The OLD split — `~/secrets/` for
+  creds, `configs/` for seed inputs — is GONE; `resolve_secret_file()`
+  (`lib/lifecycle.sh`) still READS the legacy locations as a transitional
+  fallback so un-migrated hosts (the 24.04 sister) don't break, but every
+  WRITE lands in `secrets/`. `config.<env>` is NOT a secret and stays in
+  `configs/`. Two consequences to respect:
+  - `git clean -fdx` would DELETE the live secrets (they sit in the gitignored
+    repo tree). The committed encrypted `secrets.enc` is the recovery path.
+  - `reset-cluster.sh` deliberately PRESERVES `secrets/` (only the legacy
+    `~/secrets` is cleaned).
+- **Backup is `manage-secrets.sh --backup`**: GPG-AES256 of EVERY file under
+  `secrets/` (creds + seed inputs, NOT `config.<env>`, NOT `secrets.example`)
+  into `setup-kubernetes/secrets.enc`, which IS committed + pushed (it is
+  intentionally NOT gitignored — the one encrypted blob that may live in git).
+  The tar is repo-relative so `--restore` works regardless of the repo's
+  absolute path. Patterns live in `manage-secrets.config`.
 
 ### GitOps tree side (`apps/`, `argocd/`, `charts/`, `platform/`)
 
@@ -305,7 +329,7 @@ auto-update on each install.
   Headlamp. Reason: ArgoCD authenticates via the IdP, so the IdP can't be
   managed BY ArgoCD without a bootstrap cycle. Files:
     - `setup-kubernetes/lib/deploy-idp.sh` — generates secrets on first
-      install (saves to `~/secrets/idp-<env>.txt`), idempotent helm
+      install (saves to `setup-kubernetes/secrets/idp-<env>.txt`), idempotent helm
       upgrade of the upstream `authentik/authentik` chart, renders the
       Blueprints ConfigMap from `manifests/idp/blueprints/*.yaml`,
       pre-creates per-consumer K8s Secrets (`argocd-oidc` in argocd,
@@ -393,7 +417,7 @@ auto-update on each install.
   Bitbucket). The old SSH-based pattern with `IMAGE_BUILDER_ID_RSA` +
   `IMAGE_BUILDER_KNOWN_HOSTS` was removed during the May 2026 migration
   — don't reintroduce. Rotate PATs by editing the single
-  `IMAGE_BUILDER_GIT_CREDENTIALS` heredoc in `configs/secrets.<env>` and
+  `IMAGE_BUILDER_GIT_CREDENTIALS` heredoc in `secrets/secrets.<env>` and
   re-running `--seed-vault`.
 - **image-builder ServiceAccount split**: the EventListener pod runs as
   `eventlistener-sa` (carries the Tekton Triggers ClusterRole RoleBindings,
@@ -478,7 +502,7 @@ auto-update on each install.
   4. Image-builder PAT must have Code: Read & Write on the app's repo
      (for the pipeline's commit-push step). Add the credential line to
      the `IMAGE_BUILDER_GIT_CREDENTIALS` heredoc in
-     `configs/secrets.<env>` and re-run `--seed-vault`.
+     `secrets/secrets.<env>` and re-run `--seed-vault`.
   5. Pipeline's commit-push step MUST set git author to
      `image-builder@platform` for the anti-loop filter to work.
 
@@ -529,7 +553,7 @@ For the GitOps tree, an additional pre-flight applies:
 8. **Vault data + auth config**: handled by `setup-kubernetes.sh
    --<env> --seed-vault`. This step is built into the installer now
    (`lib/seed-vault.sh`):
-   - sources `configs/secrets.<env>` (gitignored per-host file with the
+   - sources `secrets/secrets.<env>` (gitignored per-host file with the
      real secret values + the `VAULT_SCHEMA` array that maps shell
      variables → Vault paths/keys)
    - mounts `kv-v2` at `secret/`, enables `kubernetes` auth, writes the
@@ -548,7 +572,7 @@ For the GitOps tree, an additional pre-flight applies:
                  + 5 separate unseal-key-1..5 entries). Not read by ESO;
                  in Vault purely for retrieval.
 
-   Schema format in `configs/secrets.{example,<env>}` is 4-field:
+   Schema format in `secrets/secrets.{example,<env>}` is 4-field:
        `<SHELL_VAR>|<category>|<name>|<vault-key>`
    3-field legacy rows still parse with `category=app` defaulted.
 
@@ -573,7 +597,7 @@ chain of cause and effect before proposing fixes. Especially:
   code now really means "everything came up" — but mid-run output can
   still look successful while a cert is pending.
 - `save_credential()` always writes the file even on failure paths.
-  Presence of `~/secrets/<app>-<env>.txt` does not mean credentials inside
+  Presence of `setup-kubernetes/secrets/<app>-<env>.txt` does not mean credentials inside
   are real. Read the file to be sure.
 - ArgoCD's "Sync OK" only means manifests applied — it does NOT mean pods
   are Ready, nor that ESO has materialized the Secrets the pods reference.
@@ -701,7 +725,7 @@ Same idempotency rule. Specific patterns to model:
   extras (tekton / registry / image-builder apps, cicd project,
   tenants.yaml). Comment-only differences stay legal.
 - **Adding a new secret to Vault** — add a shell variable to
-  `configs/secrets.example` (template) AND add a row to its
+  `secrets/secrets.example` (template) AND add a row to its
   `VAULT_SCHEMA` array. Each per-host `secrets.<env>` must mirror both
   changes by hand (gitignored, not auto-updated).
 - **Always `helm template`** the affected chart locally before pushing:
@@ -775,4 +799,4 @@ or environment. Especially worth tracking:
 - Per-host inventory of which envs have been GitOps-bootstrapped (i.e. which
   hosts have run the `argocd/argo-manage.sh --env <env> --bootstrap` step).
 - Per-host `--seed-vault` status (when Vault was last re-seeded with the
-  latest `configs/secrets.<env>` schema).
+  latest `secrets/secrets.<env>` schema).

@@ -35,6 +35,7 @@ SKIP_CONFIRM="false"
 CONFIG_FILE=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIGS_DIR="${SCRIPT_DIR}/configs"
+SECRETS_DIR="${SCRIPT_DIR}/secrets"
 
 usage() {
     cat <<HELP
@@ -115,7 +116,8 @@ if [[ ${#STORAGE_DIRS[@]} -gt 0 ]]; then
     log_warn "  - PV data directories on ${DATA_MOUNT}:"
     for d in "${STORAGE_DIRS[@]}"; do log_warn "      ${d}"; done
 fi
-log_warn "  - ${SETUP_HOME}/secrets/, ${SETUP_HOME}/secrets-user/"
+log_warn "  - legacy ${SETUP_HOME}/secrets/, ${SETUP_HOME}/secrets-user/ (old location)"
+log_warn "    NOTE: ${SECRETS_DIR}/ (consolidated secrets) is PRESERVED on reset"
 log_warn "  - ${SETUP_HOME}/.kube/"
 log_warn "  - /var/lib/kubernetes-setup/, /var/log/kubernetes-setup/"
 log_warn "  - ${SETUP_HOME}/.cache/helm, ${SETUP_HOME}/.config/helm"
@@ -305,6 +307,10 @@ else
 fi
 
 # ---- step 9: user state ---------------------------------------------------
+# NOTE: only the LEGACY ~/secrets is cleaned here. The consolidated secrets
+# directory (${SECRETS_DIR}, inside the repo) is DELIBERATELY preserved across a
+# reset — it holds the hand-authored seed inputs (secrets.<env>) and the
+# control-plane credentials, all of which the user wants to keep + restore.
 log_step "Cleaning user state in ${SETUP_HOME}..."
 for d in "${SETUP_HOME}/secrets" "${SETUP_HOME}/secrets-user" "${SETUP_HOME}/.kube" \
          "${SETUP_HOME}/.cache/helm" "${SETUP_HOME}/.config/helm"; do

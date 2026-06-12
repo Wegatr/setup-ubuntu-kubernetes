@@ -4,8 +4,15 @@
 setup-kubernetes/configs/*
 !setup-kubernetes/configs/*.example
 
-# Belt-and-suspenders: never commit per-env config / secret files even if
-# they accidentally show up outside the configs/ directory.
+# setup-kubernetes/secrets/ — consolidated home for ALL secrets: the
+# hand-authored Vault-seed inputs (secrets.<env>, secrets.<env>.pub.txt) AND the
+# generated credential files ({vault,argocd,kube,idp}-<env>.txt). Keep ONLY the
+# secrets.example template checked in; ignore every real secret.
+setup-kubernetes/secrets/*
+!setup-kubernetes/secrets/*.example
+
+# Belt-and-suspenders: never commit per-env config / secret / credential files
+# even if they show up outside the configs/ or secrets/ directory.
 config.dev
 config.test
 config.prod
@@ -15,6 +22,10 @@ secrets.prod
 secrets.dev.pub.txt
 secrets.test.pub.txt
 secrets.prod.pub.txt
+vault-*.txt
+argocd-*.txt
+kube-*.txt
+idp-*.txt
 
 # Helm dependency build artefacts — `helm dependency build` populates
 # `charts/` and `Chart.lock` under each app, but ArgoCD does its own
@@ -23,8 +34,9 @@ secrets.prod.pub.txt
 apps/*/charts/
 apps/*/Chart.lock
 
-# Encrypted secrets backup
-secrets.enc
+# NOTE: secrets.enc (the GPG-AES256 encrypted backup produced by
+# `manage-secrets.sh --backup`) is intentionally NOT ignored — it is COMMITTED
+# to the remote as the off-site, encrypted recovery copy of every secret.
 
 # Temp files
 *.tmp

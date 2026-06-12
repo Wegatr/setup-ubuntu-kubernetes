@@ -25,14 +25,17 @@ All examples below use `<env>` as a placeholder — replace with one of
 │   ├── setup-kubernetes.sh       Main script — install, deploy, maintain.
 │   ├── reset-cluster.sh          Robust cluster wipe (preserves data mount).
 │   ├── common-kubernetes.sh      Shared function library.
-│   ├── manage-secrets.sh         Backup/restore credentials (GPG encrypted).
+│   ├── manage-secrets.sh         Backup/restore ALL secrets (GPG encrypted, committed).
 │   ├── manage-secrets.config     Files included in the secrets backup.
-│   ├── configs/                  Templates (checked in) + per-env files (gitignored):
+│   ├── secrets.enc               Encrypted backup of every secret (committed to git).
+│   ├── configs/                  Per-host config (gitignored) + template (checked in):
 │   │   ├── config.example        Documented config template.
-│   │   ├── secrets.example       Vault-seed template (input to --seed-vault).
-│   │   ├── config.<env>          Real per-env config (gitignored).
+│   │   └── config.<env>          Real per-env config (gitignored).
+│   ├── secrets/                  ALL secrets, one place (gitignored except the template):
+│   │   ├── secrets.example       Vault-seed template (input to --seed-vault, checked in).
 │   │   ├── secrets.<env>         Real Vault seed values (gitignored, mode 600).
-│   │   └── secrets.<env>.pub.txt Companion public keys / DNS records (gitignored).
+│   │   ├── secrets.<env>.pub.txt Companion public keys / DNS records (gitignored).
+│   │   └── {vault,argocd,kube,idp}-<env>.txt  Generated control-plane creds (gitignored).
 │   └── manifests/
 │       ├── kube/                 Headlamp (Dashboard) Helm values + Ingress.
 │       ├── argocd/               ArgoCD Helm values (Ingress in values.yaml).
@@ -315,8 +318,9 @@ What the reset does:
   interfaces, and any pod-CIDR blackhole routes.
 - Wipes the PV data directory at `STORAGE_DIRECTORY` —
   **but never unmounts `STORAGE_PATH` or touches the disk underneath**.
-- Removes user-level state: `~/secrets/`, `~/.kube/`, `~/.cache/helm`,
+- Removes legacy user-level state: `~/secrets/`, `~/.kube/`, `~/.cache/helm`,
   `~/.config/helm`, and the `kubectl`/`helm` aliases from `~/.bashrc`.
+  **The consolidated `setup-kubernetes/secrets/` is deliberately preserved.**
 - Removes script system state: `/var/lib/kubernetes-setup/`, `/var/log/kubernetes-setup/`.
 - **Does not touch any file inside this repo folder.** Configs, manifests,
   and scripts stay intact so you can immediately re-run `setup-kubernetes.sh`.
@@ -541,7 +545,7 @@ push-user credentials. For a consumer workload to **pull** from
 - **Grow the PVC** — bump `pvc.pvc.storageSize` in `values-common.yaml`,
   commit, push, ArgoCD reconciles. Hostpath-storage only grows, never shrinks.
 - **Rotate passwords** — regenerate locally (`openssl rand …` + `htpasswd
-  -nbB …`), update `configs/secrets.dev`, re-run `--seed-vault`. ESO has
+  -nbB …`), update `secrets/secrets.dev`, re-run `--seed-vault`. ESO has
   `refreshInterval: "0"`, so workloads keep the cached pull-secret until
   their ExternalSecret is force-synced (annotate with `force-sync=`).
   Image-builder picks up the new push-user creds on its next pod restart.
@@ -566,7 +570,7 @@ New config/secret surface:
 
 - DNS pre-flight: `s3.<env>.<DOMAIN_SUFFIX>` + `files.<env>.<DOMAIN_SUFFIX>`
   → host public IPv4 (covered by a wildcard record).
-- `configs/secrets.<env>`: the `objectstore` section (`OBJECTSTORE_*` vars —
+- `secrets/secrets.<env>`: the `objectstore` section (`OBJECTSTORE_*` vars —
   RPC secret, admin token, S3 key pair, Filestash admin password + hash);
   re-run `--seed-vault` after filling it in.
 - IdP: blueprint `manifests/idp/blueprints/99-proxy-filestash.yaml` —
@@ -729,39 +733,52 @@ a PVC is not supported by hostpath-storage — only grow.
 ## Credentials
 
 After deploying infrastructure apps, credentials are automatically saved to
-`~/secrets/`:
+`setup-kubernetes/secrets/` — the single home for every secret, alongside the
+hand-authored `secrets.<env>` seed inputs:
 
 | File | Contents |
 |---|---|
 | `kube-<env>.txt` | Dashboard URL + permanent bearer token |
 | `argocd-<env>.txt` | ArgoCD URL + admin username + initial password |
 | `vault-<env>.txt` | Vault URL + 5 unseal keys + root token |
+| `idp-<env>.txt` | Authentik admin password, secret key + per-app OIDC client secrets |
 
-Files are created with `chmod 600` (owner-only access).
+Files are created with `chmod 600`. The directory is gitignored (only
+`secrets.example` is tracked), so secrets never reach the repo — **but
+`git clean -fdx` would delete them; the committed encrypted `secrets.enc`
+is the recovery path.**
 
 > Vault's unseal keys and root token are **irrecoverable**. If you lose
-> `vault-<env>.txt` and Vault is sealed, the data is gone. Back this file
-> up offline (or via `manage-secrets.sh --backup`) before doing anything
-> else after `--deploy-all`. The deploy script will not overwrite an
-> existing `vault-<env>.txt` on re-runs.
+> `vault-<env>.txt` and Vault is sealed, the data is gone. Run
+> `manage-secrets.sh --backup` (encrypted, pushed to the remote) before
+> doing anything else after `--deploy-all`. The deploy script will not
+> overwrite an existing `vault-<env>.txt` on re-runs.
 
 ### Backup and restore
 
+`manage-secrets.sh` encrypts **every** secret under `setup-kubernetes/secrets/`
+— the generated credential files (`vault/argocd/kube/idp-<env>.txt`) AND the
+hand-authored seed inputs (`secrets.<env>` + `.pub.txt`) — into `secrets.enc`
+(GPG-AES256, your passphrase) and commits it to the git remote as the off-site
+recovery copy. `config.<env>` (not a secret) is excluded.
+
 ```bash
-# Encrypt and push to git
+# Encrypt all secrets into secrets.enc, then commit + push to origin
 ./manage-secrets.sh --backup
 
-# Decrypt and restore
+# Decrypt secrets.enc and restore the files into setup-kubernetes/secrets/
 ./manage-secrets.sh --restore
 
 # List files that would be backed up
 ./manage-secrets.sh --list
 
-# Remove secret files (with confirmation)
+# Remove the secret files (with confirmation)
 ./manage-secrets.sh --remove
 ```
 
-The file patterns to backup are defined in `manage-secrets.config`.
+The patterns are defined in `manage-secrets.config`. The archive stores
+repo-relative paths, so a restore lands in the current checkout regardless of
+where the repo lives on disk.
 
 ## CLI tools installed
 
@@ -867,7 +884,7 @@ script enforces or checks:
    any of them don't resolve, printing the detected public IPv4 so you can
    add the missing record. (cert-manager itself would otherwise hang on the
    HTTP-01 self-check for ~25 minutes and save failure placeholders into
-   `~/secrets/*-<env>.txt` — most importantly losing the Vault unseal keys.)
+   `setup-kubernetes/secrets/*-<env>.txt` — most importantly losing the Vault unseal keys.)
 2. **Inbound port 80** must be reachable from the internet. With MicroK8s 1.35's
    Traefik addon the controller binds :80/:443 on the node by default — verify
    with `sudo ss -tln | grep -E ':(80|443) '`. The script does not auto-check
@@ -880,7 +897,7 @@ If Vault's TLS Secret isn't ready when `deploy_vault` runs (e.g. cert-manager
 still issuing the cert), `vault-0` stays in `ContainerCreating` and the
 initial `vault operator init` `kubectl exec` returns nothing. Previously
 this dropped a "Status: Initialization failed" placeholder into
-`~/secrets/vault-<env>.txt` and re-runs of `--deploy-all` did not retry
+`setup-kubernetes/secrets/vault-<env>.txt` and re-runs of `--deploy-all` did not retry
 (because the Helm release already existed).
 
 `deploy_vault` now:

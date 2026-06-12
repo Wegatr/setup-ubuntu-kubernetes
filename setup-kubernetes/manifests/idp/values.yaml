@@ -1,6 +1,6 @@
 # Authentik Helm values — rendered via render_manifest(): every __IDP_*__
 # placeholder is substituted at install time from configs/config.<env> +
-# the credentials in ~/secrets/idp-<env>.txt.
+# the credentials in setup-kubernetes/secrets/idp-<env>.txt.
 #
 # Authentik is deployed under release name "idp" in namespace "idp", so all
 # emitted Services are named "idp-server" / "idp-worker" / "idp-postgresql".

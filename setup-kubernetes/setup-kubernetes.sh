@@ -16,6 +16,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/lib"
 MANIFESTS_DIR="${SCRIPT_DIR}/manifests"
 CONFIGS_DIR="${SCRIPT_DIR}/configs"
+# Single home for ALL secrets — the hand-authored Vault-seed inputs
+# (secrets.<env>, secrets.<env>.pub.txt) AND the generated credential files
+# ({vault,argocd,kube,idp}-<env>.txt). gitignored except secrets.example.
+# CREDENTIALS_DIR (lib/cli.sh) is repointed here; the old ~/secrets layout is
+# read as a fallback by resolve_secret_file() until every host is migrated.
+SECRETS_DIR="${SCRIPT_DIR}/secrets"
 
 # ---- Library sourcing ------------------------------------------------------
 # common-kubernetes.sh MUST be sourced before any lib/*.sh (each lib has a
