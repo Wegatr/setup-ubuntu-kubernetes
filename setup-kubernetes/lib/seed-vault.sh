@@ -200,13 +200,12 @@ seed_vault() {
                         local user host token=""
                         user=$(echo "${line}" | sed 's|https://\([^:]*\):.*|\1|')
                         host=$(echo "${line}" | sed 's|.*@\(.*\)|\1|')
-                        while [[ -z "${token}" ]]; do
-                            printf "  Token for %s (user: %s): " "${host}" "${user}"
-                            IFS= read -r -s token </dev/tty || { log_error "Cannot read from terminal"; return 1; }
-                            echo ""
-                            [[ -z "${token}" ]] && echo "  (cannot be empty, try again)"
-                        done
-                        new_creds+="https://${user}:${token}@${host}"$'\n'
+                        printf "  Token for %s (user: %s, Enter to skip): " "${host}" "${user}"
+                        IFS= read -r -s token </dev/tty || { log_error "Cannot read from terminal"; return 1; }
+                        echo ""
+                        if [[ -n "${token}" ]]; then
+                            new_creds+="https://${user}:${token}@${host}"$'\n'
+                        fi
                     else
                         new_creds+="${line}"$'\n'
                     fi
