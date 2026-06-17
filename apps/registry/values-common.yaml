@@ -111,7 +111,6 @@ ingress:
     className: public
     annotations:
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
-      cert-manager.io/cluster-issuer: '{{ .Values.global.clusterIssuer }}'
     host: 'zot.{{ .Values.global.env }}.{{ .Values.global.domain }}'
     paths:
       - path: /
