@@ -187,25 +187,24 @@ seed_vault() {
         return 1
     fi
     # Prompt interactively for any placeholder values still containing <...-here>
+    # After collection, write back to secrets.dev AND secrets.prod so future
+    # runs don't prompt again.
     if (( ${#placeholders[@]} > 0 )); then
         log_warn "Some secrets still have placeholder values — please enter the real tokens now."
         echo ""
         for p in "${placeholders[@]}"; do
-            # Special handling for multi-line git credentials: ask per-provider token only
             if [[ "$p" == "IMAGE_BUILDER_GIT_CREDENTIALS" ]]; then
+                # Multi-line: ask per-provider token, skip on empty Enter
                 local new_creds=""
                 while IFS= read -r line; do
                     if [[ "${line}" =~ '<'[^'>']+'-here''>' || "${line}" =~ '<'[a-z-]+'>' ]]; then
-                        # Extract user and host from https://<user>:<placeholder>@<host>
                         local user host token=""
                         user=$(echo "${line}" | sed 's|https://\([^:]*\):.*|\1|')
                         host=$(echo "${line}" | sed 's|.*@\(.*\)|\1|')
                         printf "  Token for %s (user: %s, Enter to skip): " "${host}" "${user}"
                         IFS= read -r -s token </dev/tty || { log_error "Cannot read from terminal"; return 1; }
                         echo ""
-                        if [[ -n "${token}" ]]; then
-                            new_creds+="https://${user}:${token}@${host}"$'\n'
-                        fi
+                        [[ -n "${token}" ]] && new_creds+="https://${user}:${token}@${host}"$'\n'
                     else
                         new_creds+="${line}"$'\n'
                     fi
@@ -223,45 +222,45 @@ seed_vault() {
             fi
         done
         echo ""
-        # Write the resolved values back into the secrets file so future runs
-        # don't prompt again. For IMAGE_BUILDER_GIT_CREDENTIALS the value is
-        # multi-line, so wrap it in a heredoc assignment.
-        log_info "Saving entered values back to ${secrets_file}..."
-        for p in "${placeholders[@]}"; do
-            local val="${!p}"
-            if [[ "${val}" == *$'\n'* ]]; then
-                # Multi-line: replace the entire variable assignment (heredoc form)
-                python3 -c "
+
+        # Write resolved values back into secrets.dev AND secrets.prod so the
+        # next --seed-vault run won't prompt again.
+        local _secrets_dirs=()
+        # Always update the file we sourced
+        _secrets_dirs+=("${secrets_file}")
+        # Also update the sibling env file (dev↔prod) if it exists
+        local _sibling="${secrets_file/secrets.${DEPLOY_ENV}/secrets.$([ "${DEPLOY_ENV}" = dev ] && echo prod || echo dev)}"
+        [[ -f "${_sibling}" ]] && _secrets_dirs+=("${_sibling}")
+
+        for _target in "${_secrets_dirs[@]}"; do
+            for p in "${placeholders[@]}"; do
+                local val="${!p}"
+                if [[ "${val}" == *$'\n'* ]]; then
+                    # Multi-line heredoc: replace the entire VAR=$(cat <<'EOF'\n...\nEOF\n) block
+                    python3 - "${_target}" "${p}" << PYEOF
 import sys, re
-content = open('${secrets_file}').read()
-varname = '${p}'
-newval  = sys.stdin.read()
-# Replace heredoc block: VAR=\$(cat <<'EOF'\n...\nEOF\n)
-pattern = r'(?m)^' + re.escape(varname) + r\"=\\\$\\(cat <<'EOF'\\n.*?\\nEOF\\n\\)\n\"
-replacement = varname + \"=\\\$(cat <<'EOF'\\n\" + newval + \"\\nEOF\\n)\\n\"
-result = re.sub(pattern, replacement, content, flags=re.DOTALL)
-if result == content:
-    # Fallback: simple quoted assignment (no heredoc found)
-    pattern2 = r'(?m)^' + re.escape(varname) + r'=.*\$'
-    result = re.sub(pattern2, varname + '=\"' + newval.replace('\"','\\\\\"') + '\"', content)
-open('${secrets_file}', 'w').write(result)
-" <<< "${val}" 2>/dev/null || \
-                log_warn "Could not write ${p} back to ${secrets_file} — enter it again next run"
-            else
-                # Single-line: simple sed replacement
-                python3 -c "
+path, varname = sys.argv[1], sys.argv[2]
+newval = sys.stdin.read()
+content = open(path).read()
+pattern = r"(?ms)^" + re.escape(varname) + r"=\$\(cat <<'EOF'\n.*?\nEOF\n\)"
+repl = varname + "=\$(cat <<'EOF'\n" + newval.strip('\n') + "\nEOF\n)"
+result = re.sub(pattern, repl, content)
+open(path, 'w').write(result)
+PYEOF
+                else
+                    # Single-line: replace VAR="..." or VAR=<placeholder>
+                    python3 - "${_target}" "${p}" "${val}" << 'PYEOF'
 import sys, re
-content = open('${secrets_file}').read()
-varname = '${p}'
-newval  = sys.stdin.read().rstrip('\n')
+path, varname, newval = sys.argv[1], sys.argv[2], sys.argv[3]
+content = open(path).read()
 pattern = r'(?m)^' + re.escape(varname) + r'=.*$'
-result  = re.sub(pattern, varname + '=\"' + newval.replace('\"','\\\\\"') + '\"', content)
-open('${secrets_file}', 'w').write(result)
-" <<< "${val}" 2>/dev/null || \
-                log_warn "Could not write ${p} back to ${secrets_file} — enter it again next run"
-            fi
+result  = re.sub(pattern, varname + '="' + newval.replace('"', '\\"') + '"', content)
+open(path, 'w').write(result)
+PYEOF
+                fi
+            done
+            log_ok "Saved to ${_target}"
         done
-        log_ok "Values saved to ${secrets_file}"
     fi
 
     # --- Distinct (category, name) tuples ------------------------------------
