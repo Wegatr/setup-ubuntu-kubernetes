@@ -31,4 +31,4 @@ entries:
       scope_name: groups
       description: Groups the user belongs to
       expression: |
-        return [group.name for group in request.user.ak_groups.all()]
+        return [group.name for group in request.user.groups.all()]
