@@ -27,6 +27,14 @@ entries:
     identifiers:
       name: authentik Embedded Outpost
     attrs:
+      # authentik_host tells the embedded outpost its own public URL so it can
+      # build the correct redirect for forward-auth flows (dbgate/seq/tekton/
+      # filestash). Without it the outpost falls back to localhost and the
+      # browser gets sent to http://localhost/application/o/authorize/...
+      config:
+        authentik_host: https://${IDP_HOST}
+        authentik_host_insecure: false
+        authentik_host_browser: ""
       providers:
         - !Find [authentik_providers_proxy.proxyprovider, [name, dbgate]]
         - !Find [authentik_providers_proxy.proxyprovider, [name, Tekton Dashboard]]
