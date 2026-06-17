@@ -223,6 +223,45 @@ seed_vault() {
             fi
         done
         echo ""
+        # Write the resolved values back into the secrets file so future runs
+        # don't prompt again. For IMAGE_BUILDER_GIT_CREDENTIALS the value is
+        # multi-line, so wrap it in a heredoc assignment.
+        log_info "Saving entered values back to ${secrets_file}..."
+        for p in "${placeholders[@]}"; do
+            local val="${!p}"
+            if [[ "${val}" == *$'\n'* ]]; then
+                # Multi-line: replace the entire variable assignment (heredoc form)
+                python3 -c "
+import sys, re
+content = open('${secrets_file}').read()
+varname = '${p}'
+newval  = sys.stdin.read()
+# Replace heredoc block: VAR=\$(cat <<'EOF'\n...\nEOF\n)
+pattern = r'(?m)^' + re.escape(varname) + r\"=\\\$\\(cat <<'EOF'\\n.*?\\nEOF\\n\\)\n\"
+replacement = varname + \"=\\\$(cat <<'EOF'\\n\" + newval + \"\\nEOF\\n)\\n\"
+result = re.sub(pattern, replacement, content, flags=re.DOTALL)
+if result == content:
+    # Fallback: simple quoted assignment (no heredoc found)
+    pattern2 = r'(?m)^' + re.escape(varname) + r'=.*\$'
+    result = re.sub(pattern2, varname + '=\"' + newval.replace('\"','\\\\\"') + '\"', content)
+open('${secrets_file}', 'w').write(result)
+" <<< "${val}" 2>/dev/null || \
+                log_warn "Could not write ${p} back to ${secrets_file} — enter it again next run"
+            else
+                # Single-line: simple sed replacement
+                python3 -c "
+import sys, re
+content = open('${secrets_file}').read()
+varname = '${p}'
+newval  = sys.stdin.read().rstrip('\n')
+pattern = r'(?m)^' + re.escape(varname) + r'=.*$'
+result  = re.sub(pattern, varname + '=\"' + newval.replace('\"','\\\\\"') + '\"', content)
+open('${secrets_file}', 'w').write(result)
+" <<< "${val}" 2>/dev/null || \
+                log_warn "Could not write ${p} back to ${secrets_file} — enter it again next run"
+            fi
+        done
+        log_ok "Values saved to ${secrets_file}"
     fi
 
     # --- Distinct (category, name) tuples ------------------------------------
