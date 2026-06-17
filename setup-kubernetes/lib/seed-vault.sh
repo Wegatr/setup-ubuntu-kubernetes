@@ -188,18 +188,40 @@ seed_vault() {
     fi
     # Prompt interactively for any placeholder values still containing <...-here>
     if (( ${#placeholders[@]} > 0 )); then
-        log_warn "The following variables still contain placeholder values:"
-        local p; for p in "${placeholders[@]}"; do log_warn "  $p = ${!p}"; done
+        log_warn "Some secrets still have placeholder values — please enter the real tokens now."
         echo ""
         for p in "${placeholders[@]}"; do
-            local input=""
-            while [[ -z "${input}" ]]; do
-                printf "  Enter value for %s: " "${p}"
-                IFS= read -r -s input </dev/tty || { log_error "Cannot read from terminal"; return 1; }
-                echo ""
-                [[ -z "${input}" ]] && echo "  (value cannot be empty, try again)"
-            done
-            printf -v "${p}" '%s' "${input}"
+            # Special handling for multi-line git credentials: ask per-provider token only
+            if [[ "$p" == "IMAGE_BUILDER_GIT_CREDENTIALS" ]]; then
+                local new_creds=""
+                while IFS= read -r line; do
+                    if [[ "${line}" =~ '<'[^'>']+'-here''>' || "${line}" =~ '<'[a-z-]+'>' ]]; then
+                        # Extract user and host from https://<user>:<placeholder>@<host>
+                        local user host token=""
+                        user=$(echo "${line}" | sed 's|https://\([^:]*\):.*|\1|')
+                        host=$(echo "${line}" | sed 's|.*@\(.*\)|\1|')
+                        while [[ -z "${token}" ]]; do
+                            printf "  Token for %s (user: %s): " "${host}" "${user}"
+                            IFS= read -r -s token </dev/tty || { log_error "Cannot read from terminal"; return 1; }
+                            echo ""
+                            [[ -z "${token}" ]] && echo "  (cannot be empty, try again)"
+                        done
+                        new_creds+="https://${user}:${token}@${host}"$'\n'
+                    else
+                        new_creds+="${line}"$'\n'
+                    fi
+                done <<< "${!p}"
+                printf -v "${p}" '%s' "${new_creds%$'\n'}"
+            else
+                local input=""
+                while [[ -z "${input}" ]]; do
+                    printf "  Enter value for %s: " "${p}"
+                    IFS= read -r -s input </dev/tty || { log_error "Cannot read from terminal"; return 1; }
+                    echo ""
+                    [[ -z "${input}" ]] && echo "  (cannot be empty, try again)"
+                done
+                printf -v "${p}" '%s' "${input}"
+            fi
         done
         echo ""
     fi
