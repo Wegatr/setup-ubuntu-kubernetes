@@ -186,11 +186,22 @@ seed_vault() {
         log_error "Edit ${secrets_file} and fill them in."
         return 1
     fi
+    # Prompt interactively for any placeholder values still containing <...-here>
     if (( ${#placeholders[@]} > 0 )); then
-        log_error "Secrets file still has unfilled placeholder values (contains '<...-here>'):"
-        local p; for p in "${placeholders[@]}"; do log_error "  $p"; done
-        log_error "Edit ${secrets_file}, replace placeholders with real values, then re-run."
-        return 1
+        log_warn "The following variables still contain placeholder values:"
+        local p; for p in "${placeholders[@]}"; do log_warn "  $p = ${!p}"; done
+        echo ""
+        for p in "${placeholders[@]}"; do
+            local input=""
+            while [[ -z "${input}" ]]; do
+                printf "  Enter value for %s: " "${p}"
+                IFS= read -r -s input </dev/tty || { log_error "Cannot read from terminal"; return 1; }
+                echo ""
+                [[ -z "${input}" ]] && echo "  (value cannot be empty, try again)"
+            done
+            printf -v "${p}" '%s' "${input}"
+        done
+        echo ""
     fi
 
     # --- Distinct (category, name) tuples ------------------------------------
