@@ -176,7 +176,7 @@ seed_vault() {
         _seed_vault_parse_row "$row" var cat name key
         if [[ -z "${!var-}" ]]; then
             missing+=("$var")
-        elif [[ "${!var}" =~ \<[^>]+-here\> || "${!var}" =~ \<[a-z]+-[a-z]+-paste\> || "${!var}" =~ \<[a-z-]+-paste-here\> ]]; then
+        elif [[ "${!var}" =~ '<'[^'>']+'-here''>' || "${!var}" =~ '<'[a-z-]+'>' ]]; then
             placeholders+=("$var")
         fi
     done
