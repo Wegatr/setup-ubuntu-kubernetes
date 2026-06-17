@@ -171,17 +171,25 @@ seed_vault() {
         return 1
     fi
 
-    local row var cat name key missing=()
+    local row var cat name key missing=() placeholders=()
     for row in "${VAULT_SCHEMA[@]}"; do
         _seed_vault_parse_row "$row" var cat name key
         if [[ -z "${!var-}" ]]; then
             missing+=("$var")
+        elif [[ "${!var}" =~ \<[^>]+-here\> || "${!var}" =~ \<[a-z]+-[a-z]+-paste\> || "${!var}" =~ \<[a-z-]+-paste-here\> ]]; then
+            placeholders+=("$var")
         fi
     done
     if (( ${#missing[@]} > 0 )); then
         log_error "Secrets file is missing values for these variables:"
         local m; for m in "${missing[@]}"; do log_error "  $m"; done
         log_error "Edit ${secrets_file} and fill them in."
+        return 1
+    fi
+    if (( ${#placeholders[@]} > 0 )); then
+        log_error "Secrets file still has unfilled placeholder values (contains '<...-here>'):"
+        local p; for p in "${placeholders[@]}"; do log_error "  $p"; done
+        log_error "Edit ${secrets_file}, replace placeholders with real values, then re-run."
         return 1
     fi
 
