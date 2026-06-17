@@ -134,7 +134,7 @@ check_storage_mount() {
         return 1
     fi
 
-    if ! mount | grep -q "${STORAGE_PATH}"; then
+    if ! mountpoint -q "${STORAGE_PATH}"; then
         log_warn "Storage path ${STORAGE_PATH} is not a mount point"
         log_warn "Expected ${STORAGE_DEVICE} to be mounted at ${STORAGE_PATH}"
         return 1
