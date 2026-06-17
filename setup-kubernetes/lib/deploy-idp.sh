@@ -267,6 +267,33 @@ _idp_wait_for_blueprints_converged() {
     return 0
 }
 
+# Set authentik_host on the embedded outpost so forward-auth redirects go to
+# the public IdP URL instead of localhost. Authentik's blueprint serializer
+# does not write through the _config JSONField property setter, so we update
+# the column directly via psql (same pattern as _idp_wait_for_blueprints_converged).
+# The outpost goroutine polls /api/v3/outposts/instances/ every ~30s and picks
+# up the new value without a pod restart.
+_idp_set_outpost_authentik_host() {
+    local host="https://${IDP_HOST}"
+    log_info "Setting embedded outpost authentik_host to ${host}..."
+
+    local query
+    query="UPDATE authentik_outposts_outpost \
+SET _config = jsonb_set(_config::jsonb, '{authentik_host}', '\"${host}\"'::jsonb) \
+WHERE name = 'authentik Embedded Outpost';"
+
+    local rows
+    rows=$(kubectl -n "${IDP_NAMESPACE}" exec idp-postgresql-0 -- \
+        env PGPASSWORD="${IDP_POSTGRES_PASSWORD}" \
+        psql -U authentik -d authentik -t -A -c "${query}" 2>/dev/null || true)
+
+    if [[ "${rows}" == "UPDATE 1" ]]; then
+        log_ok "Embedded outpost authentik_host set (outpost picks up within ~30s)"
+    else
+        log_warn "Could not set outpost authentik_host (rows=${rows:-err}) — forward-auth will redirect to localhost until fixed"
+    fi
+}
+
 deploy_idp() {
     if [[ "${ENABLE_IDP:-true}" != "true" ]]; then
         log_warn "IdP (Authentik) is disabled in config, skipping"
@@ -352,6 +379,7 @@ deploy_idp() {
             log_warn "Authentik worker rollout did not complete within 120s"
         }
         _idp_wait_for_blueprints_converged
+        _idp_set_outpost_authentik_host
     fi
 
     # Wire kube-apiserver to trust OIDC tokens issued by Authentik for the
