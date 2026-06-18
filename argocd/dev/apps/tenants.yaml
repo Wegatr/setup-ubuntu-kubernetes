@@ -26,33 +26,8 @@
 #    setup-kubernetes/configs/config.<env> and re-run `--seed-vault`
 #    (Vault ESO binding — separate from this project).
 # 3. In the tenant's own repo, set the Application's spec.project: <name>.
----
-apiVersion: argoproj.io/v1alpha1
-kind: AppProject
-metadata:
-  name: fleet
-  namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "-1"
-  finalizers:
-    - resources-finalizer.argocd.argoproj.io
-spec:
-  description: Tenant — fleet-tracking (simetrix-gmbh). Business app; namespaced only.
-  sourceRepos:
-    - https://dev.azure.com/simetrix-gmbh/fleet-tracker/_git/fleet-tracker
-  destinations:
-    # Self-service namespaces: the fleet team owns several namespaces (fleet
-    # workloads, osm map stack, build Pipelines in image-builder, future ones)
-    # and may deploy to ANY namespace it creates — no per-namespace platform
-    # edit. The isolation that matters is kept below: clusterResourceWhitelist
-    # stays empty, so this tenant still cannot create cluster-scoped resources.
-    - server: https://kubernetes.default.svc
-      namespace: '*'
-  # Business app: creates nothing cluster-scoped (verified — Deployment/Service/
-  # Ingress/IngressRoute/Middleware/Certificate/NetworkPolicy/PVC/SecretStore/
-  # SA/Role/RoleBinding/CronJob/StatefulSet + Tekton Pipelines, all namespaced).
-  # The '*' destination widens NAMESPACE reach, not resource KIND reach.
-  clusterResourceWhitelist: []
-  namespaceResourceWhitelist:
-    - group: "*"
-      kind: "*"
+#
+# No tenant AppProjects are currently defined — this cluster runs the digita
+# platform only. The fleet (fleet-tracking / osm) tenant was removed on
+# 2026-06-18; yacht-backend likewise. Add new tenants as AppProject blocks
+# below following the onboarding steps above.
