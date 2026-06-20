@@ -1,0 +1,42 @@
+# platform/versions.yaml
+# =============================================================================
+# THE single source of truth for every platform component version.
+#
+# Edit a version HERE, then run:   tools/sync-versions
+# Review `git diff`, commit → ArgoCD (apps) / setup-kubernetes (bootstrap)
+# deploy the change.
+#
+# Do NOT hand-edit the version fields in apps/*/Chart.yaml, apps/*/values-*.yaml
+# or the deploy scripts — they are stamped from this file. The sync script edits
+# only the version token (awk/sed), so comments and formatting are preserved.
+# =============================================================================
+
+# Official upstream images run via our own charts/deployment (no Bitnami, no
+# operator). The value is the container image tag of each app.
+images:
+  garage: "v2.3.0"
+  filestash: "latest@sha256:03990d17041624000acb31e89ae21b86318c3ab28b5928c9e7e1b30a647310fb"
+  zot: "v2.1.17"
+  dbgate: "7.2.0"
+  # In-house datastores — listed here; wired into the sync mapping once each is
+  # migrated off Bitnami onto charts/deployment + the official image.
+  postgres: "18.4"
+  mongodb: "8.0"
+  redis: "8.8"
+
+# Upstream Helm charts wrapped by apps/*/Chart.yaml (dependency versions).
+charts:
+  external-secrets: "2.6.0"
+  kube-prometheus-stack: "86.3.2"
+  loki: "6.55.0"
+  tempo: "2.2.3"
+  alloy: "1.10.0"
+  postfix-mail: "5.1.0"
+  seq: "2025.2.2"
+
+# Bootstrap components installed by setup-kubernetes (NOT ArgoCD-managed).
+bootstrap:
+  argocd: "9.5.14"         # argo/argo-cd Helm chart (app v3.x)
+  vault: "0.32.0"          # hashicorp/vault Helm chart (app 1.21.2)
+  authentik: "2026.5.2"    # authentik/authentik Helm chart (CalVer == app)
+  microk8s: "1.35/stable"  # snap channel (also drives cert-manager + Traefik addons)
