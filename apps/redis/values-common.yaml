@@ -1,53 +1,70 @@
+# Redis cache — official `redis` image on charts/deployment. Standalone, AOF,
+# no auth (cluster-internal). Per-env storage / resources in values-{dev,test,prod}.
 redis:
-  # Architecture: standalone
-  architecture: standalone
-  terminationGracePeriodSeconds: 3
-
-  # Authentication (disabled for internal use)
-  auth:
-    enabled: false
-
-  # Master configuration
-  master:
-    # Persistence configuration
-    persistence:
-      enabled: true
-      accessModes:
-        - ReadWriteOnce
-
-    # PVC retention policy
-    persistentVolumeClaimRetentionPolicy:
-      enabled: true
-      whenDeleted: Retain
-      whenScaled: Retain
-
-    # Redis configuration - Enable AOF for durability
-    configuration: |
-      appendonly yes
-      appendfsync everysec
-
-    # Service configuration
-    service:
-      type: ClusterIP
-      ports:
-        redis: 6379
-
-  # Security context
+  image:
+    repository: redis
+    # Managed centrally in platform/versions.yaml (images.redis) and stamped by
+    # tools/sync-versions — do not hand-edit this tag.
+    tag: "8.8"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  containerPort: 6379
+  # Single ReadWriteOnce data PVC → two pods must never coexist.
+  strategy:
+    type: Recreate
+  terminationGracePeriodSeconds: 30
+  # The official redis image runs as uid/gid 999 (the `redis` user).
   podSecurityContext:
-    enabled: true
-    fsGroup: 1001
-
+    fsGroup: 999
   containerSecurityContext:
-    enabled: true
-    runAsUser: 1001
+    runAsUser: 999
     runAsNonRoot: true
+  # AOF durability (appendfsync everysec), data dir on the PVC.
+  args:
+    - redis-server
+    - --appendonly
+    - "yes"
+    - --appendfsync
+    - everysec
+    - --dir
+    - /data
+  volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: redis-data
+  livenessProbe:
+    exec:
+      command: ["redis-cli", "ping"]
+    initialDelaySeconds: 20
+    periodSeconds: 15
+    timeoutSeconds: 5
+  readinessProbe:
+    exec:
+      command: ["redis-cli", "ping"]
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 6379
 
-  # Disable replica (single instance)
-  replica:
-    replicaCount: 0
+# Data PVC. Prune=false,Delete=false so the cache survives chart removal.
+redis-data:
+  pvc:
+    enabled: true
+    name: redis-data
+    accessModes:
+      - ReadWriteOnce
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    # storageSize set per-env in values-{dev,test,prod}.yaml.
 
-# Monitoring chart — emits Redis alert rules. The redis-exporter sub-chart
-# below already emits its own ServiceMonitor labelled release: observability.
+# Redis alert rules. Metrics (redis_*) come from the redis exporter, wired as a
+# follow-up; until then these rules stay dormant.
 monitoring:
   prometheusRules:
     redis:
@@ -64,11 +81,6 @@ monitoring:
               annotations:
                 summary: "Redis instance {{ $labels.instance }} is down"
 
-            # RedisMemoryPressure removed: redis_memory_max_bytes is 0 (unlimited)
-            # in this deployment, so the ratio is undefined / always-firing-on-NaN.
-            # Reinstate with a real maxmemory check or an absolute threshold once
-            # a maxmemory limit is set in Redis.
-
             - alert: RedisEvictionsSpiking
               expr: rate(redis_evicted_keys_total[5m]) > 10
               for: 10m
@@ -76,18 +88,3 @@ monitoring:
                 severity: warning
               annotations:
                 summary: "Redis evicting keys at > 10/s"
-
-# prometheus-redis-exporter subchart. No auth needed (REDIS_AUTH_ENABLED=false).
-# Per-env redisAddress in values-{env}.yaml.
-prometheus-redis-exporter:
-  fullnameOverride: redis-exporter
-  serviceMonitor:
-    enabled: true
-    labels: { release: observability }
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 200m
-      memory: 256Mi

@@ -1,16 +1,33 @@
 apiVersion: v2
 name: redis
 version: 1.0.0
-description: Redis cache layer
+description: |
+  Redis cache — the OFFICIAL `redis` image on our own charts/deployment (no
+  Bitnami, no operator). Standalone, AOF-persistent, no auth (cluster-internal).
+
+  The image tag is managed centrally in platform/versions.yaml (images.redis)
+  and stamped by tools/sync-versions. A single ReadWriteOnce data PVC (Recreate
+  strategy).
+type: application
 dependencies:
-  - name: redis
-    version: 25.5.3
-    # Bitnami trimmed their HTTPS index in Aug 2025 — older versions are
-    # OCI-only now. Same rationale as apps/mongodb and apps/postgresql.
-    repository: oci://registry-1.docker.io/bitnamicharts
-  - name: prometheus-redis-exporter
-    version: 6.5.0
-    repository: https://prometheus-community.github.io/helm-charts
+  # Redis pod — Deployment + ClusterIP Service via the shared library chart.
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: redis
+
+  # AOF + RDB data (/data). Prune=false,Delete=false survives ArgoCD prune.
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+    alias: redis-data
+
+  # Redis alert rules. Metrics come from the redis exporter (wired as a follow-up).
   - name: monitoring
     version: 2.0.0
     repository: file://../../charts/monitoring
+
+  # Shared named templates used by the library charts above.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common
