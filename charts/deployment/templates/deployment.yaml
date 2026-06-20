@@ -64,6 +64,15 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- /*
+          Optional container lifecycle hooks (e.g. a postStart that runs
+          rs.initiate() for a single-node MongoDB replica set). Only rendered
+          when set, so existing consumers are unaffected.
+          */}}
+          {{- with .Values.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- /*
           Compose env vars: optional envSources lists are concatenated first
           (e.g. shared ConfigMap-derived envs from multiple deployments), then
           .Values.env from the consumer. The previous block also tried to merge

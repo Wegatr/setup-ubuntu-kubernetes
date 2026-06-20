@@ -1,20 +1,34 @@
 apiVersion: v2
 name: mongodb
 version: 1.0.0
-description: MongoDB with transaction support (3-node replica set)
+description: |
+  MongoDB — the OFFICIAL `mongo` image on our own charts/deployment (no Bitnami,
+  no operator). Single-node replica set `rs0` for transaction support, no auth;
+  a NetworkPolicy (templates/networkpolicy.yaml) restricts :27017 to digita +
+  dbgate — the DB is cluster-internal only (no Ingress).
+
+  The image tag is managed centrally in platform/versions.yaml (images.mongodb)
+  and stamped by tools/sync-versions. Single ReadWriteOnce data PVC (Recreate).
+type: application
 dependencies:
-  - name: mongodb
-    version: 19.0.3
-    # Bitnami trimmed their HTTPS index in Aug 2025 — older versions are
-    # OCI-only now. Pin to OCI so the dep resolves once 18.4.4 ages out
-    # of the HTTPS index too.
-    repository: oci://registry-1.docker.io/bitnamicharts
-  - name: prometheus-mongodb-exporter
-    version: 3.7.0
-    repository: https://prometheus-community.github.io/helm-charts
-  - name: secret-store
+  # MongoDB pod — Deployment + ClusterIP Service via the shared library chart.
+  - name: deployment
     version: 1.0.0
-    repository: file://../../charts/secret-store
+    repository: file://../../charts/deployment
+    alias: mongodb
+
+  # Data directory (/data/db). Prune=false,Delete=false survives ArgoCD prune.
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+    alias: mongodb-data
+
+  # MongoDB alert rules. Metrics come from the mongodb exporter (follow-up).
   - name: monitoring
     version: 2.0.0
     repository: file://../../charts/monitoring
+
+  # Shared named templates used by the library charts above.
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

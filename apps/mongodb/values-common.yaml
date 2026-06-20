@@ -1,60 +1,86 @@
+# MongoDB — official `mongo` image on charts/deployment. Single-node replica set
+# `rs0` (for transactions), NO auth. Access is restricted to digita + dbgate by
+# the NetworkPolicy (templates/networkpolicy.yaml) instead of a root user — the
+# DB is cluster-internal only (no Ingress), the NetworkPolicy isolates it from
+# any other (tenant) workloads. Per-env storage / resources in values-{dev,test,prod}.
 mongodb:
-  # Architecture: ReplicaSet for transaction support
-  architecture: replicaset
-  replicaCount: 3
-  replicaSetName: rs0
-  terminationGracePeriodSeconds: 3
-
-  # Authentication. Only the root user is provisioned. Consumers create app-level
-  # users + databases at runtime (or add auth.usernames + auth.databases here —
-  # the Bitnami chart requires the two lists to be set together with equal length).
-  auth:
-    enabled: true
-    existingSecret: mongodb-credentials
-    rootUser: root
-
-  # Persistence configuration
-  persistence:
-    enabled: true
-    accessModes:
-      - ReadWriteOnce
-
-  # PVC retention policy - keeps data when StatefulSet deleted
-  persistentVolumeClaimRetentionPolicy:
-    enabled: true
-    whenDeleted: Retain
-    whenScaled: Retain
-
-  # Disable arbiter (use 3 full replicas instead)
-  arbiter:
-    enabled: false
-
-  # Service configuration
-  service:
-    type: ClusterIP
-    ports:
-      mongodb: 27017
-
-  # Security context
+  image:
+    repository: mongo
+    # Managed centrally in platform/versions.yaml (images.mongodb) and stamped by
+    # tools/sync-versions — do not hand-edit this tag.
+    tag: "8.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  containerPort: 27017
+  # Single ReadWriteOnce data PVC → two pods must never coexist.
+  strategy:
+    type: Recreate
+  # The official mongo image runs as uid/gid 999 (the `mongodb` user).
   podSecurityContext:
-    enabled: true
-    fsGroup: 1001
-
+    fsGroup: 999
   containerSecurityContext:
-    enabled: true
-    runAsUser: 1001
+    runAsUser: 999
     runAsNonRoot: true
-
-  # Timezone — Bitnami's mongodb chart renders extraEnvVars through
-  # `common.tplvalues.render` (Helm `tpl`), so this expression resolves at
-  # chart-render time from platform/values-common.yaml.global.timezone.
-  extraEnvVars:
+  # Replica set (single member) → transactions. No --auth ⇒ no keyFile needed.
+  args:
+    - --replSet
+    - rs0
+    - --bind_ip_all
+  env:
+    # The rs member must advertise the address clients use (the ClusterIP
+    # service), so it resolves to the primary. env is tpl-rendered.
+    - name: RS_HOST
+      value: 'mongodb-{{ .Values.global.env }}.mongodb.svc.cluster.local:27017'
     - name: TZ
       value: '{{ .Values.global.timezone }}'
+  # One-time, idempotent rs.initiate once mongod is up (mongod stays PID 1, so
+  # SIGTERM still shuts it down cleanly). Re-run safe: skips if already a member.
+  lifecycle:
+    postStart:
+      exec:
+        command:
+          - /bin/bash
+          - -c
+          - |
+            until mongosh --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; do sleep 2; done
+            mongosh --quiet --eval 'try { rs.status() } catch (e) { rs.initiate({_id:"rs0",members:[{_id:0,host:process.env.RS_HOST}]}) }'
+  volumeMounts:
+    - name: data
+      mountPath: /data/db
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: mongodb-data
+  livenessProbe:
+    exec:
+      command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ping:1})"]
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 10
+  readinessProbe:
+    exec:
+      command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ping:1})"]
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 10
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 27017
 
-# Monitoring chart — emits MongoDB alert rules. The mongodb-exporter sub-chart
-# below still emits its own ServiceMonitor (already correctly labelled
-# release: observability), so we only declare PrometheusRules here.
+# Data PVC (/data/db). Prune=false,Delete=false survives chart removal.
+mongodb-data:
+  pvc:
+    enabled: true
+    name: mongodb-data
+    accessModes:
+      - ReadWriteOnce
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    # storageSize set per-env in values-{dev,test,prod}.yaml.
+
+# MongoDB alert rules. Metrics (mongodb_*) come from the mongodb exporter, wired
+# as a follow-up; until then these rules stay dormant.
 monitoring:
   prometheusRules:
     mongodb:
@@ -71,15 +97,6 @@ monitoring:
               annotations:
                 summary: "MongoDB instance {{ $labels.instance }} is down"
 
-            - alert: MongoDBReplicationLag
-              expr: (mongodb_rs_members_optimeDate{member_state="PRIMARY"} - on(set) group_right(member_state) mongodb_rs_members_optimeDate{member_state="SECONDARY"}) > 30
-              for: 5m
-              labels:
-                severity: warning
-              annotations:
-                summary: "MongoDB replication lag > 30s"
-                description: "Secondary {{ $labels.name }} lagging primary by more than 30 seconds."
-
             - alert: MongoDBConnectionsSaturated
               expr: mongodb_ss_connections{conn_type="current"} / (mongodb_ss_connections{conn_type="current"} + mongodb_ss_connections{conn_type="available"}) > 0.8
               for: 10m
@@ -87,49 +104,3 @@ monitoring:
                 severity: warning
               annotations:
                 summary: "MongoDB connection pool > 80% utilised"
-
-# prometheus-mongodb-exporter subchart configuration.
-# The exporter reads the full URI from the Kubernetes Secret named below;
-# the URI is assembled by the ExternalSecret template (see exporterSecret).
-prometheus-mongodb-exporter:
-  fullnameOverride: mongodb-exporter
-  existingSecret:
-    name: mongodb-exporter-credentials
-    key: mongodb-uri
-  # Override chart default of ["--collect-all"]: that flag enables the
-  # `profile` collector, which panics on every scrape with
-  #   descriptor Desc{fqName: "collector_scrape_time_ms",
-  #     constLabels: {collector="profile"}, ...} already exists
-  # (known percona/mongodb_exporter v0.41.0 bug). Enumerate collectors
-  # explicitly, omitting `profile`.
-  extraArgs:
-    - --collector.diagnosticdata
-    - --collector.replicasetstatus
-    - --collector.dbstats
-    - --collector.topmetrics
-    - --collector.indexstats
-    - --collector.collstats
-    - --collector.currentopmetrics
-  serviceMonitor:
-    enabled: true
-    additionalLabels: { release: observability }
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 200m
-      memory: 256Mi
-
-# ExternalSecret that assembles the mongodb-uri (root user + password from Vault)
-# into the Kubernetes Secret consumed by prometheus-mongodb-exporter. Per-env
-# vaultPath + template.data.mongodb-uri (host name) live in values-{env}.yaml.
-exporterSecret:
-  enabled: true
-  name: mongodb-exporter-credentials
-  secretStoreKind: SecretStore
-  targetSecretName: mongodb-exporter-credentials
-  data:
-    - secretKey: password
-      property: mongodb-root-password
-

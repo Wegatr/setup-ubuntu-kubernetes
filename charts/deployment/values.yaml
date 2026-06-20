@@ -24,6 +24,9 @@ containerSecurityContext: {}
 livenessProbe: {}
 readinessProbe: {}
 
+# Optional container lifecycle hooks (postStart/preStop). Empty = none.
+lifecycle: {}
+
 resources: {}
 
 imagePullSecrets: []
