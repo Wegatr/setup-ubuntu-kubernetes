@@ -10,3 +10,6 @@ redis:
     limits:
       cpu: "2"
       memory: 6Gi
+
+prometheus-redis-exporter:
+  redisAddress: redis://redis-test.redis.svc.cluster.local:6379

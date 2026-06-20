@@ -88,3 +88,18 @@ monitoring:
                 severity: warning
               annotations:
                 summary: "Redis evicting keys at > 10/s"
+
+# Metrics exporter — emits redis_* metrics (the alerts above need it). The
+# address is per-env (values-{dev,test,prod}); no auth.
+prometheus-redis-exporter:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: observability
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi

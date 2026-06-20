@@ -33,6 +33,9 @@ charts:
   alloy: "1.10.0"
   postfix-mail: "5.1.0"
   seq: "2025.2.2"
+  prometheus-postgres-exporter: "8.0.0"
+  prometheus-mongodb-exporter: "3.20.0"
+  prometheus-redis-exporter: "6.26.0"
 
 # Bootstrap components installed by setup-kubernetes (NOT ArgoCD-managed).
 bootstrap:

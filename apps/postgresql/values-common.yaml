@@ -120,3 +120,28 @@ monitoring:
                 severity: warning
               annotations:
                 summary: "PostgreSQL deadlocks > 0.1/s on {{ $labels.instance }}/{{ $labels.datname }}"
+
+# Metrics exporter — emits pg_* metrics (the alerts above need it). The datasource
+# host is per-env (values-{dev,test,prod}); the static parts are here. Connects as
+# the postgres superuser using the password from the postgresql-credentials secret.
+prometheus-postgres-exporter:
+  config:
+    datasource:
+      user: postgres
+      passwordSecret:
+        name: postgresql-credentials
+        key: postgres-password
+      port: "5432"
+      database: postgres
+      sslmode: disable
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: observability
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

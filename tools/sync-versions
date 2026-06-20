@@ -60,6 +60,9 @@ set_dep apps/observability/Chart.yaml    tempo                 "$(get .charts.te
 set_dep apps/observability/Chart.yaml    alloy                 "$(get .charts.alloy)"
 set_dep apps/postfix/Chart.yaml          mail                  "$(get '.charts["postfix-mail"]')"
 set_dep apps/seq/Chart.yaml              seq                   "$(get .charts.seq)"
+set_dep apps/postgresql/Chart.yaml prometheus-postgres-exporter "$(get '.charts["prometheus-postgres-exporter"]')"
+set_dep apps/mongodb/Chart.yaml    prometheus-mongodb-exporter  "$(get '.charts["prometheus-mongodb-exporter"]')"
+set_dep apps/redis/Chart.yaml      prometheus-redis-exporter    "$(get '.charts["prometheus-redis-exporter"]')"
 
 echo "== bootstrap (setup-kubernetes) =="
 set_shdef setup-kubernetes/lib/deploy-argocd.sh ARGOCD_CHART_VERSION "$(get .bootstrap.argocd)"

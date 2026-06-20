@@ -104,3 +104,28 @@ monitoring:
                 severity: warning
               annotations:
                 summary: "MongoDB connection pool > 80% utilised"
+
+# Metrics exporter — emits mongodb_* metrics (the alerts above need it). The
+# connection URI is per-env (values-{dev,test,prod}); no auth (NetworkPolicy-
+# isolated), so it carries no credentials.
+prometheus-mongodb-exporter:
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: observability
+  # Explicit collector list, omitting `profile` (panicked on older exporters).
+  extraArgs:
+    - --collector.diagnosticdata
+    - --collector.replicasetstatus
+    - --collector.dbstats
+    - --collector.topmetrics
+    - --collector.indexstats
+    - --collector.collstats
+    - --collector.currentopmetrics
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi

@@ -10,3 +10,7 @@ mongodb:
     limits:
       cpu: "2"
       memory: 4Gi
+
+prometheus-mongodb-exporter:
+  mongodb:
+    uri: mongodb://mongodb-prod.mongodb.svc.cluster.local:27017/?directConnection=true

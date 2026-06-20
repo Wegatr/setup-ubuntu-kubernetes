@@ -17,3 +17,8 @@ postgres:
     limits:
       cpu: "2"
       memory: 4Gi
+
+prometheus-postgres-exporter:
+  config:
+    datasource:
+      host: postgresql-prod.postgresql.svc.cluster.local
