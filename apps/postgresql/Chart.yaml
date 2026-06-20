@@ -1,24 +1,43 @@
 apiVersion: v2
 name: postgresql
 version: 1.0.0
-description: PostgreSQL (standalone primary) with Bitnami's bundled postgres-exporter for metrics
+description: |
+  PostgreSQL — the OFFICIAL `postgres` image on our own charts/deployment
+  (no Bitnami, no operator). Standalone primary: hosts legacy databases and
+  serves as a target/source for database migrations.
+
+  The image tag is managed centrally in platform/versions.yaml (images.postgres)
+  and stamped by tools/sync-versions. A single ReadWriteOnce data PVC (Recreate
+  strategy) — two pods must never open the data directory at once.
+type: application
 dependencies:
-  - name: postgresql
-    # Bitnami removed every postgresql 17.x chart from public distribution in
-    # Aug 2025 (charts.bitnami.com index trimmed; both bitnamicharts and
-    # bitnamilegacy OCI registries no longer carry 17.x). 18.6.6 is the
-    # current chart and the lowest still available in bitnamicharts. The
-    # appVersion bumps PostgreSQL 16 → 18 — fresh cluster, no data to
-    # migrate, fine to take.
-    version: 18.6.6
-    # Bitnami's HTTPS index now ships only the very latest version per chart;
-    # every other version is in OCI. Switching repos here keeps version pins
-    # resolvable for new installs and forward-compatible as more legacy
-    # versions get rotated out of the index.
-    repository: oci://registry-1.docker.io/bitnamicharts
+  # PostgreSQL pod — Deployment + ClusterIP Service via the shared library chart.
+  - name: deployment
+    version: 1.0.0
+    repository: file://../../charts/deployment
+    alias: postgres
+
+  # Data directory (/var/lib/postgresql/data). Prune=false,Delete=false so the
+  # database survives ArgoCD prune / Application deletion.
+  - name: pvc
+    version: 1.0.0
+    repository: file://../../charts/pvc
+    alias: postgres-data
+
+  # Per-namespace ESO SecretStore (vault-backend).
   - name: secret-store
     version: 1.0.0
     repository: file://../../charts/secret-store
+
+  # PostgreSQL alert rules (PostgreSQLDown etc.). Metrics come from the
+  # prometheus-postgres-exporter (wired as a follow-up).
   - name: monitoring
     version: 2.0.0
     repository: file://../../charts/monitoring
+
+  # Shared named templates (common.labels / common.fullname) used by the
+  # library charts above. Declared at APP level — Helm doesn't vendor nested
+  # file:// deps (see charts/common/Chart.yaml).
+  - name: common
+    version: 1.0.0
+    repository: file://../../charts/common

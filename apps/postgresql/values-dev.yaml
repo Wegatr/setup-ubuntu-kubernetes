@@ -1,21 +1,19 @@
 # Per-namespace SecretStore (visible as an ArgoCD-managed resource).
 secret-store: {}
 
-# External Secrets configuration — Vault path for DEV
+# Vault path for DEV.
 externalSecret:
   vaultPath: dev/app/postgresql
 
-postgresql:
-  primary:
-    # Dev environment storage
-    persistence:
-      size: 20Gi
+postgres-data:
+  pvc:
+    storageSize: "20Gi"
 
-    # Dev environment resources
-    resources:
-      requests:
-        cpu: 250m
-        memory: 512Mi
-      limits:
-        cpu: "1"
-        memory: 2Gi
+postgres:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi

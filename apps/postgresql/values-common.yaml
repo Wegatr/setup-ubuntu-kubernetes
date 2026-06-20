@@ -1,87 +1,78 @@
-postgresql:
-  # Architecture: standalone primary. PostgreSQL has transactions natively — no
-  # replicaset gymnastics needed (contrast with mongodb in this platform, which
-  # runs a 3-node replicaset purely for transaction support). Add a `readReplicas:`
-  # block here if you ever need HA / read scaling.
-  architecture: standalone
-
-  # Authentication. Only the postgres superuser is provisioned. Consumers create
-  # app-level users + databases at runtime, mirroring the mongodb convention.
-  auth:
-    existingSecret: postgresql-credentials
-    # Maps which keys inside `postgresql-credentials` provide which password.
-    # The default key names below are what the Bitnami chart expects when
-    # existingSecret is set — keep them in sync with the ExternalSecret data.
-    secretKeys:
-      adminPasswordKey: postgres-password
-      userPasswordKey: password
-      replicationPasswordKey: replication-password
-
-  # Primary instance config
-  primary:
-    persistence:
-      enabled: true
-      accessModes:
-        - ReadWriteOnce
-    # Retain PVCs when StatefulSet is deleted or scaled down — same defensive
-    # default as mongodb / redis. Prevents accidental data loss on chart removal.
-    persistentVolumeClaimRetentionPolicy:
-      enabled: true
-      whenDeleted: Retain
-      whenScaled: Retain
-    podSecurityContext:
-      enabled: true
-      fsGroup: 1001
-    containerSecurityContext:
-      enabled: true
-      runAsUser: 1001
-      runAsNonRoot: true
-    # Timezone — Bitnami's postgresql chart renders extraEnvVars through
-    # `common.tplvalues.render` (Helm `tpl`), so this expression resolves at
-    # chart-render time from platform/values-common.yaml.global.timezone.
-    extraEnvVars:
-      - name: TZ
-        value: '{{ .Values.global.timezone }}'
-    service:
-      type: ClusterIP
-      ports:
-        postgresql: 5432
-
-  # No read replicas in standalone mode — explicit to make this unambiguous.
-  readReplicas:
-    replicaCount: 0
-
-  # --------------------------------------------------------------------------
-  # Built-in postgres-exporter sidecar. Bitnami's chart runs it as a sidecar on
-  # the primary pod, scraping `postgres://postgres@localhost:5432/`. No separate
-  # exporterSecret block needed (cf. mongodb) — the exporter reuses the same
-  # credentials Secret as the database via `existingSecret` above.
-  # --------------------------------------------------------------------------
-  metrics:
+# PostgreSQL — official `postgres` image on charts/deployment. Standalone
+# primary: hosts legacy databases + serves as a DB-migration target. No Bitnami,
+# no operator. Per-env storage size / resources / Vault path live in
+# values-{dev,test,prod}.yaml.
+postgres:
+  image:
+    repository: postgres
+    # Managed centrally in platform/versions.yaml (images.postgres) and stamped
+    # by tools/sync-versions — do not hand-edit this tag.
+    tag: "18.4"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  containerPort: 5432
+  # Single ReadWriteOnce data PVC → two pods must never coexist.
+  strategy:
+    type: Recreate
+  # The official postgres image runs as uid/gid 999 (the `postgres` user).
+  podSecurityContext:
+    fsGroup: 999
+  containerSecurityContext:
+    runAsUser: 999
+    runAsNonRoot: true
+  env:
+    # Superuser password from Vault (ESO → postgresql-credentials).
+    - name: POSTGRES_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: postgresql-credentials
+          key: postgres-password
+    # PGDATA in a sub-directory of the mount: the official image refuses to
+    # initdb into a volume root that already contains lost+found.
+    - name: PGDATA
+      value: /var/lib/postgresql/data/pgdata
+    # Timezone from the platform single-source-of-truth (env is tpl-rendered).
+    - name: TZ
+      value: '{{ .Values.global.timezone }}'
+  volumeMounts:
+    - name: data
+      mountPath: /var/lib/postgresql/data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: postgres-data
+  livenessProbe:
+    exec:
+      command: ["pg_isready", "-U", "postgres"]
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 5
+  readinessProbe:
+    exec:
+      command: ["pg_isready", "-U", "postgres"]
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+  service:
     enabled: true
-    serviceMonitor:
-      enabled: true
-      # Label the emitted ServiceMonitor so the central Prometheus discovers it
-      # — same convention as prometheus-mongodb-exporter / prometheus-redis-exporter.
-      labels:
-        release: observability
-      interval: 60s
-    resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        cpu: 200m
-        memory: 256Mi
+    type: ClusterIP
+    port: 5432
+
+# Data PVC. Prune=false,Delete=false so the database survives chart removal.
+postgres-data:
+  pvc:
+    enabled: true
+    name: postgres-data
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    accessModes:
+      - ReadWriteOnce
+    # storageSize set per-env in values-{dev,test,prod}.yaml.
 
 # ============================================================================
-# Vault-backed credentials. Per-env vaultPath overrides go in
-# values-{dev,test,prod}.yaml.
-#
-# The Secret keys below must match `postgresql.auth.secretKeys` above:
-#   - postgres-password     superuser password
-#   - password              app-user password (created by chart if auth.username set)
-#   - replication-password  used only if architecture moves to replication
+# Vault-backed superuser credential. The official postgres image only needs
+# POSTGRES_PASSWORD; the key below maps to Vault property `postgres-password`.
+# Per-env vaultPath in values-{dev,test,prod}.yaml.
 # ============================================================================
 externalSecret:
   enabled: true
@@ -92,15 +83,10 @@ externalSecret:
   data:
     - secretKey: postgres-password
       property: postgres-password
-    - secretKey: password
-      property: password
-    - secretKey: replication-password
-      property: replication-password
 
 # ============================================================================
-# Monitoring chart — PostgreSQL alert rules. Sidecar exporter emits postgres_*
-# metrics; rules below alert on the most-common production failure modes for a
-# standalone primary.
+# PostgreSQL alert rules. Metrics (pg_*) come from the prometheus-postgres-
+# exporter, wired as a follow-up; until then these rules stay dormant.
 # ============================================================================
 monitoring:
   prometheusRules:
@@ -127,15 +113,6 @@ monitoring:
                 summary: "PostgreSQL connection pool > 80% utilised on {{ $labels.instance }}"
                 description: "Active connections approaching max_connections. Reaching the limit will reject new clients."
 
-            - alert: PostgreSQLLongRunningTransactions
-              expr: pg_stat_activity_max_tx_duration{state="active"} > 300
-              for: 5m
-              labels:
-                severity: warning
-              annotations:
-                summary: "PostgreSQL has transactions running > 5 minutes on {{ $labels.instance }}"
-                description: "Long-running transactions block vacuum and accumulate dead tuples. Investigate before they cause table bloat."
-
             - alert: PostgreSQLDeadlocksSpiking
               expr: rate(pg_stat_database_deadlocks[5m]) > 0.1
               for: 10m
@@ -143,14 +120,3 @@ monitoring:
                 severity: warning
               annotations:
                 summary: "PostgreSQL deadlocks > 0.1/s on {{ $labels.instance }}/{{ $labels.datname }}"
-
-            - alert: PostgreSQLReplicationLag
-              # Only fires if architecture is later moved to replication. Harmless
-              # on a standalone primary (the metric is absent → expression empty).
-              expr: pg_replication_lag_seconds > 30
-              for: 5m
-              labels:
-                severity: warning
-              annotations:
-                summary: "PostgreSQL replica {{ $labels.instance }} lagging primary by > 30s"
-
