@@ -242,6 +242,16 @@ ARGOCD_REPO_URL="https://argoproj.github.io/argo-helm"
 VAULT_REPO_NAME="hashicorp"
 VAULT_REPO_URL="https://helm.releases.hashicorp.com"
 
+# Pinned Helm chart versions for the bootstrap components (Authentik / ArgoCD /
+# Vault). These are NOT ArgoCD-managed — they bootstrap the cluster — so an
+# unset value floats to whatever the repo serves as latest on every deploy,
+# which can silently cross a MAJOR (ArgoCD 2.x->3.x, Vault 1.x->2.0). The
+# defaults are baked into lib/deploy-{argocd,vault,idp}.sh (pinned to the
+# versions currently deployed); uncomment to override per environment.
+#IDP_CHART_VERSION="2026.5.2"     # authentik/authentik — CalVer, chart == app version
+#ARGOCD_CHART_VERSION="9.5.14"    # argo/argo-cd — chart 9.x == ArgoCD app v3.x
+#VAULT_CHART_VERSION="0.32.0"     # hashicorp/vault — chart 0.32.0 == Vault app 1.21.2
+
 # Kubernetes namespaces for each app.
 IDP_NAMESPACE="idp"
 KUBE_NAMESPACE="kubernetes-dashboard"

@@ -4,7 +4,7 @@
 # clobbering an existing credentials file when vault-0 is stuck.
 #
 # Globals consumed: ENABLE_VAULT, FORCE_DEPLOY, MANIFESTS_DIR,
-#                   VAULT_REPO_NAME, VAULT_REPO_URL,
+#                   VAULT_REPO_NAME, VAULT_REPO_URL, VAULT_CHART_VERSION,
 #                   VAULT_NAMESPACE, VAULT_RELEASE, VAULT_HOST,
 #                   DEPLOY_ENV, CREDENTIALS_DIR.
 [[ -z "${_COMMON_KUBERNETES_LOADED:-}" ]] && { echo "lib/deploy-vault.sh requires common-kubernetes.sh" >&2; exit 1; }
@@ -50,7 +50,8 @@ deploy_vault() {
         install_helm_chart "${VAULT_RELEASE}" \
             "${VAULT_REPO_NAME}/vault" \
             "${VAULT_NAMESPACE}" \
-            "${values_file}" || {
+            "${values_file}" \
+            "${VAULT_CHART_VERSION:-0.32.0}" || {
             rm -f "${values_file}"
             log_error "Failed to deploy Vault"
             return 1

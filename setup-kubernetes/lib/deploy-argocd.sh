@@ -2,7 +2,7 @@
 # lib/deploy-argocd.sh — ArgoCD Helm install + initial admin password capture.
 #
 # Globals consumed: ENABLE_ARGOCD, FORCE_DEPLOY, MANIFESTS_DIR,
-#                   ARGOCD_REPO_NAME, ARGOCD_REPO_URL,
+#                   ARGOCD_REPO_NAME, ARGOCD_REPO_URL, ARGOCD_CHART_VERSION,
 #                   ARGOCD_NAMESPACE, ARGOCD_RELEASE, ARGOCD_HOST.
 [[ -z "${_COMMON_KUBERNETES_LOADED:-}" ]] && { echo "lib/deploy-argocd.sh requires common-kubernetes.sh" >&2; exit 1; }
 
@@ -40,7 +40,8 @@ deploy_argocd() {
     install_helm_chart "${ARGOCD_RELEASE}" \
         "${ARGOCD_REPO_NAME}/argo-cd" \
         "${ARGOCD_NAMESPACE}" \
-        "${values_file}" || {
+        "${values_file}" \
+        "${ARGOCD_CHART_VERSION:-9.5.14}" || {
         rm -f "${values_file}"
         log_error "Failed to deploy ArgoCD"
         return 1

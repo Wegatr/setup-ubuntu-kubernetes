@@ -26,7 +26,7 @@
 #      so the next deploy-{argocd,kube,vault} runs find them ready.
 #
 # Globals consumed: ENABLE_IDP, FORCE_DEPLOY, MANIFESTS_DIR,
-#                   IDP_REPO_NAME, IDP_REPO_URL,
+#                   IDP_REPO_NAME, IDP_REPO_URL, IDP_CHART_VERSION,
 #                   IDP_NAMESPACE, IDP_RELEASE, IDP_HOST,
 #                   IDP_BOOTSTRAP_EMAIL,
 #                   DEPLOY_ENV, DOMAIN_SUFFIX, CREDENTIALS_DIR,
@@ -328,7 +328,8 @@ deploy_idp() {
     install_helm_chart "${IDP_RELEASE}" \
         "${IDP_REPO_NAME}/authentik" \
         "${IDP_NAMESPACE}" \
-        "${values_file}" || {
+        "${values_file}" \
+        "${IDP_CHART_VERSION:-2026.5.2}" || {
         rm -f "${values_file}"
         log_error "Failed to deploy IdP (Authentik)"
         return 1

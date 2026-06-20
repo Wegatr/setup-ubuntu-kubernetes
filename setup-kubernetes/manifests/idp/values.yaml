@@ -4,7 +4,7 @@
 #
 # Authentik is deployed under release name "idp" in namespace "idp", so all
 # emitted Services are named "idp-server" / "idp-worker" / "idp-postgresql".
-# Upstream chart 2026.2.x — note the major restructure: all `replicas`,
+# Upstream chart 2026.5.2 — note the major restructure: all `replicas`,
 # `resources`, `envFrom`, `volumes`, `volumeMounts`, `ingress`, `service`
 # fields moved INSIDE `server:` and `worker:` blocks (top-level ones are
 # now hard-deprecated and the chart refuses to install if any are set).

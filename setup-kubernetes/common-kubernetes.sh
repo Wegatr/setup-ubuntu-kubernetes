@@ -581,6 +581,7 @@ install_helm_chart() {
     local chart="$2"
     local namespace="$3"
     local values_file="${4:-}"
+    local version="${5:-}"
 
     # Argument array instead of a string + eval: spaces/globs in any value
     # (e.g. a path with a space) can never be re-split or re-expanded.
@@ -589,8 +590,14 @@ install_helm_chart() {
     if [[ -n "${values_file}" && -f "${values_file}" ]]; then
         helm_args+=(-f "${values_file}")
     fi
+    # Pin the chart version when provided. Without it helm resolves the repo's
+    # latest on every run — which can silently cross a major for the bootstrap
+    # components (ArgoCD, Vault, Authentik) that ArgoCD itself does not manage.
+    if [[ -n "${version}" ]]; then
+        helm_args+=(--version "${version}")
+    fi
 
-    log_info "Installing Helm chart: ${chart} as ${release} in ${namespace}"
+    log_info "Installing Helm chart: ${chart}${version:+ (version ${version})} as ${release} in ${namespace}"
     helm "${helm_args[@]}" || {
         log_error "Failed to install Helm chart"
         return 1
