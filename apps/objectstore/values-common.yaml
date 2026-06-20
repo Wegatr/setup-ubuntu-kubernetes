@@ -152,6 +152,21 @@ filestash:
     type: ClusterIP
     port: 8334
 
+  # Stable config-encryption key. Filestash AES-encrypts the two
+  # middleware.*.params (server/common/config_state.go `configKeysToEncrypt`) on
+  # save and decrypts them on load using CONFIG_SECRET — or, when unset, a
+  # `general.secret_key` it GENERATES on first boot. With no stable key the
+  # ESO-seeded PLAINTEXT params get encrypted under a key derived AFTER the seed
+  # load and then read back under a different one, so the auth flow dies with
+  # "unpacking idp - invalid character 'C' looking for beginning of value".
+  # Sourcing CONFIG_SECRET from Vault makes the key deterministic across restarts.
+  env:
+    - name: CONFIG_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: filestash-seed
+          key: CONFIG_SECRET
+
   # First-boot config seeding: the image has no initContainer support in our
   # library chart, so a /bin/sh wrapper (debian-slim base has sh) copies the
   # ESO-rendered seed config.json into the state PVC ONLY when absent, then
@@ -405,6 +420,9 @@ externalsecret-filestash:
               }
             }
           }
+        # Stable AES key for Filestash's config encryption (the two encrypted
+        # middleware.*.params). Mounted as the CONFIG_SECRET env var, NOT a file.
+        CONFIG_SECRET: "{{ .config_secret }}"
     data:
       - secretKey: admin_hash
         property: filestash-admin-password-hash
@@ -412,6 +430,8 @@ externalsecret-filestash:
         property: access-key-id
       - secretKey: secret_access_key
         property: secret-access-key
+      - secretKey: config_secret
+        property: filestash-config-secret
 
 # ----- ESO SecretStore in this namespace -------------------------------------
 secret-store:
