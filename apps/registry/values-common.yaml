@@ -14,7 +14,7 @@ app:
   image:
     # Single-binary OCI registry. Tag MUST match Chart.yaml appVersion above.
     repository: ghcr.io/project-zot/zot-linux-amd64
-    tag: "v2.1.16"
+    tag: "v2.1.17"
     pullPolicy: IfNotPresent
   replicas: 1
   # Recreate (not RollingUpdate) — the image-store PVC is RWO and Zot

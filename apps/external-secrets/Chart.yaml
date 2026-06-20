@@ -20,5 +20,5 @@ description: |
 type: application
 dependencies:
   - name: external-secrets
-    version: 2.4.1
+    version: 2.6.0
     repository: oci://ghcr.io/external-secrets/charts

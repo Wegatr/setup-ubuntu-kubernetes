@@ -3,7 +3,7 @@ name: registry
 version: 1.0.0
 description: Zot OCI registry — single cluster-wide private registry running on DEV, consumed by image-builder (push) and by every cluster (pull from public FQDN zot.dev.<DOMAIN_SUFFIX>). htpasswd-auth via ESO-materialized Secret, persistent image storage on platform StorageClass.
 type: application
-appVersion: "v2.1.16"
+appVersion: "v2.1.17"
 
 dependencies:
   # Zot pod — Deployment + ClusterIP Service via shared library chart.
