@@ -21,7 +21,11 @@ images:
   # In-house datastores — listed here; wired into the sync mapping once each is
   # migrated off Bitnami onto charts/deployment + the official image.
   postgres: "18.4"
-  mongodb: "8.0"
+  # Pinned to 8.0.4 (not the floating 8.0): MongoDB 8.0.x past 8.0.4 refuses to
+  # start on Linux kernel >= 6.19 (TCMalloc rseq ABI break, SERVER-121912). The
+  # dev node runs kernel 7.0; 8.0.4 is the community-confirmed last 8.0.x that
+  # boots on 6.19+/7.x. Revisit when MongoDB ships a kernel-6.19-compatible 8.0.x.
+  mongodb: "8.0.4"
   redis: "8.8"
 
 # Upstream Helm charts wrapped by apps/*/Chart.yaml (dependency versions).

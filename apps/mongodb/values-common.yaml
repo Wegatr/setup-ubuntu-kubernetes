@@ -8,7 +8,7 @@ mongodb:
     repository: mongo
     # Managed centrally in platform/versions.yaml (images.mongodb) and stamped by
     # tools/sync-versions — do not hand-edit this tag.
-    tag: "8.0"
+    tag: "8.0.4"
     pullPolicy: IfNotPresent
   replicas: 1
   containerPort: 27017
