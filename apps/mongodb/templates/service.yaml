@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+  # Stable ClusterIP Service = the client SEED endpoint. Clients connect here
+  # with ?replicaSet=rs0; the driver discovers the members and is redirected to
+  # their per-pod headless FQDNs (templates/headless-service.yaml). dbgate + the
+  # metrics exporter use directConnection=true against this Service.
+  name: mongodb-{{ .Values.global.env }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  # Keep routing to a member during a rolling restart / init window.
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - port: {{ .Values.mongodb.containerPort }}
+      targetPort: mongodb
+      protocol: TCP
+      name: mongodb

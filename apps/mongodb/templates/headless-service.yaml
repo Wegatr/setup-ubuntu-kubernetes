@@ -1,15 +1,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  # Headless companion Service for the single-member replica set. The rs0 member
-  # advertises THIS Service's FQDN as its host (RS_HOST below). Because the
-  # Service is headless (clusterIP: None) the FQDN resolves directly to the pod
-  # IP — which mongod recognises as one of its own bound addresses, so the member
-  # self-identifies reliably (the ClusterIP Service FQDN resolves to the virtual
-  # IP, which mongod does NOT recognise as self, breaking the member across pod
-  # restarts). The ClusterIP Service stays the client seed endpoint; clients
-  # using ?replicaSet=rs0 are redirected here. publishNotReadyAddresses so the
-  # FQDN resolves during startup before the readiness probe passes.
+  # Headless Service = the StatefulSet's governing service (spec.serviceName).
+  # It gives each pod a STABLE per-pod DNS name
+  # (mongodb-<env>-<ordinal>.mongodb-<env>-headless.<ns>.svc.cluster.local) that
+  # resolves directly to that pod's IP — which mongod recognises as one of its
+  # own bound addresses, so each rs member self-identifies reliably across
+  # restarts. The rs members advertise these per-pod FQDNs (set by the rs-init
+  # Job). publishNotReadyAddresses so the per-pod DNS resolves during startup,
+  # before the readiness probe passes.
   name: mongodb-{{ .Values.global.env }}-headless
   namespace: {{ .Release.Namespace }}
   labels:

@@ -1,13 +1,13 @@
-{{- $host := printf "mongodb-%s-headless.mongodb.svc.cluster.local:27017" .Values.global.env -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  # ArgoCD PostSync hook: ensure the single-member replica set rs0 is configured
-  # with the headless Service FQDN as its member host, once the mongodb pod is
-  # Ready. Self-healing + idempotent: initiates rs0 if absent, force-reconfigures
-  # the member host if it drifted (e.g. an emergency reconfig to a pod IP), and
-  # is a no-op if already correct. The headless FQDN resolves to the pod IP so
-  # mongod self-identifies across restarts. Runs in this namespace so the mongodb
+  # ArgoCD PostSync hook: configure replica set rs0 across the StatefulSet's
+  # members. Builds the member list from the stable per-pod DNS
+  # (mongodb-<env>-<ordinal>.<headless-svc>), waits for every member's mongod,
+  # then initiates rs0 (or force-reconfigures the member set if it drifted —
+  # e.g. when scaling replicas). Idempotent + self-healing; a plain pod restart
+  # needs no Job (the rs config persists on each member's PVC and the per-pod DNS
+  # resolves the member back to itself). Runs in this namespace so the mongodb
   # NetworkPolicy's same-namespace allow rule lets it reach :27017.
   name: mongodb-rs-init
   namespace: {{ .Release.Namespace }}
@@ -36,30 +36,55 @@ spec:
         - name: rs-init
           image: "{{ .Values.mongodb.image.repository }}:{{ .Values.mongodb.image.tag }}"
           imagePullPolicy: {{ .Values.mongodb.image.pullPolicy }}
+          env:
+            - name: REPLICAS
+              value: {{ .Values.mongodb.replicas | quote }}
+            - name: STS
+              value: "mongodb-{{ .Values.global.env }}"
+            - name: SVC
+              value: "mongodb-{{ .Values.global.env }}-headless"
+            - name: NS
+              value: {{ .Release.Namespace | quote }}
           command:
             - /bin/bash
             - -c
             - |
               set -uo pipefail
-              URI="mongodb://{{ $host }}/?directConnection=true"
-              echo "waiting for mongod at {{ $host }} ..."
-              until mongosh "$URI" --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; do sleep 3; done
-              echo "ensuring rs0 member host = {{ $host }} ..."
-              mongosh "$URI" --quiet --eval '
-                var target = "{{ $host }}";
-                var isMember = false;
-                try { rs.status(); isMember = true; } catch (e) {}
-                if (!isMember) {
-                  try { rs.initiate({_id: "rs0", members: [{_id: 0, host: target}]}); print("rs0 initiated -> " + target); }
-                  catch (e) { var c = rs.conf(); c.members[0].host = target; rs.reconfig(c, {force: true}); print("rs0 force-reconfigured -> " + target); }
+              # Build the rs member list from the StatefulSet's stable per-pod DNS.
+              hosts=""; members=""
+              for i in $(seq 0 $((REPLICAS-1))); do
+                h="${STS}-${i}.${SVC}.${NS}.svc.cluster.local:27017"
+                hosts="$hosts $h"
+                [ -n "$members" ] && members="$members,"
+                members="${members}{_id:${i},host:\"${h}\"}"
+              done
+              echo "rs0 members:$hosts"
+              # Wait for every member's mongod to answer before configuring rs0.
+              for h in $hosts; do
+                echo "waiting for $h ..."
+                until mongosh "mongodb://$h/?directConnection=true" --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; do sleep 3; done
+              done
+              SEED="mongodb://${STS}-0.${SVC}.${NS}.svc.cluster.local:27017/?directConnection=true"
+              echo "ensuring rs0 ..."
+              mongosh "$SEED" --quiet --eval "
+                var desired = [${members}];
+                var conf = null;
+                try { conf = rs.conf(); } catch (e) {}
+                if (!conf) {
+                  rs.initiate({_id: 'rs0', members: desired});
+                  print('rs0 initiated with ' + desired.length + ' member(s)');
                 } else {
-                  var cur = rs.conf().members[0].host;
-                  if (cur !== target) { var c = rs.conf(); c.members[0].host = target; rs.reconfig(c, {force: true}); print("rs0 host " + cur + " -> " + target); }
-                  else { print("rs0 ok, host=" + cur); }
-                }'
-              echo "waiting for PRIMARY ..."
-              until [ "$(mongosh "$URI" --quiet --eval 'try{rs.status().myState}catch(e){0}' 2>/dev/null)" = "1" ]; do sleep 2; done
-              echo "rs0 PRIMARY (host {{ $host }}) — done."
+                  var cur = conf.members.map(function (m) { return m.host; }).sort().join(',');
+                  var want = desired.map(function (m) { return m.host; }).sort().join(',');
+                  if (cur !== want) {
+                    conf.members = desired;
+                    rs.reconfig(conf, {force: true});
+                    print('rs0 reconfigured -> ' + want);
+                  } else { print('rs0 ok: ' + cur); }
+                }"
+              echo "waiting for a PRIMARY ..."
+              until [ "$(mongosh "$SEED" --quiet --eval 'try{rs.status().members.some(function(m){return m.stateStr=="PRIMARY";})?1:0}catch(e){0}')" = "1" ]; do sleep 2; done
+              echo "rs0 has a PRIMARY — done."
           resources:
             requests:
               cpu: 25m

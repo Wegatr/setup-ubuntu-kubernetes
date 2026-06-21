@@ -11,17 +11,10 @@ description: |
   and stamped by tools/sync-versions. Single ReadWriteOnce data PVC (Recreate).
 type: application
 dependencies:
-  # MongoDB pod — Deployment + ClusterIP Service via the shared library chart.
-  - name: deployment
-    version: 1.0.0
-    repository: file://../../charts/deployment
-    alias: mongodb
-
-  # Data directory (/data/db). Prune=false,Delete=false survives ArgoCD prune.
-  - name: pvc
-    version: 1.0.0
-    repository: file://../../charts/pvc
-    alias: mongodb-data
+  # The MongoDB workload (StatefulSet), its ClusterIP + headless Services, the
+  # per-pod data volumeClaimTemplate and the rs-init Job are defined directly in
+  # templates/ — a replica set needs stable per-pod identity, which charts/
+  # deployment (a Deployment) cannot provide. See templates/statefulset.yaml.
 
   # MongoDB alert rules. Metrics come from the mongodb exporter (follow-up).
   - name: monitoring

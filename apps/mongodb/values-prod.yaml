@@ -3,6 +3,9 @@ mongodb-data:
     storageSize: "20Gi"
 
 mongodb:
+  # HA: a 3-member replica set survives a single member/node failure (real HA
+  # needs a multi-node cluster). Dev runs replicas: 1 (restart-safe, single copy).
+  replicas: 3
   resources:
     requests:
       cpu: 500m

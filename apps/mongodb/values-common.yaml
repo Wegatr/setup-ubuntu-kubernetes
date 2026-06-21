@@ -1,8 +1,11 @@
-# MongoDB — official `mongo` image on charts/deployment. Single-node replica set
-# `rs0` (for transactions), NO auth. Access is restricted to digita + dbgate by
-# the NetworkPolicy (templates/networkpolicy.yaml) instead of a root user — the
-# DB is cluster-internal only (no Ingress), the NetworkPolicy isolates it from
-# any other (tenant) workloads. Per-env storage / resources in values-{dev,test,prod}.
+# MongoDB — the official `mongo` image on a StatefulSet (templates/): a replica
+# set needs stable per-pod identity/DNS so each member self-identifies across
+# restarts. Replica set `rs0` for multi-doc transactions, NO auth — the
+# NetworkPolicy (templates/networkpolicy.yaml) restricts :27017 to digita +
+# dbgate (DB is cluster-internal only, no Ingress). replicas: 1 here (dev:
+# restart-safe, single copy); values-prod.yaml sets replicas: 3 for HA on a
+# multi-node cluster. Per-env storage / resources / replicas in
+# values-{dev,test,prod}.yaml.
 mongodb:
   image:
     repository: mongo
@@ -12,43 +15,19 @@ mongodb:
     pullPolicy: IfNotPresent
   replicas: 1
   containerPort: 27017
-  # Single ReadWriteOnce data PVC → two pods must never coexist.
-  strategy:
-    type: Recreate
   # The official mongo image runs as uid/gid 999 (the `mongodb` user).
   podSecurityContext:
     fsGroup: 999
   containerSecurityContext:
     runAsUser: 999
     runAsNonRoot: true
-  # Replica set (single member) → transactions. No --auth ⇒ no keyFile needed.
+  # Replica set → multi-doc transactions. No --auth ⇒ no keyFile needed.
+  # TZ is set in templates/statefulset.yaml from global.timezone; rs0 is
+  # configured by the PostSync Job (templates/rs-init-job.yaml).
   args:
     - --replSet
     - rs0
     - --bind_ip_all
-  env:
-    # The rs member advertises the HEADLESS Service FQDN (templates/
-    # headless-service.yaml), which resolves directly to the pod IP so mongod
-    # self-identifies reliably across restarts (the ClusterIP FQDN resolves to a
-    # virtual IP mongod does not recognise as self). Clients seed via the
-    # ClusterIP Service and are redirected here by ?replicaSet=rs0. tpl-rendered.
-    - name: RS_HOST
-      value: 'mongodb-{{ .Values.global.env }}-headless.mongodb.svc.cluster.local:27017'
-    - name: TZ
-      value: '{{ .Values.global.timezone }}'
-  # rs0 is initiated by the idempotent ArgoCD PostSync Job (templates/
-  # rs-init-job.yaml), NOT a postStart hook: during postStart the pod is still
-  # Pending and absent from the Service endpoints, so rs.initiate cannot confirm
-  # the advertised Service-FQDN host maps to this node (it fails, and a non-zero
-  # postStart crashloops the container). The Job runs once the pod is Ready. On a
-  # plain restart the rs config persists on the data PVC, so mongod rejoins rs0.
-  volumeMounts:
-    - name: data
-      mountPath: /data/db
-  volumes:
-    - name: data
-      persistentVolumeClaim:
-        claimName: mongodb-data
   livenessProbe:
     exec:
       command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ping:1})"]
@@ -61,25 +40,13 @@ mongodb:
     initialDelaySeconds: 10
     periodSeconds: 10
     timeoutSeconds: 10
-  service:
-    enabled: true
-    type: ClusterIP
-    port: 27017
-    # The rs0 single member advertises this ClusterIP Service FQDN (RS_HOST), and
-    # the postStart rs.initiate must reach that FQDN while the pod is still
-    # NotReady. publishNotReadyAddresses routes the Service to the not-yet-ready
-    # pod so initiate can confirm the advertised host maps to this node.
-    publishNotReadyAddresses: true
-
-# Data PVC (/data/db). Prune=false,Delete=false survives chart removal.
+# Per-pod data volume (volumeClaimTemplate → /data/db). Each member gets its own
+# PVC (data-mongodb-<env>-<ordinal>), owned by the StatefulSet controller (not
+# ArgoCD-pruned), so data survives a chart re-sync. storageSize per env below.
 mongodb-data:
   pvc:
-    enabled: true
-    name: mongodb-data
     accessModes:
       - ReadWriteOnce
-    annotations:
-      argocd.argoproj.io/sync-options: Prune=false,Delete=false
     # storageSize set per-env in values-{dev,test,prod}.yaml.
 
 # MongoDB alert rules. Metrics (mongodb_*) come from the mongodb exporter, wired

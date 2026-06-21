@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  # A StatefulSet (NOT a Deployment) is required for a replica set: each pod gets
+  # a STABLE per-pod identity + DNS (mongodb-<env>-<ordinal>.<headless-svc>) that
+  # resolves directly to its pod IP, so mongod recognises itself as a configured
+  # member across restarts. (A Deployment pod has no stable identity — the rs
+  # member's host can't be resolved back to "self" after a restart, which leaves
+  # the member InvalidReplicaSetConfig / "not a member".)
+  name: mongodb-{{ .Values.global.env }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  serviceName: mongodb-{{ .Values.global.env }}-headless
+  replicas: {{ .Values.mongodb.replicas }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongodb
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.mongodb.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mongodb
+          image: "{{ .Values.mongodb.image.repository }}:{{ .Values.mongodb.image.tag }}"
+          imagePullPolicy: {{ .Values.mongodb.image.pullPolicy }}
+          args:
+            {{- toYaml .Values.mongodb.args | nindent 12 }}
+          ports:
+            - containerPort: {{ .Values.mongodb.containerPort }}
+              name: mongodb
+          env:
+            - name: TZ
+              value: {{ .Values.global.timezone | quote }}
+          securityContext:
+            {{- toYaml .Values.mongodb.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          livenessProbe:
+            {{- toYaml .Values.mongodb.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.mongodb.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.mongodb.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          {{- toYaml (index .Values "mongodb-data" "pvc" "accessModes") | nindent 10 }}
+        {{- if .Values.global.storageClass }}
+        storageClassName: {{ .Values.global.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ index .Values "mongodb-data" "pvc" "storageSize" }}
