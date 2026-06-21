@@ -33,29 +33,12 @@ mongodb:
       value: 'mongodb-{{ .Values.global.env }}.mongodb.svc.cluster.local:27017'
     - name: TZ
       value: '{{ .Values.global.timezone }}'
-  # One-time, idempotent rs.initiate once mongod is up (mongod stays PID 1, so
-  # SIGTERM still shuts it down cleanly). Re-run safe: skips if already a member.
-  lifecycle:
-    postStart:
-      exec:
-        command:
-          - /bin/bash
-          - -c
-          - |
-            # Wait for mongod, then initiate the single-member rs0 advertising
-            # RS_HOST (the ClusterIP Service FQDN). The Service sets
-            # publishNotReadyAddresses, so the FQDN already routes here while the
-            # pod is NotReady — letting initiate confirm the host maps to this
-            # node. Retry (the endpoint can lag mongod start) and ALWAYS exit 0: a
-            # non-zero postStart makes kubelet kill the container into a CrashLoop.
-            # Idempotent — once rs0 exists, rs.status().ok short-circuits.
-            until mongosh --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; do sleep 2; done
-            for i in $(seq 1 30); do
-              mongosh --quiet --eval 'rs.status().ok' >/dev/null 2>&1 && break
-              mongosh --quiet --eval 'try { rs.initiate({_id:"rs0",members:[{_id:0,host:process.env.RS_HOST}]}) } catch (e) { print("rs.initiate retry: " + e.message) }' || true
-              sleep 2
-            done
-            exit 0
+  # rs0 is initiated by the idempotent ArgoCD PostSync Job (templates/
+  # rs-init-job.yaml), NOT a postStart hook: during postStart the pod is still
+  # Pending and absent from the Service endpoints, so rs.initiate cannot confirm
+  # the advertised Service-FQDN host maps to this node (it fails, and a non-zero
+  # postStart crashloops the container). The Job runs once the pod is Ready. On a
+  # plain restart the rs config persists on the data PVC, so mongod rejoins rs0.
   volumeMounts:
     - name: data
       mountPath: /data/db

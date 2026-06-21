@@ -1,0 +1,62 @@
+# ArgoCD PostSync hook: initiate the single-member replica set rs0 once the
+# mongodb pod is Ready (and therefore present in the Service endpoints) — the
+# only point at which rs.initiate can confirm the advertised Service-FQDN host
+# maps to this node. (A postStart hook runs while the pod is still Pending and
+# out of the endpoints, so its rs.initiate fails and, being non-zero, crashloops
+# the container.) Idempotent: skips if rs0 is already configured — the config
+# persists on the data PVC, so a plain pod restart rejoins rs0 with no re-init.
+# Runs in this namespace so the mongodb NetworkPolicy's same-namespace allow rule
+# lets it reach :27017.
+{{- $host := printf "mongodb-%s.mongodb.svc.cluster.local:27017" .Values.global.env -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongodb-rs-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: rs-init
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 20
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 120
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongodb
+        app.kubernetes.io/component: rs-init
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+      containers:
+        - name: rs-init
+          image: "{{ .Values.mongodb.image.repository }}:{{ .Values.mongodb.image.tag }}"
+          imagePullPolicy: {{ .Values.mongodb.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -uo pipefail
+              URI="mongodb://{{ $host }}/?directConnection=true"
+              echo "waiting for mongod at {{ $host }} ..."
+              until mongosh "$URI" --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; do sleep 3; done
+              echo "mongod reachable; ensuring rs0 ..."
+              mongosh "$URI" --quiet --eval '
+                try { rs.status(); print("rs0 already configured (state " + rs.status().myState + ")") }
+                catch (e) { print("initiating rs0 ..."); printjson(rs.initiate({_id:"rs0",members:[{_id:0,host:"{{ $host }}"}]})) }'
+              echo "waiting for PRIMARY ..."
+              until [ "$(mongosh "$URI" --quiet --eval 'try{rs.status().myState}catch(e){0}' 2>/dev/null)" = "1" ]; do sleep 2; done
+              echo "rs0 PRIMARY — done."
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
