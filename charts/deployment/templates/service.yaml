@@ -7,6 +7,13 @@ metadata:
     {{- include "common.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
+  {{- if .Values.service.publishNotReadyAddresses }}
+  # Route the Service to the pod even before it passes readiness. Required when a
+  # workload must reach itself via the Service FQDN during startup — e.g. a single
+  # MongoDB replica-set member whose postStart rs.initiate advertises this FQDN and
+  # must confirm it maps to this node while the pod is still NotReady.
+  publishNotReadyAddresses: true
+  {{- end }}
   ports:
     - port: {{ .Values.service.port }}
       targetPort: http

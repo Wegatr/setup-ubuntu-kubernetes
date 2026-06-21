@@ -42,8 +42,20 @@ mongodb:
           - /bin/bash
           - -c
           - |
+            # Wait for mongod, then initiate the single-member rs0 advertising
+            # RS_HOST (the ClusterIP Service FQDN). The Service sets
+            # publishNotReadyAddresses, so the FQDN already routes here while the
+            # pod is NotReady — letting initiate confirm the host maps to this
+            # node. Retry (the endpoint can lag mongod start) and ALWAYS exit 0: a
+            # non-zero postStart makes kubelet kill the container into a CrashLoop.
+            # Idempotent — once rs0 exists, rs.status().ok short-circuits.
             until mongosh --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; do sleep 2; done
-            mongosh --quiet --eval 'try { rs.status() } catch (e) { rs.initiate({_id:"rs0",members:[{_id:0,host:process.env.RS_HOST}]}) }'
+            for i in $(seq 1 30); do
+              mongosh --quiet --eval 'rs.status().ok' >/dev/null 2>&1 && break
+              mongosh --quiet --eval 'try { rs.initiate({_id:"rs0",members:[{_id:0,host:process.env.RS_HOST}]}) } catch (e) { print("rs.initiate retry: " + e.message) }' || true
+              sleep 2
+            done
+            exit 0
   volumeMounts:
     - name: data
       mountPath: /data/db
@@ -67,6 +79,11 @@ mongodb:
     enabled: true
     type: ClusterIP
     port: 27017
+    # The rs0 single member advertises this ClusterIP Service FQDN (RS_HOST), and
+    # the postStart rs.initiate must reach that FQDN while the pod is still
+    # NotReady. publishNotReadyAddresses routes the Service to the not-yet-ready
+    # pod so initiate can confirm the advertised host maps to this node.
+    publishNotReadyAddresses: true
 
 # Data PVC (/data/db). Prune=false,Delete=false survives chart removal.
 mongodb-data:
