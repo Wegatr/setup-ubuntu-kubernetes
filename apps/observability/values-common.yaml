@@ -362,6 +362,15 @@ loki:
   backend: { replicas: 0 }
   chunksCache: { enabled: false }
   resultsCache: { enabled: false }
+  # The Loki ruler-rules sidecar (k8s-sidecar) crashloops on MicroK8s: newer
+  # Python SSL rejects the kube-apiserver CA (it lacks the X.509 keyUsage
+  # extension), and skipTlsVerify is NOT honored by this chart version — the
+  # same issue that forced disabling the Grafana sidecars above. No Loki ruler
+  # rules are provisioned (log alerting is unused; metric alerts go via
+  # prometheusRules), so disable the rules sidecar entirely.
+  sidecar:
+    rules:
+      enabled: false
   monitoring:
     selfMonitoring: { enabled: false }
   # Top-level lokiCanary key (the chart moved it out of monitoring.lokiCanary;
