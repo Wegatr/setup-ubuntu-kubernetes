@@ -27,10 +27,13 @@ mongodb:
     - rs0
     - --bind_ip_all
   env:
-    # The rs member must advertise the address clients use (the ClusterIP
-    # service), so it resolves to the primary. env is tpl-rendered.
+    # The rs member advertises the HEADLESS Service FQDN (templates/
+    # headless-service.yaml), which resolves directly to the pod IP so mongod
+    # self-identifies reliably across restarts (the ClusterIP FQDN resolves to a
+    # virtual IP mongod does not recognise as self). Clients seed via the
+    # ClusterIP Service and are redirected here by ?replicaSet=rs0. tpl-rendered.
     - name: RS_HOST
-      value: 'mongodb-{{ .Values.global.env }}.mongodb.svc.cluster.local:27017'
+      value: 'mongodb-{{ .Values.global.env }}-headless.mongodb.svc.cluster.local:27017'
     - name: TZ
       value: '{{ .Values.global.timezone }}'
   # rs0 is initiated by the idempotent ArgoCD PostSync Job (templates/
