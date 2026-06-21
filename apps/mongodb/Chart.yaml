@@ -2,13 +2,15 @@ apiVersion: v2
 name: mongodb
 version: 1.0.0
 description: |
-  MongoDB — the OFFICIAL `mongo` image on our own charts/deployment (no Bitnami,
-  no operator). Single-node replica set `rs0` for transaction support, no auth;
-  a NetworkPolicy (templates/networkpolicy.yaml) restricts :27017 to digita +
-  dbgate — the DB is cluster-internal only (no Ingress).
+  MongoDB — the OFFICIAL `mongo` image on a StatefulSet (no Bitnami, no operator,
+  no charts/deployment). Replica set `rs0` for transactions, no auth; a
+  NetworkPolicy (templates/networkpolicy.yaml) admits only approved DB consumers
+  (platform namespaces by name + add-ons by the dbConsumerLabel) plus
+  same-namespace pods — the DB is cluster-internal only (no Ingress).
 
   The image tag is managed centrally in platform/versions.yaml (images.mongodb)
-  and stamped by tools/sync-versions. Single ReadWriteOnce data PVC (Recreate).
+  and stamped by tools/sync-versions. Per-pod data via volumeClaimTemplate;
+  replicas per env (values-{dev,test,prod}.yaml).
 type: application
 dependencies:
   # The MongoDB workload (StatefulSet), its ClusterIP + headless Services, the

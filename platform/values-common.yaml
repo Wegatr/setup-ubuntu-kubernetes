@@ -62,7 +62,7 @@ global:
   # admitted by NAME (dbConsumerNamespaces); external add-ons admit THEMSELVES by
   # LABEL — any namespace carrying dbConsumerLabel=true. The platform therefore
   # never hardcodes a tenant's namespace name: the add-on self-labels its own
-  # namespace (digita-base ships a Namespace with platform/db-consumer=true).
+  # namespace (its chart ships a Namespace carrying platform/db-consumer=true).
   # Same-namespace pods are always allowed by the template.
   dbConsumerNamespaces:
     - dbgate

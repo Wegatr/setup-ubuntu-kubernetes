@@ -1,11 +1,11 @@
 # MongoDB — the official `mongo` image on a StatefulSet (templates/): a replica
 # set needs stable per-pod identity/DNS so each member self-identifies across
 # restarts. Replica set `rs0` for multi-doc transactions, NO auth — the
-# NetworkPolicy (templates/networkpolicy.yaml) restricts :27017 to digita +
-# dbgate (DB is cluster-internal only, no Ingress). replicas: 1 here (dev:
-# restart-safe, single copy); values-prod.yaml sets replicas: 3 for HA on a
-# multi-node cluster. Per-env storage / resources / replicas in
-# values-{dev,test,prod}.yaml.
+# NetworkPolicy (templates/networkpolicy.yaml) admits only approved DB consumers
+# (global.dbConsumerNamespaces by name + add-ons by global.dbConsumerLabel) plus
+# same-namespace pods (DB is cluster-internal only, no Ingress). replicas: 1 here
+# is the safe default; values-{dev,prod}.yaml set 3 for an HA replica set. Per-env
+# storage / resources / replicas in values-{dev,test,prod}.yaml.
 mongodb:
   image:
     repository: mongo
