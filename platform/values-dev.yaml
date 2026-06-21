@@ -6,12 +6,3 @@ global:
   # documenting asymmetric cases like prod's bare mail.<domain> needs explicit
   # per-env values anyway).
   vaultUrl: https://vault.dev.digitaplatform.com:8200
-
-  # DB consumers (dev): admit external add-ons BY LABEL. digita self-declares
-  # platform/db-consumer=true on its own namespace (from the digitabase repo via
-  # managedNamespaceMetadata), so the platform no longer hardcodes the `digita`
-  # namespace name. Only the platform's own dbgate is admitted by name. This
-  # list REPLACES the values-common default (Helm replaces lists).
-  dbConsumerNamespaces:
-    - dbgate
-  dbConsumerLabel: platform/db-consumer
