@@ -18,25 +18,21 @@ app:
     - name: ENGINE_mongo
       value: "mongo@dbgate-plugin-mongo"
     - name: SERVER_mongo
-      value: "mongodb-dev-headless.mongodb.svc.cluster.local"
+      value: "mongodb-dev.mongodb.svc.cluster.local"
     - name: PORT_mongo
       value: "27017"
-    - name: USER_mongo
-      value: "root"
-    - name: PASSWORD_mongo
-      valueFrom:
-        secretKeyRef:
-          name: dbgate-db-credentials
-          key: mongodb-password
+    # In-house mongodb-dev runs WITHOUT auth (cluster-internal, NetworkPolicy-
+    # isolated) — no USER_mongo / PASSWORD_mongo. The single rs0 member
+    # advertises this same FQDN, so the connection resolves cluster-wide.
     # --- Redis (no password: REDIS_AUTH_ENABLED=false in cluster config) ---
     - name: LABEL_redis
       value: "Redis (DEV)"
     - name: ENGINE_redis
       value: "redis@dbgate-plugin-redis"
     - name: URL_redis
-      value: "redis://redis-dev-master.redis.svc.cluster.local:6379"
-    # --- PostgreSQL (app — bitnami chart) ---
-    # Bitnami postgresql chart at release name `postgresql-dev` creates a
+      value: "redis://redis-dev.redis.svc.cluster.local:6379"
+    # --- PostgreSQL (app — in-house chart) ---
+    # The in-house postgresql chart at release name `postgresql-dev` creates a
     # ClusterIP Service named `postgresql-dev` in the postgresql namespace.
     # Connecting as the superuser; per-app users/databases are created at
     # runtime by the consuming application. Connection ID uses underscore
@@ -113,8 +109,8 @@ externalsecret-auth:
       - secretKey: users
         property: auth
 
-# ExternalSecret #2 — DB passwords for the app-tier databases (mongo,
-# bitnami postgres) injected into DBGate pod env vars.
+# ExternalSecret #2 — DB password for the app-tier PostgreSQL (in-house chart)
+# injected into the DBGate pod env. Mongo + Redis are no-auth (no secret).
 externalsecret-db:
   externalSecret:
     enabled: true
@@ -124,8 +120,6 @@ externalsecret-db:
     targetSecretName: dbgate-db-credentials
     vaultPath: dev/app/dbgate
     data:
-      - secretKey: mongodb-password
-        property: mongodb-password
       - secretKey: postgresql-password
         property: postgresql-password
 
