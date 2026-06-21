@@ -3,6 +3,9 @@ mongodb-data:
     storageSize: "20Gi"
 
 mongodb:
+  # HA: 3-member replica set (multiple pods CAN coexist — each gets its own
+  # volumeClaimTemplate PVC, unlike the old single-RWO Deployment).
+  replicas: 3
   resources:
     requests:
       cpu: 500m
