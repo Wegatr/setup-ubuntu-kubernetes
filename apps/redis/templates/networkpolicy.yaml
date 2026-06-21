@@ -1,6 +1,10 @@
 # Redis is no-auth + cluster-internal (no Ingress). This NetworkPolicy isolates
-# it: only the digita platform, the dbgate UI, and same-namespace pods (metrics
-# exporter) may reach :6379. Any other (tenant) workload is denied. Calico-enforced.
+# it: only approved DB consumers may reach :6379 — platform namespaces by name
+# (global.dbConsumerNamespaces), any namespace self-labelled
+# global.dbConsumerLabel=true where that key is set (so external add-ons admit
+# themselves without the platform hardcoding their namespace name), and
+# same-namespace pods (metrics exporter). Any other workload is denied.
+# Calico-enforced.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -14,12 +18,16 @@ spec:
     - Ingress
   ingress:
     - from:
+        {{- range .Values.global.dbConsumerNamespaces }}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: digita
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.global.dbConsumerLabel }}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: dbgate
+              {{ . }}: "true"
+        {{- end }}
         - podSelector: {}
       ports:
         - protocol: TCP

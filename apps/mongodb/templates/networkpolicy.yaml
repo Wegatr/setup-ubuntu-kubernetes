@@ -1,7 +1,10 @@
 # MongoDB is no-auth + cluster-internal (no Ingress). This NetworkPolicy is the
-# isolation that replaces the root user: only the digita platform, the dbgate UI,
-# and same-namespace pods (metrics exporter, migration jobs) may reach :27017.
-# Any other (tenant) workload in the cluster is denied. Enforced by Calico.
+# isolation that replaces the root user: only approved DB consumers may reach
+# :27017 — platform namespaces by name (global.dbConsumerNamespaces), any
+# namespace self-labelled global.dbConsumerLabel=true where that key is set (so
+# external add-ons admit themselves without the platform hardcoding their
+# namespace name), and same-namespace pods (metrics exporter, rs-init Job). Any
+# other workload is denied. Enforced by Calico.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -15,12 +18,16 @@ spec:
     - Ingress
   ingress:
     - from:
+        {{- range .Values.global.dbConsumerNamespaces }}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: digita
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.global.dbConsumerLabel }}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: dbgate
+              {{ . }}: "true"
+        {{- end }}
         - podSelector: {}
       ports:
         - protocol: TCP
