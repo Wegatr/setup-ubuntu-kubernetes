@@ -27,7 +27,8 @@
 #    (Vault ESO binding — separate from this project).
 # 3. In the tenant's own repo, set the Application's spec.project: <name>.
 #
-# No tenant AppProjects are currently defined — this cluster runs the digita
-# platform only. The fleet (fleet-tracking / osm) tenant was removed on
-# 2026-06-18; yacht-backend likewise. Add new tenants as AppProject blocks
-# below following the onboarding steps above.
+# No tenant AppProjects are defined in THIS file. A self-contained add-on may
+# ship + apply its own AppProject snippet at bootstrap (it references the project
+# by name, and the project's clusterResourceWhitelist may permit Namespace so the
+# add-on self-provisions its namespace). Platform-managed tenant projects go as
+# AppProject blocks below, following the onboarding steps above.
