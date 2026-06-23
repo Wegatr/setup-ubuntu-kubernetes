@@ -402,6 +402,10 @@ parse_arguments() {
                 DEPLOY_ENV="prod"
                 shift
                 ;;
+            --config)
+                # Already consumed by load_config() — skip the flag and its PATH argument.
+                shift 2
+                ;;
             --update-cli-tools)
                 UPDATE_CLI_TOOLS=true
                 INSTALL_MICROK8S=false; CONFIGURE_STORAGE=false; CONFIGURE_CERT_MANAGER=false; INSTALL_CLI_TOOLS=false; SETUP_ALIASES=false
