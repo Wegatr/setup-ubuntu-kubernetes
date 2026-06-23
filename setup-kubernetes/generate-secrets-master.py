@@ -58,68 +58,64 @@ def post_deploy():
             content = new
             patched += n
 
-    # --- vault-master.txt ---
+    # --- vault-master.txt (vault operator init output) ---
     vault_file = "secrets/vault-master.txt"
     if os.path.exists(vault_file):
         txt = open(vault_file).read()
         for i in range(1, 6):
-            m = re.search(rf"Unseal Key {i}:\s+(\S+)", txt)
+            m = re.search(rf"^Unseal Key {i}:\s+(\S+)", txt, re.MULTILINE)
             if m:
                 patch(f"VAULT_UNSEAL_KEY_{i}", m.group(1))
-        m = re.search(r"Initial Root Token:\s+(\S+)", txt)
+        m = re.search(r"^Initial Root Token:\s+(\S+)", txt, re.MULTILINE)
         if m:
             patch("VAULT_ROOT_TOKEN", m.group(1))
         print(f"✓ Vault credentials patched from {vault_file}")
     else:
         print(f"  SKIP: {vault_file} not found")
 
-    # --- argocd-master.txt ---
+    # --- argocd-master.txt  format: "Password: <value>" ---
     argocd_file = "secrets/argocd-master.txt"
     if os.path.exists(argocd_file):
         txt = open(argocd_file).read()
-        # file typically contains just the password on one line (or key: value)
-        m = re.search(r"(?:password[:\s]+)?(\S+)", txt, re.IGNORECASE)
+        m = re.search(r"^Password:\s+(\S+)", txt, re.MULTILINE)
         if m:
             patch("ARGOCD_ADMIN_PASSWORD", m.group(1))
-        print(f"✓ ArgoCD credentials patched from {argocd_file}")
+            print(f"✓ ArgoCD credentials patched from {argocd_file}")
+        else:
+            print(f"  WARN: Could not parse password from {argocd_file}")
     else:
         print(f"  SKIP: {argocd_file} not found")
 
-    # --- kube-master.txt ---
+    # --- kube-master.txt  format: "Token: <value>" ---
     kube_file = "secrets/kube-master.txt"
     if os.path.exists(kube_file):
-        txt = open(kube_file).read().strip()
-        # file contains the raw bearer token
-        token = txt.split()[-1]
-        patch("KUBE_DASHBOARD_TOKEN", token)
-        print(f"✓ Headlamp token patched from {kube_file}")
+        txt = open(kube_file).read()
+        m = re.search(r"^Token:\s+(\S+)", txt, re.MULTILINE)
+        if m:
+            patch("KUBE_DASHBOARD_TOKEN", m.group(1))
+            print(f"✓ Headlamp token patched from {kube_file}")
+        else:
+            print(f"  WARN: Could not parse token from {kube_file}")
     else:
         print(f"  SKIP: {kube_file} not found")
 
-    # --- idp-master.txt ---
+    # --- idp-master.txt  format: "Key label: <value>" (from deploy_idp.sh) ---
     idp_file = "secrets/idp-master.txt"
     if os.path.exists(idp_file):
         txt = open(idp_file).read()
+        # Exact labels written by save_credential() in deploy_idp.sh
         mapping = {
-            "bootstrap_password":     "IDP_BOOTSTRAP_PASSWORD",
-            "bootstrap-password":     "IDP_BOOTSTRAP_PASSWORD",
-            "secret_key":             "IDP_SECRET_KEY",
-            "secret-key":             "IDP_SECRET_KEY",
-            "postgres_password":      "IDP_POSTGRES_PASSWORD",
-            "postgres-password":      "IDP_POSTGRES_PASSWORD",
-            "argocd_client_secret":   "IDP_ARGOCD_CLIENT_SECRET",
-            "argocd-client-secret":   "IDP_ARGOCD_CLIENT_SECRET",
-            "grafana_client_secret":  "IDP_GRAFANA_CLIENT_SECRET",
-            "grafana-client-secret":  "IDP_GRAFANA_CLIENT_SECRET",
-            "headlamp_client_secret": "IDP_HEADLAMP_CLIENT_SECRET",
-            "headlamp-client-secret": "IDP_HEADLAMP_CLIENT_SECRET",
-            "vault_client_secret":    "IDP_VAULT_CLIENT_SECRET",
-            "vault-client-secret":    "IDP_VAULT_CLIENT_SECRET",
-            "zot_client_secret":      "IDP_ZOT_CLIENT_SECRET",
-            "zot-client-secret":      "IDP_ZOT_CLIENT_SECRET",
+            "Admin password":       "IDP_BOOTSTRAP_PASSWORD",
+            "Secret key":           "IDP_SECRET_KEY",
+            "Postgres password":    "IDP_POSTGRES_PASSWORD",
+            "ArgoCD client_secret": "IDP_ARGOCD_CLIENT_SECRET",
+            "Grafana client_secret":"IDP_GRAFANA_CLIENT_SECRET",
+            "Headlamp client_secret":"IDP_HEADLAMP_CLIENT_SECRET",
+            "Vault client_secret":  "IDP_VAULT_CLIENT_SECRET",
+            "Zot client_secret":    "IDP_ZOT_CLIENT_SECRET",
         }
-        for key, varname in mapping.items():
-            m = re.search(rf"{re.escape(key)}\s*[=:]\s*(\S+)", txt, re.IGNORECASE)
+        for label, varname in mapping.items():
+            m = re.search(rf"^{re.escape(label)}:\s+(\S+)", txt, re.MULTILINE)
             if m:
                 patch(varname, m.group(1))
         print(f"✓ IdP credentials patched from {idp_file}")
