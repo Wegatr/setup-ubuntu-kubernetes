@@ -1,0 +1,8 @@
+# MASTER-env Zot registry config. Vault paths differ per env.
+externalsecret-htpasswd:
+  externalSecret:
+    vaultPath: master/app/registry
+
+externalsecret-oidc:
+  externalSecret:
+    vaultPath: master/system/idp

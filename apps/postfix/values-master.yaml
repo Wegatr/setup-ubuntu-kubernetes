@@ -1,0 +1,57 @@
+mail:
+  config:
+    postfix:
+      myhostname: "mail.master.local"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  extraVolumes:
+    - name: dkim-keys-secret
+      secret:
+        secretName: postfix-dkim-key
+        defaultMode: 0400
+        items:
+          - key: dkim-private-key
+            path: mail.master.local.private
+    - name: dkim-keys
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: dkim-keys
+      mountPath: /etc/opendkim/keys
+  pod:
+    initContainers:
+      - name: fix-dkim-permissions
+        image: busybox:latest
+        command:
+          - sh
+          - -c
+          - |
+            cp /dkim-source/mail.master.local.private /dkim-keys/mail.master.local.private
+            chmod 700 /dkim-keys
+            chmod 600 /dkim-keys/mail.master.local.private
+        volumeMounts:
+          - name: dkim-keys-secret
+            mountPath: /dkim-source
+            readOnly: true
+          - name: dkim-keys
+            mountPath: /dkim-keys
+
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource under this app).
+secret-store: {}
+
+# ExternalSecret — pulls DKIM key from Vault
+external-secret:
+  externalSecret:
+    enabled: true
+    name: postfix-dkim-key
+    namespace: postfix
+    secretStoreKind: SecretStore
+    targetSecretName: postfix-dkim-key
+    vaultPath: master/app/postfix
+    data:
+      - secretKey: dkim-private-key
+        property: dkim-private-key

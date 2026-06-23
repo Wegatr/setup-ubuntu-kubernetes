@@ -1,0 +1,173 @@
+# ApplicationSet — generates one ArgoCD Application per app for the MASTER cluster.
+# Local internal cluster (*.master.local). Same app set as DEV (includes registry,
+# tekton, image-builder build plane).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform-apps-master
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+
+  generators:
+    - list:
+        elements:
+          - name: external-secrets
+            project: core
+            syncWave: "1"
+            namespace: external-secrets
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: "external-secrets"
+
+          - name: tekton
+            project: cicd
+            syncWave: "3"
+            namespace: tekton
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: coredns
+            project: core
+            syncWave: "5"
+            namespace: kube-system
+            prune: "false"
+            createNamespace: "false"
+            specialOptions: ""
+
+          # Zot OCI registry — runs on this cluster (it is the DEV/build cluster).
+          - name: registry
+            project: cicd
+            syncWave: "7"
+            namespace: registry
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: mongodb
+            project: data
+            syncWave: "10"
+            namespace: mongodb
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: postgresql
+            project: data
+            syncWave: "10"
+            namespace: postgresql
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: objectstore
+            project: data
+            syncWave: "10"
+            namespace: objectstore
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: postfix
+            project: services
+            syncWave: "20"
+            namespace: postfix
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: redis
+            project: data
+            syncWave: "20"
+            namespace: redis
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: seq
+            project: services
+            syncWave: "20"
+            namespace: seq
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: image-builder
+            project: cicd
+            syncWave: "25"
+            namespace: image-builder
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: dbgate
+            project: services
+            syncWave: "30"
+            namespace: dbgate
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: ""
+
+          - name: observability
+            project: observability
+            syncWave: "30"
+            namespace: observability
+            prune: "true"
+            createNamespace: "true"
+            specialOptions: "observability"
+
+  template:
+    metadata:
+      name: "{{ .name }}-master"
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: "{{ .syncWave }}"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: "{{ .project }}"
+      sources:
+        - repoURL: &repo "https://github.com/kartalbas/setup-ubuntu-kubernetes.git"
+          targetRevision: &branch main
+          ref: values
+        - repoURL: *repo
+          targetRevision: *branch
+          path: "apps/{{ .name }}"
+          helm:
+            valueFiles:
+              - $values/platform/values-common.yaml
+              - $values/platform/values-master.yaml
+              - values-common.yaml
+              - values-master.yaml
+      destination:
+        server: "https://kubernetes.default.svc"
+        namespace: "{{ .namespace }}"
+
+  templatePatch: |
+    spec:
+      syncPolicy:
+        automated:
+          prune: {{ .prune }}
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace={{ .createNamespace }}
+          {{- if eq .specialOptions "observability" }}
+          - ServerSideApply=true
+          {{- end }}
+          {{- if eq .specialOptions "external-secrets" }}
+          - ServerSideApply=true
+          {{- end }}
+      {{- if eq .specialOptions "observability" }}
+      ignoreDifferences:
+        - group: apps
+          kind: StatefulSet
+          jsonPointers:
+            - /spec/volumeClaimTemplates
+        - group: apps
+          kind: Deployment
+          jqPathExpressions:
+            - '.spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor'
+      {{- end }}

@@ -1,0 +1,24 @@
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource).
+secret-store: {}
+
+# Vault path for MASTER.
+externalSecret:
+  vaultPath: master/app/postgresql
+
+postgres-data:
+  pvc:
+    storageSize: "20Gi"
+
+postgres:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+prometheus-postgres-exporter:
+  config:
+    datasource:
+      host: postgresql-master.postgresql.svc.cluster.local

@@ -54,30 +54,50 @@ check_ingress_dns_resolves() {
     fi
 
     if [[ ${#unresolved[@]} -eq 0 ]]; then
-        log_ok "Ingress hostnames resolve in public DNS"
+        log_ok "Ingress hostnames resolve"
         return 0
     fi
 
-    log_error "Ingress hostnames are NOT resolvable in public DNS:"
+    log_error "Ingress hostnames are NOT resolvable:"
     for h in "${unresolved[@]}"; do
         log_error "  - ${h}"
     done
     log_error ""
-    log_error "cert-manager's HTTP-01 challenge will hang indefinitely without these records."
-    log_error "Aborting before deploy_vault saves an 'Initialization failed' placeholder over"
-    log_error "the unseal keys that would otherwise be irrecoverable."
-    log_error ""
-    log_error "Fix: at your DNS provider, add an A record for each name (or a wildcard"
-    log_error "*.${DEPLOY_ENV}.${DOMAIN_SUFFIX}) pointing to this host's public IPv4:"
-    if [[ -n "${public_ipv4}" ]]; then
-        log_error "  Public IPv4 (detected): ${public_ipv4}"
+
+    if [[ -z "${LETSENCRYPT_EMAIL:-}" ]]; then
+        # Local install (*.local domains) — guide user to /etc/hosts
+        local node_ip
+        node_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        log_error "Local install: add these entries to /etc/hosts on this machine"
+        log_error "(replace <NODE_IP> with the host's LAN IP, e.g. ${node_ip:-<NODE_IP>}):"
+        log_error ""
+        for h in "${unresolved[@]}"; do
+            log_error "  echo '${node_ip:-<NODE_IP>}  ${h}' >> /etc/hosts"
+        done
+        log_error ""
+        log_error "For other LAN machines (browsers, workstation), add the same entries"
+        log_error "to their /etc/hosts, or add a dnsmasq wildcard:"
+        log_error "  address=/.${DEPLOY_ENV}.${DOMAIN_SUFFIX}/${node_ip:-<NODE_IP>}"
+        log_error ""
+        log_error "After adding entries, re-run this script."
     else
-        log_error "  (could not auto-detect public IPv4 — check from elsewhere with: curl ifconfig.me)"
+        # Public install — guide user to DNS provider
+        log_error "cert-manager's HTTP-01 challenge will hang indefinitely without these records."
+        log_error "Aborting before deploy_vault saves an 'Initialization failed' placeholder over"
+        log_error "the unseal keys that would otherwise be irrecoverable."
+        log_error ""
+        log_error "Fix: at your DNS provider, add an A record for each name (or a wildcard"
+        log_error "*.${DEPLOY_ENV}.${DOMAIN_SUFFIX}) pointing to this host's public IPv4:"
+        if [[ -n "${public_ipv4}" ]]; then
+            log_error "  Public IPv4 (detected): ${public_ipv4}"
+        else
+            log_error "  (could not auto-detect public IPv4 — check from elsewhere with: curl ifconfig.me)"
+        fi
+        log_error ""
+        log_error "After adding the record, wait ~1-5 min for propagation, then re-run."
+        log_error "If the records exist but your LAN's DNS hasn't picked them up yet, verify with:"
+        log_error "  dig +short A ${unresolved[0]} @1.1.1.1"
     fi
-    log_error ""
-    log_error "After adding the record, wait ~1-5 min for propagation, then re-run."
-    log_error "If the records exist but your LAN's DNS hasn't picked them up yet, verify with:"
-    log_error "  dig +short A ${unresolved[0]} @1.1.1.1"
     return 1
 }
 

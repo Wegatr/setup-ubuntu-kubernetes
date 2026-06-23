@@ -1,0 +1,7 @@
+# MASTER-specific Tekton overrides. Runs build plane (same as DEV).
+dashboard:
+  enabled: true
+
+ingress:
+  ingress:
+    enabled: true

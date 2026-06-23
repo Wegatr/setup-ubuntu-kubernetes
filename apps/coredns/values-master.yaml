@@ -1,0 +1,8 @@
+# MASTER-env coredns overrides.
+# Zot runs on this cluster (it is the build/master cluster).
+extraRewrites:
+  - from: 'zot.master.{{ .Values.global.domain }}'
+    to: traefik.ingress.svc.cluster.local
+
+  - from: 's3.{{ .Values.global.env }}.{{ .Values.global.domain }}'
+    to: traefik.ingress.svc.cluster.local

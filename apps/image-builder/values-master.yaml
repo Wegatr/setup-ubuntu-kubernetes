@@ -1,0 +1,16 @@
+# MASTER-specific image-builder config.
+# Zot runs on this cluster at zot.master.local — override the common registry value.
+pipeline:
+  registry: 'zot.master.{{ .Values.global.domain }}'
+
+externalsecret-git-https:
+  externalSecret:
+    vaultPath: master/app/image-builder
+
+externalsecret-webhooks:
+  externalSecret:
+    vaultPath: master/app/image-builder
+
+externalsecret-registry-push:
+  externalSecret:
+    vaultPath: master/app/registry

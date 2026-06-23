@@ -1,0 +1,7 @@
+# MASTER-env platform globals — local internal cluster (*.master.local).
+# Overrides platform/values-common.yaml for this environment.
+global:
+  env: master
+  domain: local
+  clusterIssuer: local-ca
+  vaultUrl: https://vault.master.local:8200

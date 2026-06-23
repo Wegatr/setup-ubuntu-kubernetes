@@ -1,0 +1,17 @@
+mongodb-data:
+  pvc:
+    storageSize: "20Gi"
+
+mongodb:
+  replicas: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+prometheus-mongodb-exporter:
+  mongodb:
+    uri: mongodb://mongodb-master.mongodb.svc.cluster.local:27017/?directConnection=true

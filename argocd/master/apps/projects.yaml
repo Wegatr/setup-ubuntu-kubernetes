@@ -1,0 +1,165 @@
+# ArgoCD AppProjects for the MASTER cluster (local internal).
+# Same tier structure as dev — 5 projects: core/data/services/observability/cicd.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: core
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Cluster foundation — External-Secrets operator + CoreDNS. Privileged (CRDs, kube-system).
+  sourceRepos:
+    - https://github.com/kartalbas/setup-ubuntu-kubernetes.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: external-secrets
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: data
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Stateful data stores — MongoDB, PostgreSQL, Redis, Garage objectstore (incl. Filestash UI). Namespaced only.
+  sourceRepos:
+    - https://github.com/kartalbas/setup-ubuntu-kubernetes.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: mongodb
+    - server: https://kubernetes.default.svc
+      namespace: postgresql
+    - server: https://kubernetes.default.svc
+      namespace: redis
+    - server: https://kubernetes.default.svc
+      namespace: objectstore
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: services
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Supporting platform services — Postfix, Seq, DBGate. Namespaced only.
+  sourceRepos:
+    - https://github.com/kartalbas/setup-ubuntu-kubernetes.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: postfix
+    - server: https://kubernetes.default.svc
+      namespace: seq
+    - server: https://kubernetes.default.svc
+      namespace: dbgate
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: observability
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Monitoring plane — kube-prometheus-stack, Loki, Tempo, Alloy, Grafana. Cluster-wide scraper.
+  sourceRepos:
+    - https://github.com/kartalbas/setup-ubuntu-kubernetes.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: observability
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: cicd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Build plane — Tekton, Zot registry, image-builder. Privileged (Tekton CRDs, buildah).
+  sourceRepos:
+    - https://github.com/kartalbas/setup-ubuntu-kubernetes.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: tekton
+    - server: https://kubernetes.default.svc
+      namespace: tekton-resolvers
+    - server: https://kubernetes.default.svc
+      namespace: registry
+    - server: https://kubernetes.default.svc
+      namespace: image-builder
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: triggers.tekton.dev
+      kind: ClusterInterceptor
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

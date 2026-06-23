@@ -1,0 +1,46 @@
+# Per-namespace SecretStore (visible as an ArgoCD-managed resource).
+secret-store: {}
+
+# External Secrets configuration
+externalSecret:
+  enabled: true
+  name: seq-credentials
+  namespace: seq
+  secretStoreKind: SecretStore
+  targetSecretName: seq-credentials
+  vaultPath: master/app/seq
+  data:
+    - secretKey: admin-password
+      property: admin-password
+    - secretKey: api-key
+      property: api-key
+
+seq:
+  persistence:
+    size: 50Gi
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 4Gi
+
+  ui:
+    ingress:
+      enabled: true
+      hosts:
+        - log.master.local
+
+  # seq chart does NOT tpl ingress annotations, so cluster-issuer must be
+  # hardcoded here. Must match CLUSTER_ISSUER_NAME in config.local.
+  ingress:
+    className: public
+    annotations:
+      cert-manager.io/cluster-issuer: local-ca
+      traefik.ingress.kubernetes.io/router.middlewares: idp-forwardauth@kubernetescrd
+    tls:
+      - secretName: seq-master-tls
+        hosts:
+          - log.master.local

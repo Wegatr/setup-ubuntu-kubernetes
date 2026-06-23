@@ -111,6 +111,13 @@ configure_cert_manager() {
         fi
     fi
 
+    # Empty LETSENCRYPT_EMAIL → local self-signed CA mode (no ACME / internet needed).
+    # Used for *.local domains where Let's Encrypt cannot issue certificates.
+    if [[ -z "${LETSENCRYPT_EMAIL:-}" ]]; then
+        configure_local_ca
+        return
+    fi
+
     # Create ClusterIssuer YAML
     local issuer_yaml="${STATE_DIR}/clusterissuer.yaml"
     cat > "${issuer_yaml}" << EOF
@@ -175,5 +182,62 @@ EOF
     done
 
     log_warn "ClusterIssuer created but not ready yet (this may take a few moments)"
+    return 0
+}
+
+# Create a self-signed local CA and a CA-type ClusterIssuer for *.local domains.
+# Called by configure_cert_manager() when LETSENCRYPT_EMAIL is empty.
+configure_local_ca() {
+    local mdir="${SCRIPT_DIR}/manifests/local-ca"
+    log_step "Creating self-signed local CA (ClusterIssuer: ${CLUSTER_ISSUER_NAME})..."
+
+    # 1. selfSigned bootstrapper (issues the CA cert below)
+    microk8s kubectl apply -f "${mdir}/clusterissuer-selfsigned.yaml" || {
+        log_error "Failed to create selfsigned-bootstrapper ClusterIssuer"
+        return 1
+    }
+    sleep 5
+
+    # 2. CA Certificate (stored in cert-manager namespace as local-ca-tls Secret)
+    microk8s kubectl apply -f "${mdir}/certificate-ca.yaml" || {
+        log_error "Failed to create local CA Certificate"
+        return 1
+    }
+
+    log_info "Waiting for CA certificate Secret (local-ca-tls) to appear..."
+    local elapsed=0
+    while [[ ${elapsed} -lt 120 ]]; do
+        if microk8s kubectl -n cert-manager get secret local-ca-tls &>/dev/null; then
+            log_ok "CA certificate Secret ready"
+            break
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+    if ! microk8s kubectl -n cert-manager get secret local-ca-tls &>/dev/null; then
+        log_error "CA certificate Secret did not appear within 120s"
+        return 1
+    fi
+
+    # 3. CA-type ClusterIssuer that signs all platform Ingress/Certificate resources
+    microk8s kubectl apply -f "${mdir}/clusterissuer-local-ca.yaml" || {
+        log_error "Failed to create local-ca ClusterIssuer"
+        return 1
+    }
+
+    elapsed=0
+    while [[ ${elapsed} -lt 60 ]]; do
+        if is_cluster_issuer_ready "${CLUSTER_ISSUER_NAME}"; then
+            log_ok "ClusterIssuer '${CLUSTER_ISSUER_NAME}' (local CA) is ready"
+            log_info "Extract CA cert to install in browsers/OS:"
+            log_info "  microk8s kubectl -n cert-manager get secret local-ca-tls \\"
+            log_info "    -o jsonpath='{.data.ca\\.crt}' | base64 -d > local-ca.crt"
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+
+    log_warn "ClusterIssuer '${CLUSTER_ISSUER_NAME}' created but not ready yet (may take a moment)"
     return 0
 }

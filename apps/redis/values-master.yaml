@@ -1,0 +1,15 @@
+redis-data:
+  pvc:
+    storageSize: "10Gi"
+
+redis:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 6Gi
+
+prometheus-redis-exporter:
+  redisAddress: redis://redis-master.redis.svc.cluster.local:6379

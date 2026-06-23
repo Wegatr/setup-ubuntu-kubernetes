@@ -1,0 +1,107 @@
+app:
+  env:
+    - name: SKIP_ALL_AUTH
+      value: "true"
+    - name: CONNECTIONS
+      value: "mongo,redis,app_postgres,idp_postgres"
+    # --- MongoDB ---
+    - name: LABEL_mongo
+      value: "MongoDB (MASTER)"
+    - name: ENGINE_mongo
+      value: "mongo@dbgate-plugin-mongo"
+    - name: SERVER_mongo
+      value: "mongodb-master.mongodb.svc.cluster.local"
+    - name: PORT_mongo
+      value: "27017"
+    # --- Redis ---
+    - name: LABEL_redis
+      value: "Redis (MASTER)"
+    - name: ENGINE_redis
+      value: "redis@dbgate-plugin-redis"
+    - name: URL_redis
+      value: "redis://redis-master.redis.svc.cluster.local:6379"
+    # --- PostgreSQL (app — in-house chart) ---
+    - name: LABEL_app_postgres
+      value: "app-postgres (MASTER)"
+    - name: ENGINE_app_postgres
+      value: "postgres@dbgate-plugin-postgres"
+    - name: SERVER_app_postgres
+      value: "postgresql-master.postgresql.svc.cluster.local"
+    - name: PORT_app_postgres
+      value: "5432"
+    - name: USER_app_postgres
+      value: "postgres"
+    - name: PASSWORD_app_postgres
+      valueFrom:
+        secretKeyRef:
+          name: dbgate-db-credentials
+          key: postgresql-password
+    # --- PostgreSQL (idp — Authentik's bundled chart) ---
+    - name: LABEL_idp_postgres
+      value: "idp-postgres (MASTER)"
+    - name: ENGINE_idp_postgres
+      value: "postgres@dbgate-plugin-postgres"
+    - name: SERVER_idp_postgres
+      value: "idp-postgresql.idp.svc.cluster.local"
+    - name: PORT_idp_postgres
+      value: "5432"
+    - name: USER_idp_postgres
+      value: "authentik"
+    - name: PASSWORD_idp_postgres
+      valueFrom:
+        secretKeyRef:
+          name: dbgate-idp-db-credentials
+          key: postgres-password
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+basicauth:
+  fullnameOverride: basic-auth
+  middleware:
+    enabled: true
+    type: basicAuth
+    basicAuth:
+      secretName: dbgate-credentials
+
+secret-store: {}
+
+externalsecret-auth:
+  externalSecret:
+    enabled: true
+    name: dbgate-credentials
+    namespace: dbgate
+    secretStoreKind: SecretStore
+    targetSecretName: dbgate-credentials
+    vaultPath: master/app/dbgate
+    data:
+      - secretKey: users
+        property: auth
+
+externalsecret-db:
+  externalSecret:
+    enabled: true
+    name: dbgate-db-credentials
+    namespace: dbgate
+    secretStoreKind: SecretStore
+    targetSecretName: dbgate-db-credentials
+    vaultPath: master/app/dbgate
+    data:
+      - secretKey: postgresql-password
+        property: postgresql-password
+
+externalsecret-idp-db:
+  externalSecret:
+    enabled: true
+    name: dbgate-idp-db-credentials
+    namespace: dbgate
+    secretStoreKind: SecretStore
+    targetSecretName: dbgate-idp-db-credentials
+    vaultPath: master/system/idp
+    data:
+      - secretKey: postgres-password
+        property: postgres-password
